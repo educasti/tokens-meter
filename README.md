@@ -1,5 +1,12 @@
 # Clawdmeter
 
+> **Personal fork.** This is a fork of
+> [HermannBjorgvin/Clawdmeter](https://github.com/HermannBjorgvin/Clawdmeter).
+> All credit for the original work goes to that author. See
+> [ATTRIBUTION.md](ATTRIBUTION.md) — including the licensing status, which
+> matters if you plan to redistribute this. Everything below is the upstream
+> README, unmodified.
+
 > Also check out [Beam](https://github.com/notaharness/beam)! A CLI that lets you pair your machines using a passkey and [@Tailscale's tailcat](https://tailscale.com/blog/tailcat).
 
 <img src="assets/readme/waving.gif" width="120" align="right" alt="">
