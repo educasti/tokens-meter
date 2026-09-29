@@ -365,5 +365,5 @@ in `~/.config/claude-usage-monitor/config` (see `daemon/config.example`; optiona
 `~/.local/share/opencode/opencode.db` read-only and WAL-aware for the activity
 numbers and the estimated fallback, and the OpenCode Go key from `auth.json` for
 the official usage endpoint. Tests live in `daemon/tests/test_opencode_collector.py`
-(temp SQLite + an injected fake fetch). The Linux and Windows daemons don't send
+(temp SQLite + an injected fake fetch). Verified on a real AMOLED-2.16 (see `design/opencode-screen/research/hw1-test-216.md`); the daemon requires Python ≥ 3.10. The Linux and Windows daemons don't send
 the OpenCode payload yet.

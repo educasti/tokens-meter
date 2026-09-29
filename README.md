@@ -54,8 +54,15 @@ default. Turn it on in the daemon config file:
 
 ```bash
 echo "opencode = on" >> ~/.config/claude-usage-monitor/config
+```
+
+After changing the config, **restart the running daemon** to load the OpenCode collector module:
+
+```bash
 launchctl kickstart -k gui/$(id -u)/com.user.claude-usage-daemon
 ```
+
+If the LaunchAgent was installed from another checkout, re-run `./install-mac.sh` from this one so the plist points at this repo.
 
 The daemon then polls every 60 s, on its own beat so the OpenCode screens keep
 working even when Claude has no token. It reads
@@ -93,7 +100,7 @@ Boards supported out of the box:
 - Linux (tested on Ubuntu), macOS, or Windows 10/11
 - [PlatformIO CLI](https://docs.platformio.org/en/latest/core/installation/index.html)
 - Linux: `curl`, `bluetoothctl`, `busctl`, `dbus-monitor` (BlueZ Bluetooth stack), `python3`, `setsid`, `stdbuf` (util-linux / coreutils), `systemctl` (systemd user services)
-- macOS: `python3` (the installer sets up a venv with `bleak` and `httpx`)
+- macOS: **Python 3.10+** (the installer sets up a venv with `bleak` and `httpx`; if not found, run `brew install python`)
 - Windows: `python3` 3.11+ (the installer sets up a venv with `bleak`, `httpx`, and `pystray`)
 - Claude Code with an active subscription
 

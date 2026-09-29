@@ -1,6 +1,6 @@
-# Pantallas de OpenCode: especificación y diseño (v0.2, para aprobar)
+# Pantallas de OpenCode: especificación y diseño (v0.2)
 
-**Estado:** propuesta. No hay código implementado. Primero se valida el prototipo (`prototype.html` + `oc-splash.js`).
+**Estado:** implementado (rama `feat/opencode-screens`, commit `5b87b01`), verificado en hardware (Waveshare AMOLED-2.16; véase `design/opencode-screen/research/hw1-test-216.md`).
 **Investigación:** `research/01` (datos locales), `02` (marca), `03` (firmware), `07` (límites de Go), `08` (animaciones oficiales) y `09` (endpoint verificado en vivo).
 
 **Decisiones del usuario (28-09-2026):**
