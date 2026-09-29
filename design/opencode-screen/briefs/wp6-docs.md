@@ -1,0 +1,12 @@
+# WP6 — Documentation for the OpenCode screens
+
+Repo: /Users/educasti/Projects/Personal/tokens-meter (branch feat/opencode-screens). The feature is implemented and reviewed; document it. Read first: `design/opencode-screen/SPEC.md` (v0.2), `design/opencode-screen/IMPL.md`, `git diff` + `git status` of the branch (new files: oc_*.{h,cpp}, ui_opencode.*, font_plex_*.c, oc_logo.h, tools/gen_oc_logo.js, daemon/opencode_collector.py, firmware/sim/scenario-opencode.jsonl, sim_368/sim_240 envs), and the current `CLAUDE.md`, `README.md`, `ATTRIBUTION.md`, `SIM-USAGE.md`, `tools/README.md`.
+
+Edit ONLY: `CLAUDE.md`, `README.md`, `ATTRIBUTION.md`, `SIM-USAGE.md`, `tools/README.md`. Keep each file's existing tone, structure and heading style; write in English like the existing docs; be concise, no marketing.
+
+- **CLAUDE.md** — it is stale: fix the screen list (the code now has SCREEN_SPLASH, SCREEN_USAGE, SCREEN_OC_SPLASH, SCREEN_OC_USAGE; there is no Bluetooth screen / SCREEN_CONTROLLER any more), the button/PWR mapping (tap < 300 ms navigates, hold sends HID; PWR = next Clawd animation / next OpenCode scene / brightness), the architecture tree (new modules), the "3-screen UI" wording, the payload routing ("k":"oc" routed before parse_json; 2-slot RX FIFO with spinlock in ble.cpp), the new sim envs + `SIM_START_SCREEN` / `SIM_BUTTONS` / scenario-opencode, and add gotchas: LVGL's lv_label_set_text_fmt has no %f (use snprintf), OpenCode Go usage endpoint needs the trailing slash, never log the Go key, splash_set_external owns the shared canvas. Keep it tight — facts future sessions need, no changelog.
+- **README.md** — add a short "OpenCode screens" section (what the two screens show, navigation with the side buttons, how to enable: `opencode = on` in `~/.config/claude-usage-monitor/config`, macOS daemon only for now, reads `~/.local/share/opencode/opencode.db` read-only and the OpenCode Go key from `auth.json` to query the official usage endpoint), and update the "Physical buttons" table for tap-vs-hold. Mention the fork status stays as is (don't edit the top fork notice).
+- **ATTRIBUTION.md** — add third-party assets: OpenCode logo/wordmark pixel grids from github.com/anomalyco/opencode (MIT; "OpenCode" is a trademark of its owners, no endorsement implied); IBM Plex Mono (SIL OFL 1.1, `assets/fonts/OFL.txt`).
+- **SIM-USAGE.md / tools/README.md** — the new envs, env vars and scenario; `tools/gen_oc_logo.js`.
+
+Do not touch code. Do not commit. Reply exactly `DONE WP6`.

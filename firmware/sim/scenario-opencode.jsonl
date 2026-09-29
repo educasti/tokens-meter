@@ -1,0 +1,16 @@
+# Sim scenario with OpenCode — Claude and OpenCode beats interleaved, exactly
+# as the daemon sends them (SPEC.md §8: the OpenCode payload rides the same RX
+# characteristic, tagged "k":"oc", and the firmware routes on that tag). Play
+# with SIM_SCENARIO=sim/scenario-opencode.jsonl.
+# Extra keys: "name" (window title), "hold_ms" (time on this state, default 3000).
+# Keys: space play/pause · arrows step · 1-9 jump · see boards/sim/board.h.
+{"name":"claude fresh","hold_ms":3000,"s":3.0,"sr":295,"w":12.0,"wr":9000,"st":"allowed","ok":true,"t":1785474000,"tf":24}
+{"name":"oc real","hold_ms":3000,"k":"oc","ok":true,"src":"api","p5":0,"r5":-1,"pw":0,"rw":9430,"pm":3,"rm":20354,"st":"ok","t7":106969,"m":"ds-v4.1-flash","ms":81,"a":0,"ag":"","la":1260}
+{"name":"claude steady","hold_ms":3000,"s":42.0,"sr":180,"w":33.0,"wr":7900,"st":"allowed","ok":true}
+{"name":"oc one session","hold_ms":3000,"k":"oc","ok":true,"src":"api","p5":37,"r5":134,"pw":22,"rw":5040,"pm":4,"rm":20340,"st":"ok","t7":112480,"m":"ds-v4.1-flash","ms":86,"a":1,"ag":"build","la":35}
+{"name":"oc two sessions","hold_ms":3000,"k":"oc","ok":true,"src":"api","p5":58,"r5":71,"pw":41,"rw":5040,"pm":5,"rm":20320,"st":"ok","t7":118930,"m":"kimi-k3","ms":61,"a":2,"ag":"plan","la":8}
+{"name":"oc near the limit","hold_ms":3000,"k":"oc","ok":true,"src":"api","p5":91,"r5":42,"pw":78,"rw":2880,"pm":6,"rm":20110,"st":"ok","t7":124350,"m":"ds-v4.1-flash","ms":89,"a":1,"ag":"build","la":140}
+{"name":"oc limit reached","hold_ms":3000,"k":"oc","ok":true,"src":"api","p5":100,"r5":18,"pw":83,"rw":2880,"pm":7,"rm":20080,"st":"limited","t7":128100,"m":"ds-v4.1-flash","ms":91,"a":0,"ag":"","la":240}
+{"name":"oc window reset","hold_ms":3000,"k":"oc","ok":true,"src":"api","p5":6,"r5":298,"pw":12,"rw":5040,"pm":7,"rm":20075,"st":"ok","t7":128940,"m":"ds-v4.1-flash","ms":91,"a":1,"ag":"build","la":5}
+{"name":"oc estimated","hold_ms":3000,"k":"oc","ok":true,"src":"est","p5":12,"r5":250,"pw":8,"rw":9430,"pm":3,"rm":20354,"st":"ok","t7":130250,"m":"ds-v4.1-flash","ms":93,"a":1,"ag":"build","la":60}
+{"name":"oc consumption only","hold_ms":3000,"k":"oc","ok":true,"src":"none","p5":0,"r5":-1,"pw":0,"rw":0,"pm":0,"rm":0,"st":"ok","t7":131700,"tk":3221,"cd":0,"c7":1.1,"m":"ds-v4.1-flash","ms":88,"a":0,"ag":"","la":1500}

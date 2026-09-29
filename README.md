@@ -21,7 +21,7 @@ Shift+Tab over BLE HID for Claude Code's voice mode and mode-toggle shortcuts.
 
 ## Screens
 
-The device boots into the splash. Tap the screen anywhere to switch to the Usage view; tap again to flip back to the splash.
+The device boots into the splash. Tap the screen anywhere to switch to the Usage view; tap again to flip back to the splash. With [OpenCode screens](#opencode-screens) enabled the cycle grows to four screens.
 
 |              Splash               |              Usage              |
 | :-------------------------------: | :-----------------------------: |
@@ -29,6 +29,55 @@ The device boots into the splash. Tap the screen anywhere to switch to the Usage
 |   Splash; touch-toggle anytime    | Session and weekly utilization  |
 
 While the splash is up, the middle (PWR) button cycles animations. **Hold the power button for 3 seconds, then release, to put the device into pairing mode** — this clears the saved Bluetooth bond and re-advertises. The firmware also auto-rotates animations every 20 s within the current usage-rate group, so a long stretch on the splash isn't just one Clawd on loop.
+
+## OpenCode screens
+
+Two more screens report your [OpenCode](https://opencode.ai) usage next to
+Claude's. The first is an animated splash built from OpenCode's own material —
+the mark, the wordmark, and the terminal block scanner — that types itself out
+while you're idle, speeds up while sessions are running, turns amber as a limit
+approaches and freezes when you reach one. The second is a usage screen with the
+5-hour, weekly and monthly bars, 7-day tokens, your top model and a live session
+line. The type is IBM Plex Mono, the alternative opencode.ai itself names.
+
+Navigation is the same four-screen cycle — Claude splash → Claude usage →
+OpenCode splash → OpenCode usage — with the side buttons: **tap** to move
+between screens, **hold** to send Space / Shift+Tab as before (see
+[Physical buttons](#physical-buttons)). A row of dots at the bottom shows where
+you are for a second and a half after each change. Until the first OpenCode
+payload arrives, the cycle stays the two Claude screens and nothing else changes.
+
+### Enabling them
+
+Only the **macOS daemon** collects OpenCode data so far, and it is off by
+default. Turn it on in the daemon config file:
+
+```bash
+echo "opencode = on" >> ~/.config/claude-usage-monitor/config
+```
+
+After changing the config, **restart the running daemon** to load the OpenCode collector module:
+
+```bash
+launchctl kickstart -k gui/$(id -u)/com.user.claude-usage-daemon
+```
+
+If the LaunchAgent was installed from another checkout, re-run `./install-mac.sh` from this one so the plist points at this repo.
+
+The daemon then polls every 60 s, on its own beat so the OpenCode screens keep
+working even when Claude has no token. It reads
+`~/.local/share/opencode/opencode.db` **read-only** for tokens, spend, top model
+and session activity, and if you have an OpenCode Go key in `auth.json` it also
+queries OpenCode's official usage endpoint for exact percentages and reset
+countdowns. What reaches the screen depends on that key:
+
+- **With a Go key** — the exact percentages and reset countdowns from the
+  endpoint. If the endpoint is unreachable or errors, the daemon falls back to a
+  local estimate and the chips are marked `· est.` to say so.
+- **Without one** — consumption-only mode: today's and 7-day tokens and spend in
+  place of percentages, with no bars. No network call is made at all.
+
+Neither file is written to, and the key is never logged.
 
 ## Hardware
 
@@ -51,7 +100,7 @@ Boards supported out of the box:
 - Linux (tested on Ubuntu), macOS, or Windows 10/11
 - [PlatformIO CLI](https://docs.platformio.org/en/latest/core/installation/index.html)
 - Linux: `curl`, `bluetoothctl`, `busctl`, `dbus-monitor` (BlueZ Bluetooth stack), `python3`, `setsid`, `stdbuf` (util-linux / coreutils), `systemctl` (systemd user services)
-- macOS: `python3` (the installer sets up a venv with `bleak` and `httpx`)
+- macOS: **Python 3.10+** (the installer sets up a venv with `bleak` and `httpx`; if not found, run `brew install python`)
 - Windows: `python3` 3.11+ (the installer sets up a venv with `bleak`, `httpx`, and `pystray`)
 - Claude Code with an active subscription
 
@@ -212,15 +261,15 @@ reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v Clawdmeter /f
 
 ## Physical buttons
 
-The board has three side buttons. Left and right send HID keys; the middle (PWR) button cycles splash animations and, held for 3 seconds, triggers pairing mode.
+The board has three side buttons. The two side buttons are **tap or hold**: a short tap walks the screen cycle, a hold sends the HID key. The middle (PWR) button steps the animation or scene on a splash, cycles brightness on the usage screens, and, held for 3 seconds, triggers pairing mode.
 
-| Button           | GPIO         | Function                                                     |
-| ---------------- | ------------ | ------------------------------------------------------------ |
-| **Left**         | GPIO 0       | Hold to send Space (Claude Code voice-mode push-to-talk)     |
-| **Middle** (PWR) | AXP2101 PKEY | On splash: cycle animations. Hold 3s + release: pairing mode |
-| **Right**        | GPIO 18      | Press to send Shift+Tab (Claude Code mode toggle)            |
+| Button           | GPIO         | Tap                                                       | Hold                                                 |
+| ---------------- | ------------ | --------------------------------------------------------- | ---------------------------------------------------- |
+| **Left**         | GPIO 0       | Previous screen                                          | Space (Claude Code voice-mode push-to-talk)          |
+| **Middle** (PWR) | AXP2101 PKEY | On a splash: next animation or scene. On usage: brightness | 3 s + release: pairing mode                          |
+| **Right**        | GPIO 18      | Next screen                                              | Shift+Tab (Claude Code mode toggle)                  |
 
-Space and Shift+Tab go out as standard BLE HID keyboard reports, so they trigger in whatever window has focus on the paired host — not just Claude Code.
+Space and Shift+Tab go out as standard BLE HID keyboard reports, so they trigger in whatever window has focus on the paired host — not just Claude Code. Tapping the panel always moves to the next screen, and on the boards that have only one side button — the 1.8 (both SoCs), the 2.06 and the LCD-4 — the left button steps forward instead of back. Telling a tap from a hold means the HID keys now reach the host about 300 ms after you press rather than straight away.
 
 ## BLE protocol
 
@@ -264,6 +313,7 @@ sim`, then `cd firmware && .pio/build/sim/program`). See
 ## Credits
 
 - Pixel-art Clawd animations are Anthropic's official mascot art (claude.ai/code, Claude Code desktop), archived and converted by the tooling in `tools/` and `research/clawd-official/`.
+- OpenCode logo and wordmark pixel grids from [anomalyco/opencode](https://github.com/anomalyco/opencode) (MIT); IBM Plex Mono from [IBM/plex](https://github.com/IBM/plex) (SIL OFL 1.1).
 - Lucide icon set ([lucide.dev](https://lucide.dev), MIT) for bluetooth and battery UI glyphs.
 - Anthropic brand fonts (Tiempos Text, Styrene B) — see licensing warning below.
 

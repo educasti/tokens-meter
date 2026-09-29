@@ -3,6 +3,8 @@
 #include <NimBLEDevice.h>
 #include <NimBLEHIDDevice.h>
 #include <Preferences.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/portmacro.h>
 
 #define DEVICE_NAME "Clawdmeter"
 
@@ -72,9 +74,31 @@ static const uint16_t DESIRED_TIMEOUT   = 600;   // ×10ms = 6s, matches PPCP
 static volatile uint16_t param_fix_handle = CONN_HANDLE_NONE;  // pending retry
 static volatile uint32_t param_fix_at_ms  = 0;                 // when to send it
 static volatile uint16_t param_fix_spent  = CONN_HANDLE_NONE;  // one per connection
-static char rx_buf[BLE_BUF_SIZE];
-static volatile bool data_ready = false;
+// --- RX FIFO (2 slots) ------------------------------------------------------
+//
+// The host writes one JSON line per characteristic, and the loop drains at
+// most one per iteration. A single buffer meant a write that arrived before
+// the previous one had been parsed silently overwrote it — which is exactly
+// what happens when the Claude and OpenCode beats land back to back. Two slots
+// absorb that pair; a third write drops the oldest unread payload, so the
+// freshest data always wins instead of the panel latching onto stale numbers.
+//
+// Two tasks touch this: NimBLE's host task runs onWrite() and the Arduino loop
+// runs ble_has_data()/ble_get_data(), so the read-modify-writes on the indices
+// and the memcpy into a slot run under a spinlock. The lock is never held
+// across Serial, NimBLE or the parser — only across a few instructions.
+//
+// Popping alone is not enough: with 2 slots, a pop while one payload is still
+// queued frees a slot that the very next write picks, and main.cpp is still
+// parsing what it was handed. So the popped slot is copied into rx_out, which
+// no writer ever touches, and that is the buffer returned to the loop.
+#define RX_SLOTS 2
+static char          rx_buf[RX_SLOTS][BLE_BUF_SIZE];
+static char          rx_out[BLE_BUF_SIZE];   // handed to main.cpp, never written by onWrite
+static volatile int  rx_head = 0;    // next slot to read (oldest)
+static volatile int  rx_count = 0;   // slots holding unread payloads
 static volatile bool has_received_data = false;
+static portMUX_TYPE  rx_mux = portMUX_INITIALIZER_UNLOCKED;
 static char mac_str[18];
 
 // --- Single-owner lock -----------------------------------------------------
@@ -279,9 +303,26 @@ class RxCallbacks : public NimBLECharacteristicCallbacks {
         }
         std::string val = chr->getValue();
         size_t len = std::min(val.length(), (size_t)(BLE_BUF_SIZE - 1));
-        memcpy(rx_buf, val.c_str(), len);
-        rx_buf[len] = '\0';
-        data_ready = true;
+
+        // The loop may be popping a slot on the other core while this runs, so
+        // the indices and the buffer write are one atomic unit. The 512-byte
+        // memcpy is a spinlock hold, not a context switch — the other side only
+        // ever holds it for a few instructions.
+        bool dropped = false;
+        portENTER_CRITICAL(&rx_mux);
+        // Both slots full: discard the oldest so this write has somewhere to
+        // go. The daemon beats every 60 s, so this only trips on a burst.
+        if (rx_count >= RX_SLOTS) {
+            rx_head = (rx_head + 1) % RX_SLOTS;
+            rx_count--;
+            dropped = true;
+        }
+        int slot = (rx_head + rx_count) % RX_SLOTS;
+        memcpy(rx_buf[slot], val.c_str(), len);
+        rx_buf[slot][len] = '\0';
+        rx_count++;
+        portEXIT_CRITICAL(&rx_mux);
+        if (dropped) Serial.println("BLE: RX backlog — dropped oldest payload");
         has_received_data = true;
     }
 };
@@ -410,12 +451,29 @@ bool ble_has_bonds(void) {
 }
 
 bool ble_has_data(void) {
-    return data_ready;
+    portENTER_CRITICAL(&rx_mux);
+    bool any = rx_count > 0;
+    portEXIT_CRITICAL(&rx_mux);
+    return any;
 }
 
+// Pops the oldest payload and copies it into rx_out, which onWrite() never
+// touches. Returning a slot pointer instead would be a use-after-overwrite:
+// with one payload still queued, the next write targets the slot just freed
+// while main.cpp is still deserializing it. rx_out is only rewritten by the
+// next pop, which cannot happen until this one has been consumed.
 const char* ble_get_data(void) {
-    data_ready = false;
-    return rx_buf;
+    portENTER_CRITICAL(&rx_mux);
+    if (rx_count <= 0) {
+        portEXIT_CRITICAL(&rx_mux);
+        return "";
+    }
+    int slot = rx_head;
+    rx_head = (rx_head + 1) % RX_SLOTS;
+    rx_count--;
+    memcpy(rx_out, rx_buf[slot], BLE_BUF_SIZE);
+    portEXIT_CRITICAL(&rx_mux);
+    return rx_out;
 }
 
 void ble_send_ack(void) {

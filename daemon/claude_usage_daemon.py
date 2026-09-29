@@ -24,6 +24,11 @@ import httpx
 from bleak import BleakClient
 from bleak.exc import BleakError
 
+try:  # normal package import (tests, `python -m daemon.claude_usage_daemon`)
+    from .opencode_collector import collect
+except ImportError:  # run as a script (LaunchAgent): only the script dir is on sys.path
+    from opencode_collector import collect
+
 DEVICE_NAME = "Clawdmeter"
 SERVICE_UUID = "4c41555a-4465-7669-6365-000000000001"
 RX_CHAR_UUID = "4c41555a-4465-7669-6365-000000000002"
@@ -32,6 +37,12 @@ REQ_CHAR_UUID = "4c41555a-4465-7669-6365-000000000004"
 POLL_INTERVAL = 60
 TICK = 5
 CONNECT_TIMEOUT = 20.0
+# The OpenCode collector runs on its own cadence so it keeps working when
+# Claude has no token or the Claude poll fails (SPEC §9).
+OPENCODE_INTERVAL = 60
+# The device has a 2-slot RX buffer and the firmware routes on "k", so the
+# OpenCode payload must land clearly after the Claude one, never interleaved.
+OPENCODE_WRITE_DELAY = 0.25
 
 # macOS: token lives in Keychain (service "Claude Code-credentials").
 # Linux: token lives in ~/.claude/.credentials.json.
@@ -357,6 +368,53 @@ def read_clock_setting() -> str:
     except OSError:
         pass
     return "off"
+
+
+def read_opencode_setting() -> str:
+    """Read the `opencode` option from the config file. One of: off|on.
+
+    Defaults to "off" so existing setups are unaffected until the user opts
+    in; when on, the daemon also collects OpenCode usage and sends it after
+    every Claude payload (SPEC §9).
+    """
+    try:
+        if CONFIG_FILE.exists():
+            for line in CONFIG_FILE.read_text().splitlines():
+                line = line.split("#", 1)[0].strip()
+                if "=" not in line:
+                    continue
+                key, val = line.split("=", 1)
+                if key.strip().lower() == "opencode":
+                    val = val.strip().lower()
+                    if val in ("off", "on"):
+                        return val
+    except OSError:
+        pass
+    return "off"
+
+
+def read_opencode_paths() -> tuple[Path | None, Path | None]:
+    """Optional `opencode_db` / `opencode_auth` overrides from the config.
+
+    Both optional: None means "use the standard OpenCode location". Present so
+    a non-standard install (or a second profile) can be pointed at explicitly.
+    """
+    paths: dict[str, str] = {"opencode_db": "", "opencode_auth": ""}
+    try:
+        if CONFIG_FILE.exists():
+            for line in CONFIG_FILE.read_text().splitlines():
+                line = line.split("#", 1)[0].strip()
+                if "=" not in line:
+                    continue
+                key, val = line.split("=", 1)
+                name = key.strip().lower()
+                if name in paths:
+                    paths[name] = val.strip()
+    except OSError:
+        pass
+    db = Path(paths["opencode_db"]).expanduser() if paths["opencode_db"] else None
+    auth = Path(paths["opencode_auth"]).expanduser() if paths["opencode_auth"] else None
+    return db, auth
 
 
 def add_chime_field(payload: dict) -> None:
@@ -752,6 +810,7 @@ async def connect_and_run(target, stop_event: asyncio.Event) -> bool:
     await session.setup_refresh_subscription()
 
     last_poll = 0.0
+    last_oc = 0.0
     used_successfully = False
     try:
         while client.is_connected and not stop_event.is_set():
@@ -785,6 +844,36 @@ async def connect_and_run(target, stop_event: asyncio.Event) -> bool:
                     # Transient poll failure (a live token that didn't answer this
                     # cycle) -> stay silent and retry next tick.
                     log("No usable config dir this cycle")
+
+            # OpenCode runs on its own 60 s beat, deliberately independent of
+            # the Claude token/dead branch above: the OpenCode screens must
+            # keep working when Claude has no token at all (SPEC §9). The
+            # collector does blocking file + HTTP I/O, so it goes to a thread.
+            if now - last_oc >= OPENCODE_INTERVAL:
+                # Re-read the config on this beat, not every TICK, so flipping
+                # `opencode = on` takes effect within ~60s like the rest of
+                # the config.
+                last_oc = time.time()
+                if read_opencode_setting() == "on":
+                    db_path, auth_path = read_opencode_paths()
+                    oc = await asyncio.to_thread(
+                        collect,
+                        None,
+                        db_path,
+                        auth_path,
+                    )
+                    if oc is not None:
+                        # Never the key — only the numbers we send to the device.
+                        log(f"OpenCode: {oc['src']} 5h {oc['p5']}% "
+                            f"week {oc['pw']}% month {oc['pm']}% "
+                            f"7d {oc['t7']}k")
+                        # Same characteristic as Claude, so give the device
+                        # room to finish parsing the first payload before the
+                        # second one starts arriving (SPEC §8).
+                        await asyncio.sleep(OPENCODE_WRITE_DELAY)
+                        await session.write_payload(oc)
+                    else:
+                        log("OpenCode: not installed; skipping")
 
             try:
                 await asyncio.wait_for(session.refresh_requested.wait(), timeout=TICK)

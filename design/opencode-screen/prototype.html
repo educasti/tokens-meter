@@ -1,0 +1,1430 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Clawdmeter — prototipo pantalla OpenCode</title>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="oc-splash.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #111;
+      color: #ddd;
+      font-family: system-ui, -apple-system, sans-serif;
+      padding: 40px 20px;
+      line-height: 1.6;
+    }
+
+    h1 { font-size: 28px; margin-bottom: 8px; }
+    .subtitle { font-size: 14px; color: #888; margin-bottom: 40px; }
+
+    h2 { font-size: 20px; margin-top: 40px; margin-bottom: 20px; border-bottom: 1px solid #333; padding-bottom: 10px; }
+
+    /* --- Section A: Simulator --- */
+    .section-a {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 40px;
+      margin-bottom: 60px;
+    }
+
+    @media (max-width: 900px) {
+      .section-a { grid-template-columns: 1fr; }
+    }
+
+    .device-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .device-bezel {
+      background: #222;
+      border-radius: 28px;
+      padding: 24px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+      margin-bottom: 24px;
+    }
+
+    .device-screen {
+      background: #000;
+      overflow: hidden;
+      position: relative;
+      cursor: pointer;
+      border: 1px solid #333;
+    }
+
+    .device-info {
+      font-size: 12px;
+      color: #888;
+      text-align: center;
+      margin-bottom: 16px;
+    }
+
+    .device-buttons {
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+      margin-bottom: 24px;
+      font-size: 12px;
+    }
+
+    .device-buttons {
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .device-buttons {
+      flex-direction: row;
+      justify-content: center;
+      gap: 12px;
+      flex-wrap: nowrap;
+    }
+
+    .physical-button {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .physical-button-name {
+      font-size: 12px;
+      font-weight: 600;
+      color: #fab283;
+      min-width: 60px;
+      text-align: center;
+    }
+
+    .physical-button-actions {
+      font-size: 10px;
+      color: #888;
+      text-align: center;
+      line-height: 1.3;
+      min-width: 80px;
+    }
+
+    .device-buttons button {
+      background: #222;
+      border: 1px solid #333;
+      color: #ddd;
+      padding: 6px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: system-ui;
+      font-size: 11px;
+      transition: all 0.2s;
+      min-width: 60px;
+    }
+
+    .device-buttons button:active {
+      background: #fab283;
+      color: #000;
+    }
+
+    .device-buttons button:hover {
+      background: #333;
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 120px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #1e1e1e;
+      color: #ddd;
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 12px;
+      opacity: 0;
+      pointer-events: none;
+      z-index: 100;
+      animation: toast-fade 1.2s ease-in-out;
+    }
+
+    @keyframes toast-fade {
+      0% { opacity: 1; }
+      70% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+
+    /* Page indicator dots */
+    .page-indicator {
+      position: absolute;
+      bottom: 8px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 8px;
+      opacity: 0;
+      pointer-events: none;
+      animation: indicator-fade 1.5s ease-in-out;
+    }
+
+    @keyframes indicator-fade {
+      0% { opacity: 1; }
+      80% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+
+    .page-indicator span {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #484848;
+    }
+
+    .page-indicator span.active {
+      background: #eeeeee;
+    }
+
+    /* --- Control Panel --- */
+    .control-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .control-group label {
+      font-size: 12px;
+      font-weight: 500;
+      color: #bbb;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .segmented-control {
+      display: flex;
+      gap: 1px;
+      background: #1e1e1e;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .segmented-control input[type="radio"] {
+      display: none;
+    }
+
+    .segmented-control label {
+      flex: 1;
+      padding: 8px;
+      text-align: center;
+      background: #222;
+      cursor: pointer;
+      font-size: 12px;
+      border: none;
+      text-transform: none;
+      color: #888;
+      letter-spacing: normal;
+      transition: all 0.2s;
+    }
+
+    .segmented-control input[type="radio"]:checked + label {
+      background: #fab283;
+      color: #000;
+      font-weight: 500;
+    }
+
+    .radio-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .radio-group input[type="radio"] {
+      display: none;
+    }
+
+    .radio-group label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px;
+      cursor: pointer;
+      font-size: 12px;
+      border-radius: 4px;
+      transition: background 0.2s;
+      text-transform: none;
+      letter-spacing: normal;
+      font-weight: normal;
+      color: #bbb;
+    }
+
+    .radio-group label::before {
+      content: '';
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border: 1px solid #555;
+      border-radius: 2px;
+      background: #222;
+    }
+
+    .radio-group input[type="radio"]:checked + label {
+      background: rgba(250, 178, 131, 0.1);
+      color: #fab283;
+    }
+
+    .radio-group input[type="radio"]:checked + label::before {
+      background: #fab283;
+      border-color: #fab283;
+    }
+
+    .toggle-group {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background: #222;
+      border: 1px solid #333;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: all 0.2s;
+    }
+
+    .toggle input[type="checkbox"] {
+      display: none;
+    }
+
+    .toggle input[type="checkbox"]:checked ~ .toggle-switch {
+      background: #fab283;
+    }
+
+    .toggle-switch {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border-radius: 2px;
+      background: #444;
+      transition: background 0.2s;
+    }
+
+    .payload-display {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 4px;
+      padding: 12px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px;
+      color: #888;
+      overflow-x: auto;
+      max-height: 120px;
+      overflow-y: auto;
+    }
+
+    .payload-display code {
+      color: #ddd;
+    }
+
+    .payload-bytes {
+      margin-top: 8px;
+      font-size: 11px;
+      color: #888;
+    }
+
+    .payload-bytes.warning {
+      color: #e06c75;
+    }
+
+    .nav-explanation {
+      background: #1a1a1a;
+      border-left: 2px solid #fab283;
+      padding: 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    /* --- Section B: Variants Grid --- */
+    .section-b {
+      margin-bottom: 60px;
+    }
+
+    .variants-grid {
+      display: grid;
+      gap: 40px;
+      align-items: start;
+    }
+
+    .variant-cell {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .variant-caption {
+      font-size: 11px;
+      color: #888;
+      text-align: center;
+    }
+
+    .variant-screen {
+      background: #000;
+      border: 1px solid #333;
+    }
+
+    /* --- Section C: Palette --- */
+    .section-c {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 40px;
+    }
+
+    .palette-section h3 {
+      font-size: 14px;
+      margin-bottom: 12px;
+      text-transform: uppercase;
+      color: #bbb;
+      letter-spacing: 0.5px;
+    }
+
+    .color-swatch {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px;
+      background: #1a1a1a;
+      border-radius: 4px;
+      margin-bottom: 8px;
+    }
+
+    .color-box {
+      width: 40px;
+      height: 40px;
+      border-radius: 4px;
+      border: 1px solid #333;
+      flex-shrink: 0;
+    }
+
+    .color-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .color-name {
+      font-size: 12px;
+      font-weight: 500;
+      color: #ddd;
+    }
+
+    .color-value {
+      font-size: 11px;
+      color: #888;
+      font-family: 'IBM Plex Mono', monospace;
+    }
+
+    .typography-section {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .type-specimen {
+      padding: 12px;
+      background: #1a1a1a;
+      border-radius: 4px;
+      font-family: 'IBM Plex Mono', monospace;
+      color: #ddd;
+      line-height: 1.4;
+    }
+
+    .type-48 { font-size: 48px; font-weight: 500; }
+    .type-40 { font-size: 40px; font-weight: 500; }
+    .type-24 { font-size: 24px; font-weight: 400; }
+    .type-20 { font-size: 20px; font-weight: 400; }
+    .type-18 { font-size: 18px; font-weight: 400; }
+    .type-16 { font-size: 16px; font-weight: 400; }
+    .type-14 { font-size: 14px; font-weight: 400; }
+    .type-12 { font-size: 12px; font-weight: 400; }
+
+    /* Animation for blinking status dot */
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    .status-indicator-active {
+      animation: blink 1s infinite;
+    }
+  </style>
+</head>
+<body>
+
+<h1>Clawdmeter — prototipo pantalla OpenCode</h1>
+<p class="subtitle">v0.2 · 4 pantallas (clawd, claude, ocsplash, ocusage) · navegación con botones físicos</p>
+
+<!-- SECTION A: Simulador interactivo -->
+<h2>A — Simulador interactivo</h2>
+<div class="section-a">
+  <!-- Left: Device -->
+  <div class="device-container">
+    <div class="device-bezel">
+      <div class="device-screen" id="deviceScreen"></div>
+      <div class="page-indicator" id="pageIndicator"></div>
+    </div>
+    <div class="device-info" id="deviceInfo">Pantalla: Splash · 255 / 255</div>
+    <div class="device-buttons" id="physicalButtons"></div>
+    <p style="font-size: 12px; color: #888; text-align: center;">
+      Splash/Claude: capturas reales 480×480 escaladas
+    </p>
+  </div>
+
+  <!-- Right: Control Panel -->
+  <div class="control-panel">
+    <div class="control-group">
+      <label>Board</label>
+      <div class="segmented-control">
+        <input type="radio" id="board-216" name="board" value="grande" checked onchange="simulatorState.setBoard('grande')">
+        <label for="board-216">2.16" 480×480</label>
+        <input type="radio" id="board-18" name="board" value="compacto" onchange="simulatorState.setBoard('compacto')">
+        <label for="board-18">1.8" 368×448</label>
+        <input type="radio" id="board-154" name="board" value="chico" onchange="simulatorState.setBoard('chico')">
+        <label for="board-154">1.54" 240×240</label>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <label>Escenario</label>
+      <div class="radio-group">
+        <input type="radio" id="scenario-real" name="scenario" value="real" checked onchange="simulatorState.setScenario('real')">
+        <label for="scenario-real">Hoy real (default)</label>
+        <input type="radio" id="scenario-activa" name="scenario" value="activa" onchange="simulatorState.setScenario('activa')">
+        <label for="scenario-activa">Sesión activa</label>
+        <input type="radio" id="scenario-varias" name="scenario" value="varias" onchange="simulatorState.setScenario('varias')">
+        <label for="scenario-varias">Varias sesiones</label>
+        <input type="radio" id="scenario-cerca" name="scenario" value="cerca" onchange="simulatorState.setScenario('cerca')">
+        <label for="scenario-cerca">Cerca del límite</label>
+        <input type="radio" id="scenario-limite" name="scenario" value="limite" onchange="simulatorState.setScenario('limite')">
+        <label for="scenario-limite">Límite alcanzado</label>
+        <input type="radio" id="scenario-est" name="scenario" value="est" onchange="simulatorState.setScenario('est')">
+        <label for="scenario-est">Estimado (sin red)</label>
+        <input type="radio" id="scenario-consumo" name="scenario" value="consumo" onchange="simulatorState.setScenario('consumo')">
+        <label for="scenario-consumo">Solo consumo</label>
+        <input type="radio" id="scenario-viejo" name="scenario" value="viejo" onchange="simulatorState.setScenario('viejo')">
+        <label for="scenario-viejo">Datos viejos</label>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <label>Estados</label>
+      <div class="toggle-group">
+        <label class="toggle">
+          <input type="checkbox" checked onchange="simulatorState.setConnected(this.checked)">
+          <span class="toggle-switch"></span>
+          <span>BLE conectado</span>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" checked onchange="simulatorState.setDaemonSendsOC(this.checked)">
+          <span class="toggle-switch"></span>
+          <span>Daemon envía OC</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <label>Payload BLE</label>
+      <div class="payload-display">
+        <code id="payloadJson">{"k":"oc","ok":true}</code>
+      </div>
+      <div class="payload-bytes" id="payloadBytes">0 / 240 bytes</div>
+    </div>
+
+    <div class="nav-explanation">
+      <strong>Navegación (SPEC §6):</strong>
+      <ul style="margin-left: 20px; margin-top: 6px; font-size: 11px; line-height: 1.6;">
+        <li><strong>BOOT:</strong> &lt; 300 ms = pantalla anterior (o siguiente en boards sin SEC). ≥ 300 ms = Espacio (HID)</li>
+        <li><strong>SECONDARY:</strong> &lt; 300 ms = siguiente pantalla. ≥ 300 ms = Shift+Tab (HID)</li>
+        <li><strong>PWR:</strong> &lt; 3 s = brillo (Splash: escena). ≥ 3 s = emparejar</li>
+        <li><strong>Toque:</strong> siguiente pantalla (todos los boards)</li>
+        <li><em>Espacio y Shift+Tab salen ~300 ms después (hay que distinguir toque de mantener)</em></li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- SECTION B: Todas las variantes -->
+<h2>B — Todas las variantes</h2>
+<div class="section-b">
+  <div class="variants-grid" id="variantsGrid"></div>
+</div>
+
+<!-- SECTION C: Paleta y tipografía -->
+<h2>C — Paleta y tipografía</h2>
+<div class="section-c">
+  <div class="palette-section">
+    <h3>Colores</h3>
+    <div id="colorPalette"></div>
+  </div>
+
+  <div class="palette-section">
+    <h3>IBM Plex Mono</h3>
+    <div class="typography-section">
+      <div class="type-specimen"><span class="type-48">48px</span></div>
+      <div class="type-specimen"><span class="type-40">40px</span></div>
+      <div class="type-specimen"><span class="type-24">24px</span></div>
+      <div class="type-specimen"><span class="type-20">20px</span></div>
+      <div class="type-specimen"><span class="type-18">18px</span></div>
+      <div class="type-specimen"><span class="type-16">16px</span></div>
+      <div class="type-specimen"><span class="type-14">14px</span></div>
+      <div class="type-specimen"><span class="type-12">12px</span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// === Tokens from SPEC §3 ===
+const tokens = {
+  bg: '#000000',
+  element: '#1e1e1e',
+  border: '#3c3c3c',
+  text: '#eeeeee',
+  muted: '#808080',
+  primary: '#fab283',
+  error: '#e06c75',
+  success: '#7fd88f',
+  logo_outer: '#F1ECEC',
+  logo_inner: '#4B4646'
+};
+
+// === Scenarios (SPEC §8, brief §D) ===
+const scenarios = {
+  real: { k: 'oc', ok: true, src: 'api', p5: 0, r5: -1, pw: 0, rw: 9430, pm: 3, rm: 20354, st: 'ok', t7: 106969, m: 'ds-v4.1-flash', ms: 93, a: 0, ag: 'build', la: 1260 },
+  activa: { k: 'oc', ok: true, src: 'api', p5: 37, r5: 134, pw: 22, rw: 5040, pm: 5, rm: 20354, st: 'ok', t7: 112400, m: 'ds-v4.1-flash', ms: 88, a: 1, ag: 'build', la: 5 },
+  varias: { k: 'oc', ok: true, src: 'api', p5: 58, r5: 71, pw: 41, rw: 5040, pm: 9, rm: 20354, st: 'ok', t7: 131700, m: 'kimi-k3', ms: 61, a: 2, ag: 'plan', la: 3 },
+  cerca: { k: 'oc', ok: true, src: 'api', p5: 91, r5: 42, pw: 78, rw: 2880, pm: 31, rm: 20354, st: 'ok', t7: 131700, m: 'ds-v4.1-flash', ms: 81, a: 1, ag: 'plan', la: 12 },
+  limite: { k: 'oc', ok: true, src: 'api', p5: 100, r5: 18, pw: 83, rw: 2880, pm: 33, rm: 20354, st: 'limited', t7: 131700, m: 'ds-v4.1-flash', ms: 81, a: 0, ag: 'plan', la: 240 },
+  est: { k: 'oc', ok: true, src: 'est', p5: 12, r5: 250, pw: 8, rw: 9430, pm: 2, rm: 20354, st: 'ok', t7: 108200, m: 'ds-v4.1-flash', ms: 92, a: 1, ag: 'build', la: 20 },
+  consumo: { k: 'oc', ok: true, src: 'none', t7: 106969, m: 'ds-v4.1-flash', ms: 93, a: 0, ag: 'build', la: 1260, tk: 3221, cd: 0, c7: 1.10 },
+  viejo: { k: 'oc', ok: true, src: 'api', p5: 0, r5: -1, pw: 0, rw: 9430, pm: 3, rm: 20354, st: 'ok', t7: 106969, m: 'ds-v4.1-flash', ms: 93, a: 0, ag: 'build', la: 1260 }
+};
+
+const boardSpecs = {
+  grande: { w: 480, h: 480 },
+  compacto: { w: 368, h: 448 },
+  chico: { w: 240, h: 240 }
+};
+
+// === Simulator State ===
+const simulatorState = {
+  board: 'grande',
+  scenario: 'real',
+  connected: true,
+  daemonSendsOC: true,
+  currentScreen: 'clawd', // clawd, claude, ocsplash, ocusage
+  brightness: 255,
+  ocSplash: null,
+  buttonDownTime: {},
+
+  setBoard(board) {
+    this.board = board;
+    this.currentScreen = 'clawd';
+    this.brightness = 255;
+    if (this.ocSplash) {
+      this.ocSplash.destroy();
+      this.ocSplash = null;
+    }
+    render();
+  },
+
+  setScenario(scenario) {
+    this.scenario = scenario;
+    render();
+  },
+
+  setConnected(connected) {
+    this.connected = connected;
+    if (!connected) this.currentScreen = 'clawd'; // BLE off → clawd
+    render();
+  },
+
+  setDaemonSendsOC(sends) {
+    this.daemonSendsOC = sends;
+    if (!sends && ['ocsplash', 'ocusage'].includes(this.currentScreen)) {
+      this.currentScreen = 'clawd';
+    }
+    if (this.ocSplash) {
+      this.ocSplash.destroy();
+      this.ocSplash = null;
+    }
+    render();
+  },
+
+  getScreenList() {
+    return this.daemonSendsOC
+      ? ['clawd', 'claude', 'ocsplash', 'ocusage']
+      : ['clawd', 'claude'];
+  },
+
+  getMood() {
+    const data = scenarios[this.scenario];
+    if (data.st === 'limited') return 'limited';
+    const maxUsage = Math.max(data.p5 || 0, data.pw || 0);
+    if (maxUsage >= 75) return 'near';
+    if ((data.a || 0) >= 2) return 'busy';
+    if ((data.a || 0) >= 1) return 'active';
+    return 'idle';
+  },
+
+  pressButtonDown(button, evt) {
+    this.buttonDownTime[button] = Date.now();
+  },
+
+  pressButtonUp(button, evt) {
+    const downTime = this.buttonDownTime[button] || 0;
+    const elapsed = Date.now() - downTime;
+    delete this.buttonDownTime[button];
+
+    if (button === 'boot') {
+      if (elapsed < 300) {
+        const screens = this.getScreenList();
+        const idx = screens.indexOf(this.currentScreen);
+        if (this.board === 'compacto') {
+          // 1.8" has no SEC: BOOT goes forward
+          this.currentScreen = screens[(idx + 1) % screens.length];
+        } else {
+          // Others: BOOT goes backward
+          this.currentScreen = screens[(idx - 1 + screens.length) % screens.length];
+        }
+        showPageIndicator();
+        render();
+      } else {
+        showToast(`Espacio mantenido ${(elapsed / 1000).toFixed(1)} s → HID (dictado)`);
+      }
+    } else if (button === 'sec') {
+      if (elapsed < 300) {
+        const screens = this.getScreenList();
+        const idx = screens.indexOf(this.currentScreen);
+        this.currentScreen = screens[(idx + 1) % screens.length];
+        showPageIndicator();
+        render();
+      } else {
+        showToast('Shift+Tab → HID (cambio de modo)');
+      }
+    } else if (button === 'pwr') {
+      if (elapsed < 3000) {
+        if (this.currentScreen === 'ocsplash' || this.currentScreen === 'clawd') {
+          const newScene = this.ocSplash ? this.ocSplash.nextScene() : 'scanner';
+          showToast(`PWR → escena: ${newScene}`);
+        } else {
+          // Cycle brightness: 64 → 128 → 200 → 255 → 64
+          const levels = [64, 128, 200, 255];
+          const idx = levels.indexOf(this.brightness);
+          this.brightness = levels[(idx + 1) % levels.length];
+          render();
+        }
+      } else {
+        showToast('PWR 3 s → modo emparejar');
+      }
+    }
+  },
+
+  cycleScreen() {
+    const screens = this.getScreenList();
+    const idx = screens.indexOf(this.currentScreen);
+    this.currentScreen = screens[(idx + 1) % screens.length];
+    showPageIndicator();
+    render();
+  }
+};
+
+function showToast(text) {
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.textContent = text;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 1200);
+}
+
+function renderPhysicalButtons() {
+  const container = document.getElementById('physicalButtons');
+  container.innerHTML = '';
+
+  const buttonConfigs = {
+    grande: [
+      { name: 'BOOT ◀', actions: 'toque ◀ · mantener: Espacio', id: 'boot' },
+      { name: 'PWR', actions: 'brillo · splash: escena · 3 s: emparejar', id: 'pwr' },
+      { name: 'SEC ▶', actions: 'toque ▶ · mantener: Shift+Tab', id: 'sec' }
+    ],
+    compacto: [
+      { name: 'BOOT ▶', actions: 'toque ▶ · mantener: Espacio (sin SEC)', id: 'boot' },
+      { name: 'PWR', actions: 'brillo · splash: escena · 3 s: emparejar', id: 'pwr' }
+    ],
+    chico: [
+      { name: 'BOOT ◀', actions: 'toque ◀ · mantener: Espacio', id: 'boot' },
+      { name: 'SEC ▶', actions: 'toque ▶ · mantener: Shift+Tab', id: 'sec' },
+      { name: 'PWR', actions: 'brillo · splash: escena · 3 s: emparejar', id: 'pwr' }
+    ]
+  };
+
+  const configs = buttonConfigs[simulatorState.board] || buttonConfigs.grande;
+
+  for (const btn of configs) {
+    const div = document.createElement('div');
+    div.className = 'physical-button';
+    div.innerHTML = `
+      <button
+        onpointerdown="simulatorState.pressButtonDown('${btn.id}', event)"
+        onpointerup="simulatorState.pressButtonUp('${btn.id}', event)"
+        onpointerleave="simulatorState.pressButtonUp('${btn.id}', event)"
+      >${btn.name}</button>
+      <div class="physical-button-actions">${btn.actions}</div>
+    `;
+    container.appendChild(div);
+  }
+}
+
+function showPageIndicator() {
+  const indicator = document.getElementById('pageIndicator');
+  const screens = simulatorState.getScreenList();
+  const current = screens.indexOf(simulatorState.currentScreen);
+
+  indicator.innerHTML = screens.map((_, i) =>
+    `<span class="${i === current ? 'active' : ''}"></span>`
+  ).join('');
+  indicator.style.animation = 'none';
+  setTimeout(() => {
+    indicator.style.animation = 'indicator-fade 1.5s ease-in-out';
+  }, 10);
+}
+
+// === Format utilities ===
+function formatTokens(thousands) {
+  if (thousands === undefined || thousands === null) return '—';
+  if (thousands < 1000) return thousands + 'k';
+  if (thousands < 1000000) return (thousands / 1000).toFixed(1) + 'M';
+  return (thousands / 1000000).toFixed(1) + 'B';
+}
+
+function formatMoney(usd) {
+  if (usd === undefined || usd === null) return '—';
+  return '$' + usd.toFixed(2);
+}
+
+function formatTime(seconds) {
+  if (seconds < 60) return seconds + 's';
+  const mins = Math.floor(seconds / 60);
+  if (mins < 60) return mins + 'm';
+  const hours = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  return hours + 'h ' + remMins + 'm';
+}
+
+function fmtMins(minutes) {
+  if (minutes === undefined || minutes === null || minutes < 0) return '—';
+  if (minutes >= 1440) {
+    const days = Math.floor(minutes / 1440);
+    const hours = Math.floor((minutes % 1440) / 60);
+    return `${days}d ${hours}h`;
+  }
+  if (minutes >= 60) {
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    return `${hours}h ${mins}m`;
+  }
+  return `${minutes}m`;
+}
+
+// === SVG Logos (cleaned IDs) ===
+function getLogoSVG(id) {
+  return `<svg width="40" height="50" viewBox="0 0 240 300" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g>
+<path d="M180 240H60V120H180V240Z" fill="#4B4646"/>
+<path d="M180 60H60V240H180V60ZM240 300H0V0H240V300Z" fill="#F1ECEC"/>
+</g>
+</svg>`;
+}
+
+function getWordmarkSVG(width, id) {
+  const scale = width / 641;
+  const height = Math.round(115 * scale);
+  return `<svg width="${width}" height="${height}" viewBox="0 0 641 115" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g>
+<path d="M49.2857 32.8573H16.4286V82.143H49.2857V32.8573ZM65.7143 98.5716H0V16.4287H65.7143V98.5716Z" fill="white"/>
+<path d="M98.5692 82.143H131.426V32.8573H98.5692V82.143ZM147.855 98.5716H98.5692V115H82.1406V16.4287H147.855V98.5716Z" fill="white"/>
+<path d="M230.003 65.7144H180.718V82.143H230.003V98.5716H164.289V16.4287H230.003V65.7144ZM180.718 49.2859H213.575V32.8573H180.718V49.2859Z" fill="white"/>
+<path d="M295.715 32.8573H262.858V98.5716H246.43V16.4287H295.715V32.8573ZM312.144 98.5716H295.715V32.8573H312.144V98.5716Z" fill="white"/>
+<path d="M394.285 32.8573H344.999V82.143H394.285V98.5716H328.57V16.4287H394.285V32.8573Z" fill="white"/>
+<path d="M459.997 32.8573H427.14V82.143H459.997V32.8573ZM476.425 98.5716H410.711V16.4287H476.425V98.5716Z" fill="white"/>
+<path d="M542.145 32.8571H509.288V82.1429H542.145V32.8571ZM558.574 98.5714H492.859V16.4286H542.145V0H558.574V98.5714Z" fill="white"/>
+<path d="M591.429 32.8573V49.2859H624.286V32.8573H591.429ZM640.714 65.7144H591.429V82.143H640.714V98.5716H575V16.4287H640.714V65.7144Z" fill="white"/>
+</g>
+</svg>`;
+}
+
+// === Anexo A: Coordinate table (source of truth) ===
+const L = {
+  grande: {
+    w: 480, h: 480,
+    logo: { x: 20, y: 24, w: 40, h: 50 },
+    wordmark: { x: 140, y: 32, w: 200 },
+    battery: { x: 412, y: 34, w: 40, h: 20 },
+    panel1: { x: 20, y: 96, w: 440, h: 132 },
+    panel2: { x: 20, y: 240, w: 440, h: 132 },
+    panelPadding: 16,
+    hero: { top: 12, size: 48 },
+    chip: { top: 18, h: 26, size: 18, px: 8 },
+    bar: { top: 72, segments: 34, w: 10, h: 20, gap: 2 },
+    costLine: { top: 104, size: 18 },
+    stats: { titlesTop: 386, valsTop: 410, cols: [20, 150, 370], size: 18, truncate: 12 },
+    status: { top: 448, size: 18, square: 10, textX: 38 },
+    pageIndicator: { centerY: 472 }
+  },
+  compacto: {
+    w: 368, h: 448,
+    logo: { x: 20, y: 22, w: 32, h: 40 },
+    wordmark: { x: 109, y: 30, w: 150 },
+    battery: { x: 316, y: 30, w: 32, h: 16 },
+    panel1: { x: 20, y: 80, w: 328, h: 116 },
+    panel2: { x: 20, y: 206, w: 328, h: 116 },
+    panelPadding: 14,
+    hero: { top: 10, size: 40 },
+    chip: { top: 14, h: 22, size: 16, px: 6 },
+    bar: { top: 60, segments: 25, w: 10, h: 16, gap: 2 },
+    costLine: { top: 92, size: 16 },
+    stats: { titlesTop: 334, valsTop: 356, cols: [20, 120, 276], size: 16, truncate: 9 },
+    status: { top: 404, size: 16, square: 8, textX: 34 },
+    pageIndicator: { centerY: 440 }
+  },
+  chico: {
+    w: 240, h: 240,
+    logo: { x: 8, y: 6, w: 16, h: 20 },
+    wordmark: { x: 70, y: 10, w: 100 },
+    battery: { x: 208, y: 10, w: 24, h: 12 },
+    panel1: { x: 8, y: 34, w: 224, h: 82 },
+    panel2: { x: 8, y: 122, w: 224, h: 82 },
+    panelPadding: 8,
+    hero: { top: 6, size: 24 },
+    chip: { top: 8, h: 16, size: 12, px: 5 },
+    bar: { top: 38, segments: 18, w: 9, h: 10, gap: 2 },
+    costLine: { top: 58, size: 12 },
+    stats: null,
+    status: { top: 214, size: 12, square: 6, textX: 18 },
+    pageIndicator: { centerY: 234 }
+  }
+};
+
+// === Main render function: OpenCode screen ===
+function renderOpenCode(container, sizeKey, data, uiState = {}) {
+  const layout = L[sizeKey];
+  if (!layout) return;
+
+  const { w, h } = layout;
+
+  const isSoloConsumo = data.src === 'none';
+  const isStale = uiState.stale || false;
+  const isOffline = uiState.offline || false;
+  const brightness = uiState.brightness || 255;
+  const active = data.a || 0;
+
+  // Clear and setup root container
+  container.innerHTML = '';
+  const root = document.createElement('div');
+  root.className = 'oc';
+  root.style.cssText = `
+    position: relative;
+    width: ${w}px;
+    height: ${h}px;
+    background: ${tokens.bg};
+    overflow: hidden;
+    font-family: 'IBM Plex Mono', monospace;
+    filter: brightness(${brightness / 255});
+  `;
+
+  // Helper to create absolutely positioned div
+  function createDiv(text = '', cssText = '') {
+    const div = document.createElement('div');
+    if (text) div.textContent = text;
+    div.style.cssText = `position:absolute;line-height:1;white-space:nowrap;margin:0;${cssText}`;
+    return div;
+  }
+
+  // Logo (SVG inline)
+  const logoSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  logoSvg.setAttribute('width', layout.logo.w);
+  logoSvg.setAttribute('height', layout.logo.h);
+  logoSvg.setAttribute('viewBox', '0 0 240 300');
+  logoSvg.style.cssText = `position:absolute;left:${layout.logo.x}px;top:${layout.logo.y}px;`;
+  const innerPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  innerPath.setAttribute('d', 'M180 240H60V120H180V240Z');
+  innerPath.setAttribute('fill', tokens.logo_inner);
+  logoSvg.appendChild(innerPath);
+  const outerPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  outerPath.setAttribute('d', 'M180 60H60V240H180V60ZM240 300H0V0H240V300Z');
+  outerPath.setAttribute('fill', tokens.logo_outer);
+  logoSvg.appendChild(outerPath);
+  root.appendChild(logoSvg);
+
+  // Wordmark (SVG inline)
+  const wordmarkWordmarkH = Math.round(layout.wordmark.w * 115 / 641);
+  const wordmarkSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  wordmarkSvg.setAttribute('width', layout.wordmark.w);
+  wordmarkSvg.setAttribute('height', wordmarkWordmarkH);
+  wordmarkSvg.setAttribute('viewBox', '0 0 641 115');
+  wordmarkSvg.style.cssText = `position:absolute;left:${layout.wordmark.x}px;top:${layout.wordmark.y}px;`;
+  const wordmarkPaths = [
+    'M49.2857 32.8573H16.4286V82.143H49.2857V32.8573ZM65.7143 98.5716H0V16.4287H65.7143V98.5716Z',
+    'M98.5692 82.143H131.426V32.8573H98.5692V82.143ZM147.855 98.5716H98.5692V115H82.1406V16.4287H147.855V98.5716Z',
+    'M230.003 65.7144H180.718V82.143H230.003V98.5716H164.289V16.4287H230.003V65.7144ZM180.718 49.2859H213.575V32.8573H180.718V49.2859Z',
+    'M295.715 32.8573H262.858V98.5716H246.43V16.4287H295.715V32.8573ZM312.144 98.5716H295.715V32.8573H312.144V98.5716Z',
+    'M394.285 32.8573H344.999V82.143H394.285V98.5716H328.57V16.4287H394.285V32.8573Z',
+    'M459.997 32.8573H427.14V82.143H459.997V32.8573ZM476.425 98.5716H410.711V16.4287H476.425V98.5716Z',
+    'M542.145 32.8571H509.288V82.1429H542.145V32.8571ZM558.574 98.5714H492.859V16.4286H542.145V0H558.574V98.5714Z',
+    'M591.429 32.8573V49.2859H624.286V32.8573H591.429ZM640.714 65.7144H591.429V82.143H640.714V98.5716H575V16.4287H640.714V65.7144Z'
+  ];
+  for (const pathD of wordmarkPaths) {
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', pathD);
+    p.setAttribute('fill', 'white');
+    wordmarkSvg.appendChild(p);
+  }
+  root.appendChild(wordmarkSvg);
+
+  // Battery
+  const batteryDiv = createDiv();
+  batteryDiv.style.cssText += `left:${layout.battery.x}px;top:${layout.battery.y}px;width:${layout.battery.w}px;height:${layout.battery.h}px;border:1px solid ${tokens.text};`;
+  const batteryFill = document.createElement('div');
+  batteryFill.style.cssText = `position:absolute;left:2px;top:2px;width:${Math.round(layout.battery.w * 0.7 * 0.8)}px;height:${layout.battery.h - 4}px;background:${tokens.text};`;
+  batteryDiv.appendChild(batteryFill);
+  root.appendChild(batteryDiv);
+
+  // Opacity wrapper for panels + stats
+  const dimmedGroup = document.createElement('div');
+  dimmedGroup.style.cssText = `position:absolute;width:${w}px;height:${h}px;opacity:${isStale || isOffline ? '0.4' : '1'};`;
+
+  // Helper to render a panel
+  const renderPanel = (panelLayout, isPanel1) => {
+    const pct = isPanel1 ? (data.p5 || 0) : (data.pw || 0);
+    const resetsMins = isPanel1 ? (data.r5 || 0) : (data.rw || 0);
+    const isHighUsage = pct >= 85 || data.st === 'limited';
+    const isLimited = data.st === 'limited';
+
+    const panelDiv = createDiv();
+    panelDiv.style.cssText += `left:${panelLayout.x}px;top:${panelLayout.y}px;width:${panelLayout.w}px;height:${panelLayout.h}px;box-sizing:border-box;border:1px solid ${tokens.border};`;
+
+    // Hero
+    let heroText;
+    if (isSoloConsumo) {
+      heroText = formatTokens(isPanel1 ? data.tk : data.t7);
+    } else {
+      heroText = pct + '%';
+    }
+    const heroDiv = createDiv(
+      heroText,
+      `left:${layout.panelPadding}px;top:${layout.hero.top}px;font-size:${layout.hero.size}px;font-weight:500;color:${tokens.text};`
+    );
+    panelDiv.appendChild(heroDiv);
+
+    // Chip
+    let chipText;
+    if (isSoloConsumo) {
+      chipText = isPanel1 ? 'today' : '7 days';
+    } else {
+      chipText = isPanel1 ? '5h' : 'week';
+      if (data.src === 'est') chipText += ' · est.';
+      if (isLimited && pct >= 100) chipText = 'limit';
+    }
+    const chipColor = isHighUsage ? tokens.error : tokens.primary;
+    const chipDiv = createDiv(
+      chipText,
+      `right:${layout.panelPadding}px;top:${layout.chip.top}px;height:${layout.chip.h}px;line-height:${layout.chip.h}px;font-size:${layout.chip.size}px;padding:0 ${layout.chip.px}px;background:${tokens.element};color:${chipColor};`
+    );
+    panelDiv.appendChild(chipDiv);
+
+    // Bar (only if not solo consumo)
+    if (!isSoloConsumo) {
+      const barDiv = document.createElement('div');
+      barDiv.style.cssText = `position:absolute;left:${layout.panelPadding}px;top:${layout.bar.top}px;display:flex;gap:${layout.bar.gap}px;`;
+      const filledCount = Math.round((pct / 100) * layout.bar.segments);
+      for (let i = 0; i < layout.bar.segments; i++) {
+        const seg = document.createElement('div');
+        seg.style.cssText = `width:${layout.bar.w}px;height:${layout.bar.h}px;background:${i < filledCount ? (isHighUsage ? tokens.error : tokens.primary) : tokens.element};`;
+        barDiv.appendChild(seg);
+      }
+      panelDiv.appendChild(barDiv);
+    }
+
+    // Reset/Cost line
+    let resetText;
+    if (isSoloConsumo) {
+      resetText = formatMoney(isPanel1 ? data.cd : data.c7) + ' spent';
+    } else {
+      if (isPanel1 && data.r5 === -1) {
+        resetText = 'No active window';
+      } else {
+        resetText = 'Resets in ' + fmtMins(resetsMins);
+      }
+    }
+    const resetDiv = createDiv(
+      resetText,
+      `left:${layout.panelPadding}px;top:${layout.costLine.top}px;font-size:${layout.costLine.size}px;color:${tokens.muted};`
+    );
+    panelDiv.appendChild(resetDiv);
+
+    return panelDiv;
+  };
+
+  dimmedGroup.appendChild(renderPanel(layout.panel1, true));
+  dimmedGroup.appendChild(renderPanel(layout.panel2, false));
+
+  // Stats block (Grande/Compacto only)
+  if (layout.stats) {
+    let titles, values;
+    if (isSoloConsumo) {
+      titles = ['7d tokens', 'top model', '7d cost'];
+      const modelTruncated = data.m.length > layout.stats.truncate
+        ? data.m.substring(0, layout.stats.truncate) + '…'
+        : data.m;
+      values = [
+        formatTokens(data.t7),
+        modelTruncated + ' ' + data.ms + '%',
+        formatMoney(data.c7)
+      ];
+    } else {
+      titles = ['7d tokens', 'top model', 'month'];
+      const modelTruncated = data.m.length > layout.stats.truncate
+        ? data.m.substring(0, layout.stats.truncate) + '…'
+        : data.m;
+      const daysRemaining = Math.round(data.rm / 1440);
+      values = [
+        formatTokens(data.t7),
+        modelTruncated + ' ' + data.ms + '%',
+        data.pm + '% · ' + daysRemaining + 'd'
+      ];
+    }
+
+    for (let i = 0; i < 3; i++) {
+      const titleDiv = createDiv(
+        titles[i],
+        `left:${layout.stats.cols[i]}px;top:${layout.stats.titlesTop}px;font-size:${layout.stats.size}px;color:${tokens.text};`
+      );
+      dimmedGroup.appendChild(titleDiv);
+
+      const valueDiv = createDiv(
+        values[i],
+        `left:${layout.stats.cols[i]}px;top:${layout.stats.valsTop}px;font-size:${layout.stats.size}px;color:${tokens.muted};`
+      );
+      dimmedGroup.appendChild(valueDiv);
+    }
+  }
+
+  root.appendChild(dimmedGroup);
+
+  // Status line (NOT in dimmed group)
+  let statusText = '';
+  let statusColor = tokens.muted;
+
+  if (isOffline) {
+    statusText = '○ bluetooth disconnected';
+    statusColor = tokens.error;
+  } else if (isStale) {
+    statusText = '○ stale · updated 12m ago';
+    statusColor = tokens.error;
+  } else if (active >= 1) {
+    statusText = data.ag + ' · working';
+    statusColor = tokens.text;
+  } else {
+    statusText = 'idle · last activity ' + formatTime(data.la);
+    statusColor = tokens.muted;
+  }
+
+  // Status line with dot and text
+  const statusLineDiv = document.createElement('div');
+  statusLineDiv.style.cssText = `position:absolute;left:0;top:${layout.status.top}px;width:100%;`;
+
+  if (active >= 1) {
+    // Active: green square + text
+    const dotDiv = document.createElement('div');
+    dotDiv.style.cssText = `position:absolute;left:${layout.panelPadding}px;top:0;width:${layout.status.square}px;height:${layout.status.square}px;background:${tokens.success};animation:blink 1s infinite;`;
+    statusLineDiv.appendChild(dotDiv);
+
+    const textDiv = createDiv(
+      statusText,
+      `left:${layout.status.textX}px;font-size:${layout.status.size}px;color:${statusColor};`
+    );
+    statusLineDiv.appendChild(textDiv);
+  } else {
+    // Idle/Stale/Offline: just text (no square)
+    const textDiv = createDiv(
+      statusText,
+      `left:${layout.panelPadding}px;font-size:${layout.status.size}px;color:${statusColor};`
+    );
+    statusLineDiv.appendChild(textDiv);
+  }
+
+  root.appendChild(statusLineDiv);
+
+  container.appendChild(root);
+}
+
+// === Simulator render ===
+function render() {
+  const specs = boardSpecs[simulatorState.board];
+  const deviceScreen = document.getElementById('deviceScreen');
+  deviceScreen.style.width = specs.w + 'px';
+  deviceScreen.style.height = specs.h + 'px';
+
+  // Get current data
+  const data = { ...scenarios[simulatorState.scenario] };
+
+  // Cleanup OCSplash if switching away from ocsplash
+  if (simulatorState.currentScreen !== 'ocsplash' && simulatorState.ocSplash) {
+    simulatorState.ocSplash.destroy();
+    simulatorState.ocSplash = null;
+  }
+
+  // Determine what to show
+  let content = '';
+  if (simulatorState.currentScreen === 'clawd') {
+    content = `<img src="../../screenshots/splash.gif" style="width:100%;height:100%;object-fit:contain;background:#000;">`;
+    deviceScreen.innerHTML = content;
+  } else if (simulatorState.currentScreen === 'claude') {
+    content = `<img src="../../screenshots/usage.png" style="width:100%;height:100%;object-fit:contain;background:#000;">`;
+    deviceScreen.innerHTML = content;
+  } else if (simulatorState.currentScreen === 'ocsplash') {
+    // Setup OCSplash if not already done
+    if (!simulatorState.ocSplash) {
+      const canvas = document.createElement('canvas');
+      canvas.width = specs.w;
+      canvas.height = specs.h;
+      if (window.OCSplash) {
+        simulatorState.ocSplash = OCSplash.create(canvas);
+        simulatorState.ocSplash.setMood(simulatorState.getMood());
+      } else {
+        const div = document.createElement('div');
+        div.style.cssText = `width:${specs.w}px;height:${specs.h}px;background:#000;color:#444;display:flex;align-items:center;justify-content:center;font-size:12px;`;
+        div.textContent = 'oc-splash.js no cargado';
+        deviceScreen.innerHTML = '';
+        deviceScreen.appendChild(div);
+        return;
+      }
+      deviceScreen.innerHTML = '';
+      deviceScreen.appendChild(canvas);
+    }
+  } else if (simulatorState.currentScreen === 'ocusage') {
+    const tempDiv = document.createElement('div');
+    renderOpenCode(tempDiv, simulatorState.board, data, {
+      offline: !simulatorState.connected,
+      stale: simulatorState.scenario === 'viejo',
+      brightness: simulatorState.brightness
+    });
+    deviceScreen.innerHTML = tempDiv.innerHTML;
+  }
+
+  // Update info line
+  const screenNames = { clawd: 'Clawd', claude: 'Claude', ocsplash: 'OCSplash', ocusage: 'OCUsage' };
+  document.getElementById('deviceInfo').textContent =
+    `Pantalla: ${screenNames[simulatorState.currentScreen]} · ${simulatorState.brightness} / 255`;
+
+  // Update payload (compact, omit keys marked —)
+  const payload = {};
+  payload.k = 'oc';
+  payload.ok = true;
+  if (data.src) payload.src = data.src;
+  if (data.p5 !== undefined) payload.p5 = data.p5;
+  if (data.r5 !== undefined) payload.r5 = data.r5;
+  if (data.pw !== undefined) payload.pw = data.pw;
+  if (data.rw !== undefined) payload.rw = data.rw;
+  if (data.pm !== undefined) payload.pm = data.pm;
+  if (data.rm !== undefined) payload.rm = data.rm;
+  if (data.st) payload.st = data.st;
+  if (data.t7) payload.t7 = data.t7;
+  if (data.m) payload.m = data.m;
+  if (data.ms) payload.ms = data.ms;
+  if (data.a !== undefined) payload.a = data.a;
+  if (data.ag) payload.ag = data.ag;
+  if (data.la) payload.la = data.la;
+  if (data.tk) payload.tk = data.tk;
+  if (data.cd !== undefined) payload.cd = data.cd;
+  if (data.c7) payload.c7 = data.c7;
+
+  const payloadStr = JSON.stringify(payload);
+  const bytes = new Blob([payloadStr]).size;
+  document.getElementById('payloadJson').textContent = payloadStr;
+  const payloadBytesEl = document.getElementById('payloadBytes');
+  payloadBytesEl.textContent = bytes + ' / 240 bytes';
+  payloadBytesEl.className = 'payload-bytes' + (bytes > 240 ? ' warning' : '');
+
+  // Render physical buttons
+  renderPhysicalButtons();
+
+  // Set tap handler
+  deviceScreen.onclick = () => simulatorState.cycleScreen();
+}
+
+// === Variants grid ===
+function buildVariantsGrid() {
+  const grid = document.getElementById('variantsGrid');
+  const boardSizes = ['grande', 'compacto', 'chico'];
+  const boardNames = { grande: '2.16" 480×480', compacto: '1.8" 368×448', chico: '1.54" 240×240' };
+
+  // Calculate grid columns based on board sizes
+  let minWidth = 0;
+  for (const board of boardSizes) {
+    const w = boardSpecs[board].w;
+    minWidth = Math.max(minWidth, w);
+  }
+  grid.style.gridTemplateColumns = 'repeat(auto-fit, minmax(' + (minWidth + 40) + 'px, 1fr))';
+
+  // --- Section 1: Usage screens ---
+  const section1 = document.createElement('div');
+  section1.style.cssText = 'grid-column: 1/-1;';
+
+  const section1Title = document.createElement('h3');
+  section1Title.textContent = 'Pantalla de uso';
+  section1Title.style.cssText = 'margin-bottom: 20px; font-size: 14px; color: #bbb;';
+  section1.appendChild(section1Title);
+
+  const section1Grid = document.createElement('div');
+  section1Grid.style.cssText = 'display:grid;gap:40px;grid-template-columns:repeat(auto-fit,minmax(' + (minWidth + 40) + 'px,1fr));';
+
+  const scenarioLabels = {
+    activa: 'Sesión activa',
+    cerca: 'Cerca del límite',
+    limite: 'Límite alcanzado',
+    est: 'Estimado',
+    consumo: 'Solo consumo',
+    viejo: 'Datos viejos'
+  };
+  const scenariosToShow = ['activa', 'cerca', 'limite', 'est', 'consumo', 'viejo'];
+
+  for (const board of boardSizes) {
+    for (const scenario of scenariosToShow) {
+      const data = { ...scenarios[scenario] };
+
+      const cell = document.createElement('div');
+      cell.className = 'variant-cell';
+
+      const caption = document.createElement('div');
+      caption.className = 'variant-caption';
+      caption.textContent = boardNames[board] + ' — ' + scenarioLabels[scenario];
+      cell.appendChild(caption);
+
+      const screenDiv = document.createElement('div');
+      screenDiv.className = 'variant-screen';
+      const specs = boardSpecs[board];
+      screenDiv.style.width = specs.w + 'px';
+      screenDiv.style.height = specs.h + 'px';
+
+      renderOpenCode(screenDiv, board, data, {
+        stale: scenario === 'viejo'
+      });
+
+      cell.appendChild(screenDiv);
+      section1Grid.appendChild(cell);
+    }
+  }
+
+  section1.appendChild(section1Grid);
+  grid.appendChild(section1);
+
+  // --- Section 2: Splash screens ---
+  const section2 = document.createElement('div');
+  section2.style.cssText = 'grid-column: 1/-1; margin-top: 40px;';
+
+  const section2Title = document.createElement('h3');
+  section2Title.textContent = 'Splash OpenCode';
+  section2Title.style.cssText = 'margin-bottom: 20px; font-size: 14px; color: #bbb;';
+  section2.appendChild(section2Title);
+
+  const section2Grid = document.createElement('div');
+  section2Grid.style.cssText = 'display:grid;gap:40px;grid-template-columns:repeat(auto-fit,minmax(' + (minWidth + 40) + 'px,1fr));';
+
+  const moodLabels = {
+    idle: 'idle',
+    active: 'active',
+    near: 'near',
+    limited: 'limited'
+  };
+  const moodsToShow = ['idle', 'active', 'near', 'limited'];
+
+  for (const board of boardSizes) {
+    for (const mood of moodsToShow) {
+      const cell = document.createElement('div');
+      cell.className = 'variant-cell';
+
+      const sceneForMood = mood === 'idle' ? 'typeon' : 'scanner';
+      const caption = document.createElement('div');
+      caption.className = 'variant-caption';
+      caption.textContent = boardNames[board] + ' — ' + mood + ' (' + sceneForMood + ')';
+      cell.appendChild(caption);
+
+      const screenDiv = document.createElement('div');
+      screenDiv.className = 'variant-screen';
+      const specs = boardSpecs[board];
+      screenDiv.style.width = specs.w + 'px';
+      screenDiv.style.height = specs.h + 'px';
+
+      if (window.OCSplash) {
+        const canvas = document.createElement('canvas');
+        canvas.width = specs.w;
+        canvas.height = specs.h;
+        const s = OCSplash.create(canvas);
+        s.setMood(mood);
+        screenDiv.appendChild(canvas);
+        setTimeout(() => s.destroy(), 5000);
+      } else {
+        screenDiv.style.cssText = `background:#000;color:#444;display:flex;align-items:center;justify-content:center;font-size:12px;width:${specs.w}px;height:${specs.h}px;`;
+        screenDiv.textContent = 'OCSplash.js no cargado';
+      }
+
+      cell.appendChild(screenDiv);
+      section2Grid.appendChild(cell);
+    }
+  }
+
+  section2.appendChild(section2Grid);
+  grid.appendChild(section2);
+}
+
+// === Palette display ===
+function buildPalette() {
+  const paletteDiv = document.getElementById('colorPalette');
+  const colors = [
+    { name: 'bg', hex: tokens.bg },
+    { name: 'element', hex: tokens.element },
+    { name: 'border', hex: tokens.border },
+    { name: 'text', hex: tokens.text },
+    { name: 'muted', hex: tokens.muted },
+    { name: 'primary', hex: tokens.primary },
+    { name: 'error', hex: tokens.error },
+    { name: 'success', hex: tokens.success }
+  ];
+
+  paletteDiv.innerHTML = colors.map(c => `
+    <div class="color-swatch">
+      <div class="color-box" style="background:${c.hex};"></div>
+      <div class="color-info">
+        <div class="color-name">${c.name}</div>
+        <div class="color-value">${c.hex}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// === Init ===
+document.addEventListener('DOMContentLoaded', () => {
+  render();
+  buildVariantsGrid();
+  buildPalette();
+  showPageIndicator();
+});
+</script>
+
+</body>
+</html>

@@ -14,6 +14,25 @@ reuse any of this work.
 Changes made in this fork are my own and are not endorsed by the upstream
 author.
 
+## Third-party assets
+
+- **OpenCode logo and wordmark** — the mark and wordmark on the OpenCode screens
+  are redrawn as pixel grids from the official SVGs in
+  [anomalyco/opencode](https://github.com/anomalyco/opencode), which is MIT
+  licensed ("Copyright (c) 2025 opencode"). The MIT text grants use of the files
+  but says nothing about trademark rights, and that repo carries no separate
+  trademark policy. **"OpenCode" is a trademark of its owners.** This fork is
+  unaffiliated; nothing here implies endorsement by, or affiliation with, the
+  OpenCode project. The art is unaltered apart from the brand palette recorded
+  in `design/opencode-screen/SPEC.md` §3. Confirm the terms on
+  <https://opencode.ai/brand> before redistributing.
+- **IBM Plex Mono** — the type family of the OpenCode screens
+  (`firmware/src/font_plex_*.c`), from [IBM/plex](https://github.com/IBM/plex)
+  under the **SIL Open Font License 1.1**. The license text is vendored next to
+  the TTFs it covers, at `assets/fonts/OFL.txt`.
+- **Lucide** — the bluetooth and battery UI glyphs, MIT
+  ([lucide.dev](https://lucide.dev)).
+
 ## Licensing status
 
 **This fork has no license of its own, and neither does upstream.**
