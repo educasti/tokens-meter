@@ -2,6 +2,9 @@
 firmware/.pio/
 firmware/.vscode/
 
+# Editor settings
+.vscode/
+
 # OS
 .DS_Store
 
