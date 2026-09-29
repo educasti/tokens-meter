@@ -8,6 +8,8 @@
 #include "ui.h"
 #include "ble.h"
 #include "splash.h"
+#include "oc_splash.h"
+#include "oc_data.h"
 #include "usage_rate.h"
 #include "idle.h"
 #include "idle_cfg.h"
@@ -22,6 +24,7 @@
 #include "hal/sound_hal.h"
 
 static UsageData usage = {};
+static OcData    oc = {};
 
 // ---- LVGL draw buffers (partial render mode) ----
 // PSRAM-equipped boards (S3) can comfortably hold larger strips. PSRAM-free
@@ -285,6 +288,11 @@ static void pair_tick(void) {
     }
 }
 
+// Press longer than this and the button stops being navigation and becomes a
+// held HID key (SPEC.md §6). The cost of the change is that both keys now go
+// out ~300 ms later than a direct press-and-hold used to.
+#define BUTTON_HOLD_MS 300
+
 void loop() {
     idle_tick();
     lv_timer_handler();
@@ -294,6 +302,8 @@ void loop() {
     imu_hal_tick();
     sound_hal_tick();
     splash_tick();
+    // No-op unless the OpenCode splash owns the shared canvas (oc_splash.h).
+    oc_splash_tick();
     splash_mascot_tick();
     // Rotation transition (blank + ramp) would fight the idle fade — skip
     // ticks while the panel is dark. A rotation that happens during sleep
@@ -301,51 +311,92 @@ void loop() {
     if (!idle_is_asleep()) display_hal_tick();
 
     // ---- Physical buttons ----
-    //   PRIMARY   → HID Space  (Claude Code voice-mode PTT)
-    //   SECONDARY → HID Shift+Tab  (mode toggle; only if the board has one)
-    //   PWR       → on splash: cycle animations; on usage: cycle brightness;
-    //               hold ~3s + release: pairing mode
+    // Tap vs hold (SPEC.md §6): a press released before HOLD_MS navigates the
+    // screen cycle; a press still down at HOLD_MS sends the HID key and holds
+    // it until release, so voice-mode PTT and the mode toggle keep working
+    // while a tap can no longer be mistaken for a keypress.
+    //   PRIMARY   → tap: previous screen (next on single-button boards)
+    //               hold: HID Space held down  (Claude Code voice-mode PTT)
+    //   SECONDARY → tap: next screen
+    //               hold: HID Shift+Tab held down (mode toggle; 2-button boards)
+    //   PWR       → on the Clawd splash: next animation; on the OpenCode
+    //               splash: next scene; elsewhere: cycle brightness
+    //   touch      → next screen (ui.cpp's global_click_cb)
+    //   hold PWR ~3s + release → pairing, unchanged
     // First press from sleep is consumed as a wake-only event by
-    // idle_consume_wake_press(); the normal action fires from the second
-    // press. Activity bookkeeping happens inside idle_consume_wake_press
-    // so no separate idle_note_activity() call is needed here.
+    // idle_consume_wake_press(); a swallowed press does nothing at all until
+    // release. Activity bookkeeping happens inside idle_consume_wake_press, so
+    // a navigation needs no separate idle_note_activity() call.
     {
-        static bool primary_was = false;
-        static bool primary_wake_swallowed = false;
-        bool primary_now = input_hal_is_held(INPUT_BTN_PRIMARY);
-        if (primary_now != primary_was) {
-            if (primary_now) {
-                if (idle_consume_wake_press()) primary_wake_swallowed = true;
-                else                            ble_keyboard_press(0x2C, 0);  // HID Space, no mods
-            } else {
-                if (primary_wake_swallowed) primary_wake_swallowed = false;
-                else                        ble_keyboard_release();
-            }
-            primary_was = primary_now;
-        }
+        // Per-button tap/hold state. The loop is edge-driven for the two edges
+        // and level-driven for the hold deadline, so a press is classified
+        // exactly once no matter how the loop's timing lines up with it.
+        struct btn_state {
+            bool     down;            // currently held
+            bool     wake_swallowed;  // this press was eaten waking the panel
+            bool     hid_sent;        // HID key already sent for this press
+            uint32_t down_ms;
+            uint8_t  hid_key, hid_mod;
+            int      nav_dir;         // tap action: -1 previous, +1 next
+        };
+        static btn_state primary   = {};
+        static btn_state secondary = {};
+        primary.hid_key   = 0x2C;    // HID Space, no mods
+        primary.hid_mod   = 0x00;
+        secondary.hid_key = 0x2B;    // HID Tab
+        secondary.hid_mod = 0x02;    // + LEFT_SHIFT
 
-        if (board_caps().button_count >= 2) {
-            static bool secondary_was = false;
-            static bool secondary_wake_swallowed = false;
-            bool secondary_now = input_hal_is_held(INPUT_BTN_SECONDARY);
-            if (secondary_now != secondary_was) {
-                if (secondary_now) {
-                    if (idle_consume_wake_press()) secondary_wake_swallowed = true;
-                    else                            ble_keyboard_press(0x2B, 0x02);  // HID Tab + LEFT_SHIFT
+        // On a one-button board PRIMARY is the only way forward, so it walks
+        // the cycle in the same direction as SECONDARY.
+        primary.nav_dir = (board_caps().button_count >= 2) ? -1 : +1;
+        secondary.nav_dir = +1;
+
+        auto tick_button = [](btn_state& b, bool now) {
+            if (now != b.down) {
+                if (now) {
+                    // Press edge: a wake is consumed first, and then this press
+                    // does nothing until release.
+                    b.wake_swallowed = idle_consume_wake_press();
+                    b.hid_sent = false;
+                    b.down_ms = millis();
                 } else {
-                    if (secondary_wake_swallowed) secondary_wake_swallowed = false;
-                    else                          ble_keyboard_release();
+                    // Release edge: only a press that already sent a key needs
+                    // the release report; a tap navigates, a swallowed press
+                    // does nothing.
+                    if (b.hid_sent) {
+                        ble_keyboard_release();
+                    } else if (!b.wake_swallowed) {
+                        if (b.nav_dir < 0) ui_prev_screen();
+                        else               ui_next_screen();
+                    }
                 }
-                secondary_was = secondary_now;
+                b.down = now;
+                return;
             }
+            // Still held: the HID key goes down once the tap window closes,
+            // and stays down (repeat is not needed — the host's key-repeat
+            // handles the rest) until release.
+            if (now && !b.wake_swallowed && !b.hid_sent &&
+                (millis() - b.down_ms) >= BUTTON_HOLD_MS) {
+                b.hid_sent = true;
+                ble_keyboard_press(b.hid_key, b.hid_mod);
+            }
+        };
+
+        tick_button(primary, input_hal_is_held(INPUT_BTN_PRIMARY));
+        if (board_caps().button_count >= 2) {
+            tick_button(secondary, input_hal_is_held(INPUT_BTN_SECONDARY));
         }
 
         if (power_hal_pwr_pressed()) {
             if (!idle_consume_wake_press()) {
-                // On splash: cycle animations. On the usage view: cycle
-                // screen brightness (single non-splash view, no more screens).
-                if (ui_get_current_screen() == SCREEN_SPLASH) splash_next();
-                else                                          brightness_cycle();
+                // Each splash owns a scene/animation of its own; the two usage
+                // screens have nothing to cycle, so brightness it is.
+                switch (ui_get_current_screen()) {
+                case SCREEN_SPLASH:    splash_next(); break;
+                case SCREEN_OC_SPLASH: oc_splash_next_scene(); break;
+                default:               brightness_cycle(); break;
+                }
             }
         }
 
@@ -372,7 +423,19 @@ void loop() {
     check_serial_cmd();
 
     if (ble_has_data()) {
-        if (parse_json(ble_get_data(), &usage)) {
+        // Route on the payload tag (SPEC.md §8): an OpenCode beat never touches
+        // the Claude path — no usage-rate sample, no chime, no ui_update — and
+        // vice versa. oc_is_payload() is a substring test, so this costs
+        // nothing next to the parse either way.
+        const char* msg = ble_get_data();
+        if (oc_is_payload(msg)) {
+            if (oc_parse(msg, &oc)) {
+                ui_update_opencode(&oc);
+                ble_send_ack();
+            } else {
+                ble_send_nack();
+            }
+        } else if (parse_json(msg, &usage)) {
             int g_before = usage_rate_group();
             bool session_reset = usage_rate_sample(usage.session_pct);
             int g_after = usage_rate_group();

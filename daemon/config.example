@@ -42,3 +42,18 @@ chime = off
 #   12   = show the clock, forced 12-hour  (e.g. 6:28 PM)
 #   24   = show the clock, forced 24-hour  (e.g. 18:28)
 clock = off
+
+# Send the OpenCode usage screens as well (macOS daemon). When on, the daemon
+# polls OpenCode every 60s — independently of Claude, so the OpenCode screens
+# keep working even when Claude has no token — and sends its payload 250ms
+# after the Claude one.
+#   off = Claude screens only (default, and the only ones in the screen cycle)
+#   on  = the OpenCode splash + usage screens join the cycle
+# With `off` the device behaves exactly as before.
+opencode = off
+# Optional: point the daemon at a non-standard OpenCode install. Both are
+# optional and default to the standard locations; ~ is expanded.
+#   opencode_db   = ~/.local/share/opencode/opencode.db  (read-only, WAL-aware)
+#   opencode_auth = ~/.local/share/opencode/auth.json    (holds the Go key)
+# opencode_db = ~/.local/share/opencode/opencode.db
+# opencode_auth = ~/.local/share/opencode/auth.json

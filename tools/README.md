@@ -34,3 +34,28 @@ node png_to_lvgl.js input.png symbol_name [W_MACRO] [H_MACRO] [--tint=RRGGBB | -
 Converts an alpha PNG to an LVGL RGB565A8 C array. Default tint is white —
 Lucide PNGs ship black-on-transparent and would render invisible without it.
 Paste the output into `firmware/src/icons.h`.
+
+## OpenCode logo
+
+```bash
+node gen_oc_logo.js [--out FILE]
+```
+
+Generates `firmware/src/oc_logo.h` — the OpenCode mark and wordmark as LVGL
+image descriptors. Unlike the icon converter, no SVG or PNG input is needed: the
+art lives in the script as two small pixel grids (from
+`design/opencode-screen/IMPL.md`, themselves redrawn from the official SVGs in
+[anomalyco/opencode](https://github.com/anomalyco/opencode), MIT), and each cell
+is expanded to a square block. That keeps every size pixel-crisp instead of
+resampled.
+
+Emits six descriptors at the three layout breakpoints — `oc_mark_{l,m,s}` at
+10/8/4 px per cell (40×50, 32×40, 16×20) and `oc_wordmark_{l,m,s}` at 5/4/3
+(195×35, 156×28, 117×21) — as `LV_COLOR_FORMAT_RGB565` on an opaque black
+background, with `*_W` / `*_H` macros. They are `static const` in a header,
+like `logo.h`. The file is generated: edit the grids in the script, not the
+output. Rebuild the firmware afterwards.
+
+Provenance and trademark note: `ATTRIBUTION.md`. The type that goes with these
+screens, IBM Plex Mono, is generated separately with `lv_font_conv` — see
+`docs/fonts.md`.

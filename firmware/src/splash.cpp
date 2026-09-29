@@ -42,6 +42,10 @@ static uint32_t frame_started_ms = 0;
 static uint32_t last_pick_ms = 0;
 static bool active = false;
 
+// Another module owns the canvas right now (oc_splash). Clawd's state is left
+// untouched — only the advance is gated — so it resumes mid-pose afterwards.
+static bool external = false;
+
 // While splash is showing, auto-cycle to the next animation in the current
 // rate-driven group every this many ms.
 #define SPLASH_ROTATE_INTERVAL_MS 20000
@@ -273,8 +277,25 @@ static int             scr_offx  = 0;      // centering offsets (square art on p
 static int             scr_offy  = 0;
 static uint8_t         prev_cells[GRID * GRID];
 static const uint16_t* prev_palette = NULL;
+static uint16_t        prev_pal[SPLASH_PALETTE_MAX];   // last palette seen, by value
 static bool            prev_valid   = false;
 static bool            force_full   = false;  // repaint everything on the next render
+// External frame waiting for the deferred repaint below (see
+// splash_render_external); the caller's buffers stay alive between ticks.
+static const uint8_t*  ext_cells    = NULL;
+static const uint16_t* ext_palette  = NULL;
+static bool            ext_pending  = false;
+
+// The dirty rect below compares cell *values*, which is only meaningful while an
+// index keeps its colour. An external owner may rewrite its palette in place
+// between frames (it owns the buffer), so a changed palette forces a full
+// repaint. 64 bytes of shadow, compared per frame.
+static bool palette_remapped(const uint16_t* palette) {
+    if (!palette) return false;
+    for (int i = 0; i < SPLASH_PALETTE_MAX; i++)
+        if (prev_pal[i] != palette[i]) return true;
+    return false;
+}
 
 // Upscale grid cells [gx0..gx1]×[gy0..gy1] and push them to the panel, one
 // grid-row band at a time so the scratch buffer stays (GRID*scr_cell × scr_cell).
@@ -287,7 +308,7 @@ static void blit_cells(const uint8_t* cells, const uint16_t* palette,
     for (int gy = gy0; gy <= gy1; gy++) {
         for (int gx = gx0; gx <= gx1; gx++) {       // expand one source row across
             uint8_t code = cells[gy * GRID + gx];
-            uint16_t color = (palette && code < SPLASH_PALETTE_SIZE) ? palette[code] : COL_EMPTY;
+            uint16_t color = (palette && code < SPLASH_PALETTE_MAX) ? palette[code] : COL_EMPTY;
             uint16_t* p = &strip_buf[(gx - gx0) * spc];
             for (int i = 0; i < spc; i++) p[i] = color;
         }
@@ -300,7 +321,8 @@ static void blit_cells(const uint8_t* cells, const uint16_t* palette,
 static void render_frame(const uint8_t *cells, const uint16_t *palette) {
     if (!strip_buf) return;
     if (!active) return;          // never draw to the panel while not shown
-    bool full = force_full || !prev_valid || palette != prev_palette;
+    bool full = force_full || !prev_valid ||
+                palette != prev_palette || palette_remapped(palette);
     force_full = false;
 
     int gx0 = 0, gy0 = 0, gx1 = GRID - 1, gy1 = GRID - 1;
@@ -321,6 +343,7 @@ static void render_frame(const uint8_t *cells, const uint16_t *palette) {
 
     memcpy(prev_cells, cells, GRID * GRID);
     prev_palette = palette;
+    if (palette) memcpy(prev_pal, palette, sizeof(prev_pal));
     prev_valid   = true;
 }
 
@@ -331,7 +354,7 @@ static void render_frame(const uint8_t *cells, const uint16_t *palette) {
     for (int gy = 0; gy < GRID; gy++) {
         for (int gx = 0; gx < GRID; gx++) {
             uint8_t code = cells[gy * GRID + gx];
-            uint16_t color = (palette && code < SPLASH_PALETTE_SIZE) ? palette[code] : COL_EMPTY;
+            uint16_t color = (palette && code < SPLASH_PALETTE_MAX) ? palette[code] : COL_EMPTY;
             uint16_t *p = &row_buf[gx * cell];
             for (int i = 0; i < cell; i++) p[i] = color;
         }
@@ -542,6 +565,9 @@ void splash_mascot_set_visible(bool v) {
 }
 
 void splash_mascot_tick(void) {
+    // While an external owner has the splash canvas, the corner slot is off the
+    // Clawd splash anyway — stay put rather than animate over it.
+    if (external) return;
     if (!mas_img || !mas_visible || !mas_anim) return;
     const uint32_t now = millis();
 
@@ -744,17 +770,24 @@ void splash_init(lv_obj_t *parent) {
 }
 
 void splash_tick(void) {
-    if (!active || SPLASH_ANIM_COUNT == 0) return;
-    const uint32_t now = millis();
-
 #if SPLASH_DIRECT_DRAW
     // Deferred full repaint after a (re)show — runs now that LVGL has drawn the
-    // black background this loop iteration.
-    if (force_full) {
-        const splash_anim_def_t *fa = &splash_anims[cur_anim];
-        if (fa->frame_count) render_frame(compose_stage(fa, cur_frame), fa->palette);
+    // black background this loop iteration. An external owner delivers its own
+    // frame here; otherwise Clawd repaints its current pose.
+    if (force_full || ext_pending) {
+        if (external) {
+            if (ext_pending) render_frame(ext_cells, ext_palette);
+        } else if (SPLASH_ANIM_COUNT) {
+            const splash_anim_def_t *fa = &splash_anims[cur_anim];
+            if (fa->frame_count) render_frame(compose_stage(fa, cur_frame), fa->palette);
+        }
+        ext_pending = false;
     }
 #endif
+
+    if (external) return;          // canvas is owned elsewhere; Clawd is frozen
+    if (!active || SPLASH_ANIM_COUNT == 0) return;
+    const uint32_t now = millis();
 
     const splash_anim_def_t *a = &splash_anims[cur_anim];
     if (a->frame_count == 0) return;
@@ -826,7 +859,7 @@ void splash_tick(void) {
 }
 
 void splash_next(void) {
-    if (SPLASH_ANIM_COUNT == 0) return;
+    if (external || SPLASH_ANIM_COUNT == 0) return;
     cur_anim = (cur_anim + 1) % SPLASH_ANIM_COUNT;
     cur_frame = 0;
     frame_started_ms = millis();
@@ -838,7 +871,7 @@ void splash_next(void) {
 }
 
 void splash_pick_for_current_rate(void) {
-    if (SPLASH_ANIM_COUNT == 0) return;
+    if (external || SPLASH_ANIM_COUNT == 0) return;
     int g = usage_rate_group();
     if (g < 0 || g >= GROUP_COUNT) g = 0;
     if (group_size[g] == 0) return;
@@ -860,7 +893,7 @@ void splash_pick_for_current_rate(void) {
 bool splash_is_active(void) { return active; }
 
 void splash_show(void) {
-    splash_pick_for_current_rate();   // select animation; direct path defers the draw
+    if (!external) splash_pick_for_current_rate();  // direct path defers the draw
     if (splash_container) lv_obj_clear_flag(splash_container, LV_OBJ_FLAG_HIDDEN);
     active = true;
 #if SPLASH_DIRECT_DRAW
@@ -878,4 +911,50 @@ void splash_hide(void) {
 
 lv_obj_t* splash_get_root(void) {
     return splash_container;
+}
+
+void splash_set_external(bool on) {
+    if (external == on) return;
+    external = on;
+    if (external) {
+#if SPLASH_DIRECT_DRAW
+        // The owner's first frame is a full repaint, which also wipes the
+        // Clawd art and the margins it left behind.
+        force_full  = true;
+        prev_valid  = false;
+        ext_cells   = NULL;
+        ext_palette = NULL;
+        ext_pending = false;
+#endif
+        return;
+    }
+    // Hand the canvas back: repaint Clawd from scratch and restart its clocks,
+    // so a long external takeover doesn't look like a burst of frames or a
+    // rate rotation the moment the splash returns.
+    frame_started_ms = millis();
+    last_pick_ms     = frame_started_ms;
+#if SPLASH_DIRECT_DRAW
+    force_full  = true;
+    prev_valid  = false;
+    ext_cells   = NULL;
+    ext_palette = NULL;
+    ext_pending = false;
+#endif
+}
+
+void splash_render_external(const uint8_t *cells, const uint16_t *palette) {
+    if (!cells) return;
+#if SPLASH_DIRECT_DRAW
+    // LVGL repaints the container background when it is unhidden, which would
+    // erase a frame drawn in the same loop pass. While that repaint is still
+    // pending, hold the frame for the next splash_tick() (after
+    // lv_timer_handler()).
+    if (force_full) {
+        ext_cells   = cells;
+        ext_palette = palette;
+        ext_pending = true;
+        return;
+    }
+#endif
+    render_frame(cells, palette);
 }

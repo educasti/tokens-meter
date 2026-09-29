@@ -41,3 +41,25 @@ void splash_mini_tick(void);
 lv_obj_t* splash_mascot_create(lv_obj_t *parent, int slot_x, int feet_y, int cell);
 void splash_mascot_tick(void);
 void splash_mascot_set_visible(bool v);
+
+// ─── External canvas owner (see oc_splash.h) ────────────────────────────────
+// Hand the shared splash canvas to another module. While external mode is on,
+// splash_tick() stops advancing Clawd: playback, the walk choreography and the
+// rate-driven picks are frozen where they stand (nothing is reset, so Clawd
+// resumes mid-pose), splash_show() no longer picks, and splash_mascot_tick()
+// idles. Turning it off forces a full repaint and resumes Clawd.
+
+// Palette index cap for splash_render_external() — cell values are 0-based
+// indices into `palette`, and a 60x60 frame never needs more than 32 of them.
+// (The generated Clawd animations use the first 16.)
+#define SPLASH_PALETTE_MAX 32
+
+void splash_set_external(bool on);
+
+// Paint one frame from another module's cell buffer. `cells` holds 60*60
+// palette indices; `palette` maps an index to an RGB565 colour (index 0 is the
+// background). Both are read during the call only, so the caller may compose
+// them in place and skip re-painting when nothing changed. Goes through the
+// same render path as the Clawd animations on both PSRAM and non-PSRAM
+// boards.
+void splash_render_external(const uint8_t *cells, const uint16_t *palette);

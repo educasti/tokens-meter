@@ -3,6 +3,8 @@
 // ble_has_data()/ble_get_data() path main.cpp uses on hardware — so JSON
 // parsing, usage-rate tracking, and the chime trigger all run for real.
 #include "../../ble.h"
+#include "../../oc_data.h"
+#include "../../ui.h"
 #include "sim_platform.h"
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -26,6 +28,8 @@ static bool     playing = true;
 static bool     connected = true;
 static bool     pending = false;      // a state is queued for main's next poll
 static uint32_t delivered_ms = 0;
+static bool     seen_claude = false;  // kinds delivered so far (SIM_START_SCREEN)
+static bool     seen_oc = false;
 
 static const char* FALLBACK[] = {
     "{\"name\":\"fresh\",\"s\":3.0,\"sr\":295,\"w\":12.0,\"wr\":9000,\"st\":\"allowed\",\"ok\":true}",
@@ -85,13 +89,52 @@ static void refresh_title(void) {
     sim_display_set_title(t);
 }
 
+// ---- SIM_START_SCREEN -----------------------------------------------------
+// Jump straight to a screen for screenshots: booting always lands on the
+// Clawd splash, and the page indicator only shows for 1.5 s, so an autoshot
+// timed off the boot would never capture the screen actually under test.
+// Applied once, as soon as the scenario has delivered both payload kinds (an
+// OpenCode screen with no payload is blank, and so is a Claude one), or after
+// 1500 ms so a Claude-only scenario still starts.
+static screen_t start_target = SCREEN_COUNT;
+static bool start_screen_done = false;
+
+static void init_start_screen(void) {
+    const char* want = getenv("SIM_START_SCREEN");
+    if (!want || !*want) { start_screen_done = true; return; }
+
+    if      (!strcmp(want, "splash"))    start_target = SCREEN_SPLASH;
+    else if (!strcmp(want, "usage"))     start_target = SCREEN_USAGE;
+    else if (!strcmp(want, "oc_splash")) start_target = SCREEN_OC_SPLASH;
+    else if (!strcmp(want, "oc_usage"))  start_target = SCREEN_OC_USAGE;
+    else {
+        printf("[sim] SIM_START_SCREEN: unknown screen '%s'\n", want);
+        start_screen_done = true;
+    }
+}
+
+static void start_screen_tick(void) {
+    if (start_screen_done) return;
+    if ((seen_claude && seen_oc) || millis() >= 1500) {
+        start_screen_done = true;
+        printf("[sim] SIM_START_SCREEN -> %d\n", (int)start_target);
+        ui_show_screen(start_target);
+        // The dots are the only on-screen proof of where we are in the cycle
+        // and they expire on their own 1.5 s later, so an autoshot taken
+        // shortly after this still catches them.
+    }
+}
+
 void ble_init(void) {
     load_scenario();
+    init_start_screen();
     pending = true;
     refresh_title();
 }
 
 void ble_tick(void) {
+    // Unconditional: the start-screen jump must not depend on playback state.
+    start_screen_tick();
     if (!connected || pending || !playing || n_states == 0) return;
     if (millis() - delivered_ms >= states[cur].hold_ms) {
         cur = (cur + 1) % n_states;
@@ -113,6 +156,12 @@ bool ble_has_data(void) { return connected && pending; }
 const char* ble_get_data(void) {
     pending = false;
     delivered_ms = millis();
+    // Count what has actually been delivered so SIM_START_SCREEN can wait for
+    // both payload kinds instead of a fixed delay. An OpenCode beat never
+    // advances the Claude screens, so starting on oc_usage before one has
+    // landed would screenshot an empty screen.
+    if (oc_is_payload(states[cur].json)) seen_oc = true;
+    else                                 seen_claude = true;
     return states[cur].json;
 }
 void ble_send_ack(void)  {}

@@ -1,4 +1,10 @@
-# Project context
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+**Personal fork** of [HermannBjorgvin/Clawdmeter](https://github.com/HermannBjorgvin/Clawdmeter) (based on upstream `85a0693`). No license: the repo bundles Anthropic's proprietary fonts and Clawd sprites — see `ATTRIBUTION.md` before redistributing anything.
+
+## Project context
 
 ESP32-S3 / ESP32-C6 firmware for a desk-side Claude Code usage monitor. Each
 supported board lives in its own `firmware/src/boards/<name>/` folder and is
@@ -31,7 +37,7 @@ Connects to a host daemon over BLE; daemon polls Anthropic API for usage data. T
 - Touch: **CST9220** via I2C (SDA=15, SCL=14, INT=11, addr=0x5A)
 - PMU: **AXP2101** on same I2C bus (addr=0x34) — battery, USB VBUS, PWR button IRQ
 - IMU: **QMI8658** on same I2C bus (addr=0x6B) — accelerometer for auto-rotation
-- Buttons: GPIO 0 (left → Space/voice-mode), GPIO 18 (right → Shift+Tab/mode-toggle), AXP PKEY (middle → cycle screens; on splash → cycle animations)
+- Buttons: GPIO 0 (left → Space/voice-mode), GPIO 18 (right → Shift+Tab/mode-toggle), AXP PKEY (middle → brightness; next animation/scene on a splash). See "Screens and navigation" for the tap-vs-hold split.
 
 ### AMOLED-1.8 (newer port)
 **Two hardware revisions ship under this name; the firmware probes I2C at boot and picks drivers automatically (`board_rev()`):**
@@ -41,7 +47,7 @@ Connects to a host daemon over BLE; daemon polls Anthropic API for usage data. T
 - IMU: QMI8658 @ 0x6B (same chip — initialized for I2C bus health, rotation logic disabled)
 - IO expander: **XCA9554 / PCA9554** @ I2C 0x20. Gates LCD_RST, TP_RST, audio amp enable, and reads the PWR button. **`io_expander_init()` MUST run before `gfx->begin()` or `ft3168_init()`** — otherwise display/touch stay in reset and silently fail. PWR button is on EXIO4, active HIGH (verified empirically with the deleted `iox` serial debug command).
 - Orientation: **fixed at 0°**. IMU auto-rotation is disabled; `rotate_strip()` / `handle_rotation_change()` are excluded via `#ifndef BOARD_AMOLED_18`.
-- Buttons: GPIO 0 (BOOT → Space/voice-mode), XCA9554 EXIO4 (PWR → cycle screens; on splash → cycle animations). **No third button** (GPIO 18 button doesn't exist on this board).
+- Buttons: GPIO 0 (BOOT → Space/voice-mode), XCA9554 EXIO4 (PWR → brightness; next animation/scene on a splash). **No third button** (GPIO 18 button doesn't exist on this board).
 
 ### AMOLED-1.8 (C6) — `waveshare_amoled_18_c6`
 ESP32-C6 sibling of the S3 1.8: same 368×448 SH8601 panel + FocalTech touch, different SoC and GPIO map. **All pins/edges below verified on hardware via temporary GPIO/IRQ scans, since Waveshare's wiki publishes no pin table and the third-party BSP's numbers were partly wrong.**
@@ -52,7 +58,7 @@ ESP32-C6 sibling of the S3 1.8: same 368×448 SH8601 panel + FocalTech touch, di
 - PMU: AXP2101 @ 0x34 (owned by `power.cpp`, not `board_init` — LCD isn't on an ALDO rail here).
 - IMU: QMI8658 @ 0x6B (init'd for bus health, rotation disabled).
 - Orientation: **fixed at 0°**, no rotation (no PSRAM headroom).
-- Buttons: **GPIO 9** (BOOT → Space/voice-mode, active LOW — *not* the docs' GPIO 0/9 guess; confirmed by scan), **AXP2101 PKEY** (PWR → cycle screens; on splash → cycle animations). The PKEY **SHORT-press IRQ fires on release** — that's the edge `power.cpp` acts on. No secondary button.
+- Buttons: **GPIO 9** (BOOT → Space/voice-mode, active LOW — *not* the docs' GPIO 0/9 guess; confirmed by scan), **AXP2101 PKEY** (PWR → brightness; next animation/scene on a splash). The PKEY **SHORT-press IRQ fires on release** — that's the edge `power.cpp` acts on. No secondary button.
 
 ### AMOLED-2.06 (watch form factor) — `waveshare_amoled_206`
 - Display: **CO5300** AMOLED via QSPI (CS=12, **SCLK=11** ← same as 1.8, SDIO0..3=4..7, RST=8 direct GPIO). 410×502 portrait. Requires **`col_offset1 = 23`** in the `Arduino_CO5300` constructor — the panel's visible viewport sits at a 22–23 column offset inside the controller's internal RAM. Without it, a vertical strip of stale/garbage content shows through on the right edge (23 was picked empirically for centering; Waveshare's reference library uses 22). The 2.16 dodges this because its 480×480 viewport fills the controller's RAM.
@@ -62,7 +68,7 @@ ESP32-C6 sibling of the S3 1.8: same 368×448 SH8601 panel + FocalTech touch, di
 - RTC: **PCF85063** on the same I2C bus, powered through AXP2101 for retention. Not used by Clawdmeter but present for future features.
 - Audio codec: **ES8311** + ES7210 ADC on the same I2C bus. The amp path is unverified on this board, so `sound.cpp` no-ops (same posture as the C6 1.8) — the shared `chime.cpp` engine is ready to wire up once it's tested on hardware.
 - **No IO expander** despite the Waveshare wiki FAQ implying one. The schematic shows Key3/PWR wired directly to AXP2101 PWRON; touch reset and display reset are direct GPIOs. `board_init()` pulses LCD_RESET (GPIO 8) and TP_RESET (GPIO 9) before display/touch HAL init.
-- Buttons: GPIO 0 (BOOT → Space/voice-mode), AXP PKEY (PWR → cycle screens; hold-to-pair). **No third button**.
+- Buttons: GPIO 0 (BOOT → Space/voice-mode), AXP PKEY (PWR → brightness / next animation; hold-to-pair). **No third button**.
 - Flash: 32 MB. Uses `default_32MB.csv` partition table.
 
 ### LCD-4 — `waveshare_lcd_4`
@@ -94,13 +100,17 @@ firmware/src/
     sim/                    — native desktop simulator: SDL2 + Arduino shims + scenario playback
     template/               — copy this to bootstrap a new port
   main.cpp                  — setup() + loop(): HAL calls only, zero #ifdef BOARD_*
-  ui.{h,cpp}                — 3-screen UI (splash, usage, bluetooth). compute_layout() picks fonts/positions from board_caps() (responsive — current breakpoint: H >= 460 → large, else compact)
-  splash.{h,cpp}            — 20×20 pixel-art engine. CELL = min(W,H)/20, centered.
+  ui.{h,cpp}                — screen cycle, page dots, battery, Claude usage screen. compute_layout() picks fonts/positions from board_caps() (responsive — current breakpoint: H >= 460 → large, else compact)
+  ui_opencode.{h,cpp}       — OpenCode usage screen: own container, own palette, IBM Plex Mono
+  oc_splash.{h,cpp}         — OpenCode splash scenes, composited into the shared splash canvas
+  oc_data.{h,cpp}           — OcData struct + oc_is_payload()/oc_parse() for the "k":"oc" payload
+  splash.{h,cpp}            — Clawd pixel-art engine on a 60×60 stage (cell = min(W,H)/60) + the shared-canvas API (splash_set_external / splash_render_external)
   ble.{h,cpp}               — NimBLE peripheral: custom data service + HID keyboard
   data.h                    — UsageData struct
   icons.h                   — icon arrays. Battery (5×) are RGB565A8 with alpha; rest are raw RGB565.
   logo.h                    — 80×80 RGB565 logo
-  font_*.c                  — pre-compiled LVGL 9 bitmap fonts (Tiempos 56/34, Styrene 48/28/24/20/16/14/12, Mono 32/18)
+  oc_logo.h                 — OpenCode mark + wordmark, RGB565 descriptors (generated by tools/gen_oc_logo.js)
+  font_*.c                  — pre-compiled LVGL 9 bitmap fonts (Tiempos 56/34, Styrene 48/28/24/20/16/14/12, Mono 32/18, Plex 48/40/24/18/16/12)
   splash_animations.h       — generated, do not hand-edit
 docs/porting/               — adding-a-board.md, hal-contract.md, capability-flags.md
 ```
@@ -110,6 +120,30 @@ Each board folder contains: `board.h` (pins, I2C addresses, `BOARD_HAS_*` flags)
 `input.cpp`, `power.cpp`, `imu.cpp`, `caps.cpp` (the `BoardCaps` instance), plus
 any board-private hardware drivers (e.g. `io_expander.{h,cpp}` on AMOLED-1.8).
 PlatformIO's `build_src_filter` includes shared code + one board's folder per env.
+
+## Screens and navigation
+
+One cycle of four screens (`screen_t` in `ui.h`): `SCREEN_SPLASH` (Clawd) →
+`SCREEN_USAGE` (Claude) → `SCREEN_OC_SPLASH` → `SCREEN_OC_USAGE` → back to the
+start. The two OpenCode screens only join the cycle once a valid OpenCode
+payload has landed (`oc_has_data()`), so a device that never receives one
+behaves exactly as before. There is **no** Bluetooth/controller screen. A row of
+6 px page dots — 2, or 4 once the OpenCode screens are in — is shown at the
+bottom for 1.5 s after every change.
+
+| Input | Tap (< 300 ms) | Hold (≥ 300 ms) |
+|---|---|---|
+| PRIMARY / BOOT (left) | previous screen (next on 1-button boards) | HID Space held until release |
+| SECONDARY (right) | next screen | HID Shift+Tab held until release |
+| PWR (middle) | Clawd splash: next animation · OpenCode splash: next scene · usage screens: brightness | 3 s: pairing (unchanged) |
+| Touch | next screen, on every board | — |
+
+`BUTTON_HOLD_MS` (300, in `main.cpp`) is the only threshold: the HID key goes
+down once the tap window closes and stays down until release, so a tap can no
+longer be mistaken for a keypress. The cost is that both keys reach the host
+~300 ms later than a direct press-and-hold used to. The first press after sleep
+is still swallowed as a wake-only event, and it does nothing at all until
+release.
 
 ## Build / flash
 
@@ -131,6 +165,24 @@ If `pio` isn't on PATH: try `~/.platformio/penv/bin/pio` (Linux/macOS pio instal
 
 Device path differs by OS: `/dev/cu.usbmodem*` on macOS, `/dev/ttyACM0` on Linux. Both expose the ESP32-S3 native USB-JTAG (no boot-mode dance needed).
 
+Wrapper scripts: `./flash-mac.sh <env> [port]` / `./flash.sh <env> [port]` (no args lists the envs scraped from `platformio.ini`).
+
+## Tests
+
+No CI and no pytest config — run from the repo root (root `conftest.py` puts it on `sys.path` so `import daemon.*` resolves).
+
+```bash
+python -m pytest daemon/tests -q                                   # all daemon tests (needs pytest, bleak, httpx, Pillow; pystray not required)
+python -m pytest daemon/tests/test_freeride.py -q                  # one file
+python -m pytest daemon/tests/test_freeride.py::<test_name> -q     # one test
+bash daemon/tests/test_bash_heartbeat.sh                           # Linux bash-daemon helpers (extracts functions via awk + eval)
+bash daemon/tests/test_bash_token.sh
+# Firmware host test (pure logic, no Arduino/LVGL) — plain g++, not a pio test env:
+(cd firmware/test/test_splash_geometry && g++ -std=c++17 -I ../../src test_main.cpp -o /tmp/t && /tmp/t)
+```
+
+Windows-daemon tests (`test_windows_*`) mock the platform and run fine on macOS/Linux. `daemon/test_macos_connect.py` is a manual hardware script, not part of the suite.
+
 ## Desktop simulator (`-e sim`) — develop UI without hardware
 
 ```bash
@@ -149,8 +201,25 @@ optional `name`/`hold_ms`; override with `SIM_SCENARIO=<path>`).
 
 Controls (full map in `boards/sim/board.h`): mouse = touch · space =
 play/pause scenario · ←/→ = step · 1-9 = jump · d = BLE link toggle ·
-b/n = BOOT/secondary buttons · p = PWR · c/-/= = charging/battery ·
-s = screenshot BMP · esc = quit.
+b/n = BOOT/secondary (tap = navigate the cycle, hold = the HID key) · p = PWR ·
+c/-/= = charging/battery · s = screenshot BMP · esc = quit.
+
+Two more envs run the same board folder at the other two panel sizes, so all
+three layout breakpoints are checkable without hardware: `sim_368` (368×448) and
+`sim_240` (240×240). They extend `env:sim` and override nothing but
+`-DLCD_WIDTH` / `-DLCD_HEIGHT` / `-DBOARD_NAME`, which `boards/sim/board.h`
+guards with `#ifndef`.
+
+| Env var | Effect |
+|---|---|
+| `SIM_SCENARIO` | scenario file; `sim/scenario-opencode.jsonl` interleaves Claude beats with `{"k":"oc"}` ones (real / one session / two sessions / near the limit / limited / window reset / estimated / consumption-only) |
+| `SIM_START_SCREEN` | `splash` \| `usage` \| `oc_splash` \| `oc_usage` — jumps there once the scenario has delivered both payload kinds (or after 1.5 s), so a single autoshot lands on the screen under test |
+| `SIM_BUTTONS` | `1` makes the sim behave like a one-button board, which flips which way a PRIMARY tap walks the cycle |
+
+```bash
+SIM_SCENARIO=sim/scenario-opencode.jsonl SIM_START_SCREEN=oc_usage \
+  SDL_VIDEODRIVER=dummy SIM_AUTOSHOT_MS=3000 .pio/build/sim_368/program
+```
 
 Headless screenshots (works in CI, no display):
 `SDL_VIDEODRIVER=dummy SIM_AUTOSHOT_MS=6000 .pio/build/sim/program` saves
@@ -164,7 +233,7 @@ hardware boards, not shared code).
 
 The firmware ships a `screenshot` serial command that dumps the LVGL framebuffer. `./screenshot.sh out.png [port]` captures a PNG sized to the active display (480×480 or 368×448). **Use this on every UI iteration** — Read the PNG with the Read tool, verify the change visually, iterate. Script auto-picks the macOS/Linux default port and falls back to pio's bundled Python if pyserial isn't on the system Python.
 
-The boot screen is `SCREEN_SPLASH` and only advances on a physical button press, so a fresh flash will sit on the splash. To screenshot the screen you're actually editing without asking the user to press a button, **temporarily change the default boot screen** in `main.cpp` (search for `ui_show_screen(SCREEN_SPLASH);`) to `SCREEN_USAGE` / `SCREEN_CONTROLLER` / `SCREEN_BLUETOOTH`, do your iteration, then revert before committing.
+The boot screen is `SCREEN_SPLASH` and only advances on a physical button press, so a fresh flash will sit on the splash. To screenshot the screen you're actually editing without asking the user to press a button, **temporarily change the default boot screen** in `main.cpp` (search for `ui_show_screen(SCREEN_SPLASH);`) to `SCREEN_USAGE` / `SCREEN_OC_SPLASH` / `SCREEN_OC_USAGE`, do your iteration, then revert before committing.
 
 ## Critical gotchas
 
@@ -179,7 +248,12 @@ The boot screen is `SCREEN_SPLASH` and only advances on a physical button press,
 9. **Per-board pre-init is `board_init()`.** Each board's `board_init.cpp` brings up `Wire` and any reset-gating IO expander BEFORE `display_hal_init()`. Skipping the IO expander release on AMOLED-1.8 leaves SH8601 + FT3168 in reset and they silently fail to probe. Same for LCD-4: expander @ 0x24 must run before `gfx->begin()` or the ST7701 stays dark.
 10. **No `#ifdef BOARD_*` in shared code.** The whole point of the refactor — if you're about to add one, you probably want a `BoardCaps` field or a per-board file instead. See `docs/porting/capability-flags.md`.
 11. **LCD-4 RGB bounce buffers.** `Arduino_RGB_Display` DMA-scans PSRAM. Pass `bounce_buffer_size_px = LCD_WIDTH * 10` so ESP-IDF allocates SRAM bounce buffers. Do not call `rgbpanel->getFrameBuffer()` after `gfx->begin()` — it constructs a second RGB panel and crashes.
-12. **LCD-4 has only one user button (GPIO 0 / BOOT).** GPIO 18 is display R3. KEY/PWR is EN/RST (hardware reset). Hold-to-pair and PWR-short animation/brightness cycling are unavailable; tap the panel to toggle splash ↔ usage.
+12. **LCD-4 has only one user button (GPIO 0 / BOOT).** GPIO 18 is display R3. KEY/PWR is EN/RST (hardware reset). Hold-to-pair and PWR-short animation/brightness cycling are unavailable; tap the panel to advance the screen cycle.
+13. **AMOLED-1.8: XCA9554 EXIO2 must stay HIGH.** Amp enable is GPIO 46 only. Pulling EXIO2 low takes the FT3168 off the I2C bus; IDF reports it as `ESP_ERR_INVALID_STATE`, which looks like an I2S/driver wedge but isn't.
+14. **The splash canvas is single-owner.** `splash_set_external(true)` — which `oc_splash_start()` does — freezes Clawd's advance, makes `splash_show()` skip its rate pick and idles the corner mascot; `splash_next()` and `splash_pick_for_current_rate()` no-op while external. Draw through `splash_render_external(cells, palette)` (60×60 palette indices + an RGB565 palette) so the PSRAM canvas and the C6 strip blit both keep working, and only one module may hold it. Turning it off forces a full repaint and restarts Clawd's clocks. Cell values index the palette and are capped at `SPLASH_PALETTE_MAX` (32); an owner that rewrites its palette in place gets a full repaint automatically.
+15. **`lv_label_set_text_fmt()` has no float support** — it runs LVGL's own printf with `LV_USE_FLOAT` off, so `%f` prints garbage. Format money and token counts with `snprintf` into a buffer and use `lv_label_set_text()` (see the `$%.2f spent` line in `ui_opencode.cpp`).
+16. **The OpenCode Go usage endpoint needs its trailing slash**: `https://opencode.ai/zen/go/v1/usage/`. Without the slash the server answers 401 and the daemon quietly falls back to the local estimate, so the chips start showing `· est.` for no visible reason.
+17. **The OpenCode Go key is a credential.** The `opencode-go.key` field in `auth.json` must never reach a log line, an exception message, the BLE payload or an argv. Every failure path in `daemon/opencode_collector.py` logs one fixed generic line instead, and `test_key_never_appears_in_log_output` / `test_daemon_logging_never_shows_the_key` enforce it.
 
 ## Icons
 
@@ -217,6 +291,16 @@ the usage screen (`splash_mascot_*`, PSRAM boards; C6 falls back to the static
 `clawd_still.h` icon) — idle stills, rate-scaled acts, and walk-off/lurk/
 walk-back trips. Default boot screen.
 
+The **OpenCode splash** (`oc_splash.cpp`) is procedural rather than pregenerated
+— few cells, no frame budget — and renders the official OpenCode mark, wordmark,
+terminal block scanner and typing cursor onto the same 60×60 canvas through
+`splash_render_external()` (see gotcha 14). Its scene follows the OpenCode mood
+(`oc_mood_t`, set by `ui_update_opencode`): idle → typeon, any session active →
+scanner (20 ms/frame from two up), 5 h or week ≥ 75% → amber scanner, limit
+reached → frozen scanner with a red blink. PWR steps typeon → assemble → scanner;
+a ≥5-point drop in the 5 h or weekly percent plays a one-shot `assemble`. Design
+source of truth: `design/opencode-screen/SPEC.md` §5 and `oc-splash.js`.
+
 **Where the animations come from / finding new ones:** all assets are plain
 files under `https://claude.ai/images/clawd/{core,persona}/…` — static assets
 are not Cloudflare-gated, only HTML routes are. The asset server returns a
@@ -230,25 +314,17 @@ for `/images/` paths (`research/clawd-official/CLAUDE.md` documents the full
 methodology, including the Lottie sources and the assets-proxy).
 
 
-## User profile / preferences
-
-See `~/.claude/projects/.../memory/` files for persistent context (user is an embedded-beginner senior dev, brand-conscious, prefers iterative UI refinement, dislikes me authoring my own art when third-party assets are intended). Always read those memory files at session start.
-
-## Recent session highlights
-
-- **AMOLED-1.8 chime verified on hardware + EXIO2 touch-kill fix (2026-07-13).** The 1.8's `amp_enable` hook drove both GPIO 46 and XCA9554 EXIO2 ("the unused one is harmless") — but pulling EXIO2 low takes the FT3168 off the I2C bus (chip stops ACKing; IDF reports it as `ESP_ERR_INVALID_STATE`, which reads like a driver wedge and cost a long I2S red-herring chase). Amp enable is GPIO 46 only; EXIO2 must stay HIGH. Chime, touch, buttons, and BLE bond persistence all verified on a real 1.8.
-- **Device-abstraction refactor (2026-05-18).** All board-conditional code moved out of shared files into `boards/<name>/` and behind a HAL in `hal/`. ~30 `#ifdef BOARD_*` blocks went to zero. UI is responsive via `compute_layout()` driven by `board_caps()`. New ports add a folder + a PlatformIO env — no shared file edits.
-- Added second board port: Waveshare AMOLED-1.8 (368×448 portrait, SH8601, FT3168, XCA9554 IO expander).
-- Migrated from Panlee SC01 Plus (480×320 IPS) to Waveshare 2.16" AMOLED (480×480 square). Full hardware/library swap.
-- Added IMU auto-rotation, battery indicator, USB-state-aware screen switching.
-- Added splash screen with scraped pixel-art animations and 3-button physical input layout.
-- Fonts and icons re-scaled ~1.9× for the higher-DPI panel.
-- All UI margins widened to 20px to clear the rounded display corners.
-- Battery icons converted to RGB565A8 alpha so they blend cleanly over the splash animations.
-
 ## Daemon / host side
 
-Bash daemon (`daemon/claude-usage-daemon.sh`) reads OAuth token, polls Anthropic API, sends JSON over BLE GATT. Run with `systemctl --user start claude-usage-daemon`. The unit file's `ExecStart` is the absolute path to the script — repoint it when switching between the worktree and the main checkout.
+Three separate daemons, one per OS, all speaking the same GATT/JSON protocol:
+
+- **Linux** — bash `daemon/claude-usage-daemon.sh` (curl + bluetoothctl/busctl/dbus-monitor), systemd user unit, installed by `install.sh`. Run with `systemctl --user start claude-usage-daemon`.
+- **macOS** — Python `daemon/claude_usage_daemon.py` (bleak/CoreBluetooth), token from Keychain service `Claude Code-credentials`, LaunchAgent `com.user.claude-usage-daemon.plist`, installed by `install-mac.sh` into `daemon/.venv/`. Only connects to the peripheral already paired to the Mac (no scanning).
+- **Windows** — Python `daemon/claude_usage_daemon_windows.py` + `tray_windows.py` (pystray tray app) + `autostart_windows.py` (HKCU Run key), installed by `install-windows.ps1`. See `daemon/README-windows.md`.
+
+All daemons are **free-riders on the OAuth token**: they never refresh it (Claude Code owns refreshing); on a dead token they signal "No data" to the device. Usage comes from `anthropic-ratelimit-unified-*` response headers of a 1-token Haiku call.
+
+The notes below describe the Linux bash daemon. The unit file's `ExecStart` is the absolute path to the script — repoint it when switching between the worktree and the main checkout.
 
 **Discovery & resilience:**
 
@@ -262,3 +338,32 @@ Bash daemon (`daemon/claude-usage-daemon.sh`) reads OAuth token, polls Anthropic
 - `...0002` RX — daemon writes JSON usage payload here.
 - `...0003` TX — firmware notifies ack/nack (daemon doesn't subscribe).
 - `...0004` REQ — firmware fires `0x01` notify in `onSubscribe` if `has_received_data` is false. Daemon subscribes via `setsid bash -c "stdbuf -oL dbus-monitor … | awk …"`; awk drops a flag file the inner loop picks up. See the `feedback_dbus_monitor_pipe` memory for the three subtle gotchas (pipe buffering, busctl-exits race, `wait` blocking on pipeline jobs).
+
+**Payload routing (`main.cpp`):** both payload kinds share the RX characteristic and
+are told apart by the `"k":"oc"` tag. `oc_is_payload()` is a substring test run
+**before** `parse_json`, so an OpenCode beat never touches the Claude path — no
+`usage_rate_sample`, no chime, no `ui_update` — and a Claude beat never touches
+the OpenCode one. The ack/nack comes from whichever parser ran. Spec and field
+list: `design/opencode-screen/SPEC.md` §8.
+
+**RX is a 2-slot FIFO (`ble.cpp`),** because the daemon writes the Claude payload
+and the OpenCode one back to back and a single buffer silently dropped the
+unread first write. `onWrite()` pushes into the next free slot (dropping the
+oldest if both are full) and `ble_get_data()` pops in order into a private
+`rx_out` buffer — returning a slot pointer would be a use-after-overwrite, since
+the next write targets the slot just freed while the loop is still parsing it.
+NimBLE's host task and the Arduino loop both touch it, so the index updates and
+the 512-byte `memcpy` run under a FreeRTOS spinlock (`portENTER_CRITICAL(&rx_mux)`);
+the lock is never held across Serial, NimBLE or the parser.
+
+**OpenCode collector (macOS daemon only).** `daemon/opencode_collector.py`
+builds the `{"k":"oc", …}` payload on its own 60 s beat, deliberately independent
+of the Claude poll, and the daemon writes it 250 ms after the Claude one
+(`OPENCODE_WRITE_DELAY`) so the two never interleave. Off unless `opencode = on`
+in `~/.config/claude-usage-monitor/config` (see `daemon/config.example`; optional
+`opencode_db` / `opencode_auth` overrides for a non-standard install). It reads
+`~/.local/share/opencode/opencode.db` read-only and WAL-aware for the activity
+numbers and the estimated fallback, and the OpenCode Go key from `auth.json` for
+the official usage endpoint. Tests live in `daemon/tests/test_opencode_collector.py`
+(temp SQLite + an injected fake fetch). The Linux and Windows daemons don't send
+the OpenCode payload yet.
