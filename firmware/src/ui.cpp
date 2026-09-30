@@ -1,6 +1,7 @@
 #include "ui.h"
 #include "splash.h"
 #include "ui_opencode.h"
+#include "ui_portfolio.h"
 #include "oc_splash.h"
 #include <lvgl.h>
 #include <time.h>
@@ -231,12 +232,12 @@ static lv_obj_t* logo_img;
 static lv_image_dsc_t battery_dscs[5];  // empty, low, medium, full, charging
 
 // ---- Page indicator (SPEC.md §6) ----
-// One 6 px dot per screen in the current cycle (4, or 2 until the first
-// OpenCode payload), 8 px apart, centred on L.dots_y. Shown for 1.5 s after
-// every screen change, on top of everything, then hidden again.
+// One 6 px dot per screen in the current cycle (2, 4 once the OpenCode screens
+// are in, 5 once the portfolio is too), 8 px apart, centred on L.dots_y. Shown
+// for 1.5 s after every screen change, on top of everything, then hidden again.
 #define PAGE_DOT_D     6
 #define PAGE_DOT_GAP   8
-#define PAGE_DOT_MAX   4
+#define PAGE_DOT_MAX   5
 #define PAGE_DOTS_MS   1500
 #define COL_DOT_ON     lv_color_hex(0xeeeeee)
 #define COL_DOT_OFF    lv_color_hex(0x484848)
@@ -371,7 +372,7 @@ static void build_page_dots(lv_obj_t* parent) {
 
 // Centre the row on the screen's midpoint, then colour it: `n` dots visible,
 // dot `lit` highlighted. The x of every dot moves when the cycle grows from 2
-// to 4 screens, so both are recomputed here rather than once at build time.
+// to 4 to 5 screens, so both are recomputed here rather than once at build time.
 static void set_page_dots(int n, int lit) {
     int step = PAGE_DOT_D + PAGE_DOT_GAP;
     int total = n * PAGE_DOT_D + (n - 1) * PAGE_DOT_GAP;
@@ -642,6 +643,11 @@ void ui_init(void) {
     init_usage_screen(scr);
     splash_init(scr);
     oc_usage_init(scr);
+    // The portfolio screen is built lazily, on the first ui_show_screen, and
+    // not here: five screens of LVGL objects up front exhaust the internal
+    // heap on the 480x480 boards, and the next malloc inside esp_intr_alloc
+    // trips the stack canary. The screen only enters the cycle when a payload
+    // arrives, which is exactly when the user turned it on.
 
     if (splash_get_root()) {
         lv_obj_add_event_cb(splash_get_root(), global_click_cb, LV_EVENT_CLICKED, NULL);
@@ -792,10 +798,11 @@ static void update_view_state(void) {
 
 void ui_tick_anim(void) {
     // Screen-independent work first: the page indicator's 1.5 s window has to
-    // expire on the splash and both OpenCode screens too, and the OpenCode
-    // screen keeps its own status line ticking while it is the visible one.
+    // expire on the splash and both OpenCode screens too, and the OpenCode and
+    // portfolio screens keep their own status lines ticking while visible.
     tick_page_dots();
     if (current_screen == SCREEN_OC_USAGE) oc_usage_tick();
+    if (current_screen == SCREEN_PORTFOLIO) pf_usage_tick();
     if (current_screen != SCREEN_USAGE) return;
     update_view_state();
     if (view_state == 1) splash_mini_tick();   // animate the sleeping creature on the idle screen
@@ -854,9 +861,10 @@ void ui_tick_anim(void) {
 }
 
 // Both splash screens are wordless (Clawd, or the OpenCode scene on the same
-// shared canvas), so the battery indicator steps aside for them; the two usage
-// screens keep it. The corner mascot and the static logo belong to the Claude
-// usage screen only — the OpenCode screens carry their own mark/wordmark.
+// shared canvas), so the battery indicator steps aside for them; the three
+// data screens keep it. The corner mascot and the static logo belong to the
+// Claude usage screen only — the OpenCode screens carry their own mark and the
+// portfolio its own header.
 static bool screen_is_splash(screen_t s) {
     return s == SCREEN_SPLASH || s == SCREEN_OC_SPLASH;
 }
@@ -877,23 +885,27 @@ static void global_click_cb(lv_event_t* e) {
 }
 
 // The cycle order. The two OpenCode screens only join it once a payload has
-// arrived (oc_has_data()), which is what §6 means by "if OpenCode data never
+// arrived (oc_has_data()), and the portfolio once a "k":"pf" one has
+// (pf_has_data()) — which is what SPEC.md §6 means by "if that data never
 // arrives, the cycle stays Clawd splash ↔ Claude usage".
 static screen_t cycle_at(int i) {
     switch (i) {
     case 0:  return SCREEN_SPLASH;
     case 1:  return SCREEN_USAGE;
     case 2:  return SCREEN_OC_SPLASH;
-    default: return SCREEN_OC_USAGE;
+    case 3:  return SCREEN_OC_USAGE;
+    default: return SCREEN_PORTFOLIO;
     }
 }
 
 static int cycle_len(void) {
-    return oc_has_data() ? 4 : 2;
+    int n = oc_has_data() ? 4 : 2;
+    if (pf_has_data()) n++;
+    return n;
 }
 
 static int cycle_index(screen_t s) {
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < SCREEN_COUNT; i++) {
         if (cycle_at(i) == s) return i;
     }
     return -1;
@@ -902,8 +914,8 @@ static int cycle_index(screen_t s) {
 static void ui_step(int dir) {
     int n = cycle_len();
     int i = cycle_index(current_screen);
-    // Off-cycle (only reachable if OpenCode data vanished, which it can't — the
-    // flag is sticky) or n==0: fall back to the Claude usage screen's neighbour.
+    // Off-cycle (only reachable if a payload kind vanished, which it can't — the
+    // flags are sticky) or n==0: fall back to the Claude usage screen's neighbour.
     if (i < 0) i = (n > 0) ? 0 : 1;
     i = ((i + dir) % n + n) % n;
     ui_show_screen(cycle_at(i));
@@ -918,7 +930,7 @@ void ui_prev_screen(void) {
 }
 
 // Reveal the dot row for 1.5 s. Called on every screen change, so the row also
-// grows from 2 to 4 dots the first time the OpenCode screens join the cycle.
+// grows from 2 to 4 to 5 dots the first time each payload kind lands.
 static void show_page_dots(void) {
     int n = cycle_len();
     int i = cycle_index(current_screen);
@@ -933,6 +945,7 @@ void ui_show_screen(screen_t screen) {
     // Leave the current screen's resources before switching: the OpenCode
     // screens own state that has to be released explicitly.
     if (current_screen == SCREEN_OC_USAGE)  oc_usage_hide();
+    if (current_screen == SCREEN_PORTFOLIO) pf_usage_hide();
     if (current_screen == SCREEN_OC_SPLASH) oc_splash_stop();
 
     lv_obj_add_flag(usage_container, LV_OBJ_FLAG_HIDDEN);
@@ -958,6 +971,18 @@ void ui_show_screen(screen_t screen) {
         break;
     case SCREEN_OC_USAGE:
         oc_usage_show();
+        break;
+    case SCREEN_PORTFOLIO:
+        // First visit builds the screen; later visits just show it. Until then
+        // the root is NULL and pf_usage_get_root() returns NULL, which is how
+        // the cycle keeps this screen out when no payload has ever arrived.
+        if (!pf_usage_get_root()) {
+            pf_usage_init(lv_screen_active());
+            if (pf_usage_get_root()) {
+                lv_obj_add_event_cb(pf_usage_get_root(), global_click_cb, LV_EVENT_CLICKED, NULL);
+            }
+        }
+        pf_usage_show();
         break;
     default:
         break;
@@ -1018,6 +1043,16 @@ void ui_update_opencode(const OcData* data) {
     oc_splash_set_mood(mood);
 }
 
+// ---- Portfolio pipeline (portfolio spec §6) ----
+//
+// One payload, one consumer. It is deliberately the whole story: the daemon
+// never learns which screen is visible, and the private mode is a firmware-side
+// visibility switch over the exact same numbers (privacy spec §6).
+void ui_update_portfolio(const PfData* data) {
+    if (!data) return;
+    pf_usage_update(data);
+}
+
 void ui_update_ble_status(ble_state_t state, const char* name, const char* mac) {
     (void)name; (void)mac;
     bool was_connected = s_ble_connected;
@@ -1027,8 +1062,10 @@ void ui_update_ble_status(ble_state_t state, const char* name, const char* mac) 
     // pair / idle / usage — picked from connection + data freshness.
     update_view_state();
     // The OpenCode screen dims its panels on a dropped link and says so on its
-    // status line — same notion of "connected" as the Claude screen above.
+    // status line — same notion of "connected" as the Claude screen above, and
+    // the same treatment on the portfolio screen.
     oc_usage_set_ble(s_ble_connected);
+    pf_usage_set_ble(s_ble_connected);
 }
 
 void ui_update_battery(int percent, bool charging) {

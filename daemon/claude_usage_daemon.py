@@ -26,8 +26,10 @@ from bleak.exc import BleakError
 
 try:  # normal package import (tests, `python -m daemon.claude_usage_daemon`)
     from .opencode_collector import collect
+    from .portfolio_collector import collect as collect_portfolio
 except ImportError:  # run as a script (LaunchAgent): only the script dir is on sys.path
     from opencode_collector import collect
+    from portfolio_collector import collect as collect_portfolio
 
 DEVICE_NAME = "Clawdmeter"
 SERVICE_UUID = "4c41555a-4465-7669-6365-000000000001"
@@ -40,9 +42,15 @@ CONNECT_TIMEOUT = 20.0
 # The OpenCode collector runs on its own cadence so it keeps working when
 # Claude has no token or the Claude poll fails (SPEC §9).
 OPENCODE_INTERVAL = 60
+# Same reasoning, and the same reason to be its own beat: the portfolio screen
+# is the only one whose data does not come from this machine, so it must not
+# ride on the Claude token being alive (SPEC §4).
+PORTFOLIO_INTERVAL = 60
 # The device has a 2-slot RX buffer and the firmware routes on "k", so the
 # OpenCode payload must land clearly after the Claude one, never interleaved.
 OPENCODE_WRITE_DELAY = 0.25
+# Same spacing for the portfolio payload, which lands between the two.
+PORTFOLIO_WRITE_DELAY = 0.25
 
 # macOS: token lives in Keychain (service "Claude Code-credentials").
 # Linux: token lives in ~/.claude/.credentials.json.
@@ -415,6 +423,52 @@ def read_opencode_paths() -> tuple[Path | None, Path | None]:
     db = Path(paths["opencode_db"]).expanduser() if paths["opencode_db"] else None
     auth = Path(paths["opencode_auth"]).expanduser() if paths["opencode_auth"] else None
     return db, auth
+
+
+def read_portfolio_setting() -> str:
+    """Read the `portfolio` option from the config file. One of: off|on.
+
+    Defaults to "off" so the screen cycle is exactly what it is today until
+    the user opts in; when on, the daemon also collects the BVC positions and
+    sends them after the Claude payload (SPEC §4).
+    """
+    try:
+        if CONFIG_FILE.exists():
+            for line in CONFIG_FILE.read_text().splitlines():
+                line = line.split("#", 1)[0].strip()
+                if "=" not in line:
+                    continue
+                key, val = line.split("=", 1)
+                if key.strip().lower() == "portfolio":
+                    val = val.strip().lower()
+                    if val in ("off", "on"):
+                        return val
+    except OSError:
+        pass
+    return "off"
+
+
+def read_portfolio_path() -> Path | None:
+    """Optional `portfolio_path` override from the config.
+
+    None means "use ~/.config/claude-usage-monitor/portfolio", the same place
+    the other daemon files live. A second profile (or a file kept in a synced
+    folder) can point somewhere else without touching the default.
+    """
+    try:
+        if CONFIG_FILE.exists():
+            for line in CONFIG_FILE.read_text().splitlines():
+                line = line.split("#", 1)[0].strip()
+                if "=" not in line:
+                    continue
+                key, val = line.split("=", 1)
+                if key.strip().lower() == "portfolio_path":
+                    val = val.strip()
+                    if val:
+                        return Path(val).expanduser()
+    except OSError:
+        pass
+    return None
 
 
 def add_chime_field(payload: dict) -> None:
@@ -811,6 +865,10 @@ async def connect_and_run(target, stop_event: asyncio.Event) -> bool:
 
     last_poll = 0.0
     last_oc = 0.0
+    last_pf = 0.0
+    # Per connection: does the device already hold real market numbers? Yahoo
+    # being down must not replace a market value with an error screen.
+    pf_seen = False
     used_successfully = False
     try:
         while client.is_connected and not stop_event.is_set():
@@ -844,6 +902,41 @@ async def connect_and_run(target, stop_event: asyncio.Event) -> bool:
                     # Transient poll failure (a live token that didn't answer this
                     # cycle) -> stay silent and retry next tick.
                     log("No usable config dir this cycle")
+
+            # Portfolio runs on its own 60 s beat too, for the same reason as
+            # OpenCode: the screen must keep working when Claude has no token.
+            # It is also the only payload built from a network we do not own,
+            # so a failed poll returns None once the device has real numbers and
+            # we send nothing — the firmware's own "abierto sin actualizar" rule
+            # then takes over instead of an error screen over a good screen.
+            if now - last_pf >= PORTFOLIO_INTERVAL:
+                # Re-read the config on this beat, not every TICK, so flipping
+                # `portfolio = on` takes effect within ~60s like the rest of
+                # the config.
+                last_pf = time.time()
+                if read_portfolio_setting() == "on":
+                    pf = await asyncio.to_thread(
+                        collect_portfolio,
+                        None,
+                        read_portfolio_path(),
+                        None,
+                        pf_seen,
+                    )
+                    if pf is None:
+                        log("Portfolio: Yahoo is down; device keeps the last close")
+                    else:
+                        if pf["ok"]:
+                            log(f"Portfolio: {pf['mv']} COP, day {pf['dc']} "
+                                f"({pf['dp'] / 100:+.2f}%), {len(pf.get('r') or [])} rows, "
+                                f"session {pf['s']}")
+                        else:
+                            log(f"Portfolio: {pf['e']} ({pf['n']} positions)")
+                        # Same characteristic and the same 2-slot RX buffer as
+                        # the other payloads, so leave the device room to parse
+                        # the one before (SPEC §6).
+                        await asyncio.sleep(PORTFOLIO_WRITE_DELAY)
+                        if await session.write_payload(pf) and pf["ok"]:
+                            pf_seen = True
 
             # OpenCode runs on its own 60 s beat, deliberately independent of
             # the Claude token/dead branch above: the OpenCode screens must

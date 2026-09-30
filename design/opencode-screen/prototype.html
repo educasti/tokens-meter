@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Clawdmeter — prototipo pantalla OpenCode</title>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
   <script src="oc-splash.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -462,12 +462,43 @@
     .status-indicator-active {
       animation: blink 1s infinite;
     }
+
+    /* --- Tipografía de la pantalla de portafolio (Trii v0.3 §3) --------------
+       OJO, esto NO es la fuente real y el prototipo no puede serlo.
+
+       El firmware dibuja la pantalla de portafolio en Styrene B Regular
+       (StyreneB, Commercial Type), compilada en los siete cortes
+       font_styrene_{48,28,24,20,16,14,12}.c. Styrene es comercial: no está en
+       Google Fonts, no se puede cargar desde el navegador y no corresponde
+       distribuirla acá. INTER es un SUSTITUTO, elegido por ser la neo-grotesca
+       libre más cercana (x-height alto, 'a' de dos keenes, 'g' de un solo tramo,
+       bajo contraste de trazo, cifras anchas) y la más cercana en anchos:
+       6,2 % de error medio contra Styrene 16 medido sobre los textos de esta
+       pantalla, contra 9,4 % de Archivo y 11,0 % de DM Sans.
+
+       La diferencia que se va a ver al comparar el mockup con una captura del
+       simulador nativo es, sobre todo, de aire: las cifras de Inter son ~8 %
+       más angostas que las de Styrene (a 16 px, '0' mide 10,1 px contra 11,1,
+       'W' 15,8 contra 16,6), así que las filas del prototipo quedan con más
+       margen del que hay en la placa. La verificación de la tipografía real la
+       hace el simulador nativo, que usa la fuente compilada de verdad.
+
+       Todo lo demás de esta pantalla —tamaños, posiciones, colores, textos y el
+       algoritmo de la fila— sí viene de ui_portfolio.cpp y es el que manda.
+       Las pantallas de OpenCode y las de Clawd/Claude siguen en IBM Plex Mono:
+       no son parte de este cambio. */
+    .pf { font-family: 'Inter', -apple-system, 'Segoe UI', sans-serif; }
   </style>
 </head>
 <body>
 
 <h1>Clawdmeter — prototipo pantalla OpenCode</h1>
-<p class="subtitle">v0.2 · 4 pantallas (clawd, claude, ocsplash, ocusage) · navegación con botones físicos</p>
+<p class="subtitle">v0.2 · 5 pantallas (clawd, claude, ocsplash, ocusage, portfolio) · navegación con botones físicos</p>
+<div style="margin: -24px 0 32px 0; padding: 10px 14px; border: 1px solid #fab283; border-radius: 4px; background: rgba(250,178,131,0.08); font-size: 12px; color: #fab283; line-height: 1.5;">
+  <strong>Cifras ficticias.</strong> Todos los números, tickers y precios de la pantalla de
+  portafolio son inventados, para poder mostrar la pantalla sin exponer datos reales.
+  El único lugar con datos reales es el dispositivo, cuando el daemon los manda en vivo.
+</div>
 
 <!-- SECTION A: Simulador interactivo -->
 <h2>A — Simulador interactivo</h2>
@@ -492,10 +523,6 @@
       <div class="segmented-control">
         <input type="radio" id="board-216" name="board" value="grande" checked onchange="simulatorState.setBoard('grande')">
         <label for="board-216">2.16" 480×480</label>
-        <input type="radio" id="board-18" name="board" value="compacto" onchange="simulatorState.setBoard('compacto')">
-        <label for="board-18">1.8" 368×448</label>
-        <input type="radio" id="board-154" name="board" value="chico" onchange="simulatorState.setBoard('chico')">
-        <label for="board-154">1.54" 240×240</label>
       </div>
     </div>
 
@@ -534,6 +561,56 @@
           <span class="toggle-switch"></span>
           <span>Daemon envía OC</span>
         </label>
+        <label class="toggle">
+          <input type="checkbox" checked onchange="simulatorState.setDaemonSendsPortfolio(this.checked)">
+          <span class="toggle-switch"></span>
+          <span>Daemon envía PF</span>
+        </label>
+        <label class="toggle" title="Equivale a un PWR corto en la pantalla de portafolio">
+          <input type="checkbox" id="pfPrivateToggle" onchange="simulatorState.setPfPrivate(this.checked)">
+          <span class="toggle-switch"></span>
+          <span>Modo privado</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <label>Escenario portafolio</label>
+      <div class="radio-group">
+        <input type="radio" id="pfsc-real" name="pfscenario" value="real" checked onchange="simulatorState.setPfScenario('real')">
+        <label for="pfsc-real">Mercado abierto · 10:42</label>
+        <input type="radio" id="pfsc-cerrado" name="pfscenario" value="cerrado" onchange="simulatorState.setPfScenario('cerrado')">
+        <label for="pfsc-cerrado">Mercado cerrado · cierre 29 sep</label>
+        <input type="radio" id="pfsc-feriado" name="pfscenario" value="feriado" onchange="simulatorState.setPfScenario('feriado')">
+        <label for="pfsc-feriado">Feriado / fin de semana</label>
+        <input type="radio" id="pfsc-sinActualizar" name="pfscenario" value="sinActualizar" onchange="simulatorState.setPfScenario('sinActualizar')">
+        <label for="pfsc-sinActualizar">Abierto sin actualizar</label>
+        <input type="radio" id="pfsc-todosSuben" name="pfscenario" value="todosSuben" onchange="simulatorState.setPfScenario('todosSuben')">
+        <label for="pfsc-todosSuben">Todos suben</label>
+        <input type="radio" id="pfsc-todosBajan" name="pfscenario" value="todosBajan" onchange="simulatorState.setPfScenario('todosBajan')">
+        <label for="pfsc-todosBajan">Todos bajan</label>
+        <input type="radio" id="pfsc-unaGanadora" name="pfscenario" value="unaGanadora" onchange="simulatorState.setPfScenario('unaGanadora')">
+        <label for="pfsc-unaGanadora">Una sola ganadora</label>
+        <input type="radio" id="pfsc-sinVariaciones" name="pfscenario" value="sinVariaciones" onchange="simulatorState.setPfScenario('sinVariaciones')">
+        <label for="pfsc-sinVariaciones">Sin variaciones todavía</label>
+        <input type="radio" id="pfsc-cero" name="pfscenario" value="cero" onchange="simulatorState.setPfScenario('cero')">
+        <label for="pfsc-cero">Day change exactamente 0</label>
+        <input type="radio" id="pfsc-largo" name="pfscenario" value="largo" onchange="simulatorState.setPfScenario('largo')">
+        <label for="pfsc-largo">Símbolo largo · LONGNAMEGRP</label>
+        <input type="radio" id="pfsc-nopos" name="pfscenario" value="nopos" onchange="simulatorState.setPfScenario('nopos')">
+        <label for="pfsc-nopos">Sin posiciones configuradas</label>
+        <input type="radio" id="pfsc-tickerSinPrecio" name="pfscenario" value="tickerSinPrecio" onchange="simulatorState.setPfScenario('tickerSinPrecio')">
+        <label for="pfsc-tickerSinPrecio">Ticker sin precio · EPM</label>
+        <input type="radio" id="pfsc-dosSinPrecio" name="pfscenario" value="dosSinPrecio" onchange="simulatorState.setPfScenario('dosSinPrecio')">
+        <label for="pfsc-dosSinPrecio">Varios sin precio · +2</label>
+        <input type="radio" id="pfsc-nores" name="pfscenario" value="nores" onchange="simulatorState.setPfScenario('nores')">
+        <label for="pfsc-nores">Ningún ticker resolvió</label>
+        <input type="radio" id="pfsc-nonet" name="pfscenario" value="nonet" onchange="simulatorState.setPfScenario('nonet')">
+        <label for="pfsc-nonet">Yahoo no responde</label>
+        <input type="radio" id="pfsc-duplicado" name="pfscenario" value="duplicado" onchange="simulatorState.setPfScenario('duplicado')">
+        <label for="pfsc-duplicado">Símbolo duplicado · 1 aviso</label>
+        <input type="radio" id="pfsc-bleCaido" name="pfscenario" value="bleCaido" onchange="simulatorState.setPfScenario('bleCaido')">
+        <label for="pfsc-bleCaido">BLE desconectado</label>
       </div>
     </div>
 
@@ -550,7 +627,7 @@
       <ul style="margin-left: 20px; margin-top: 6px; font-size: 11px; line-height: 1.6;">
         <li><strong>BOOT:</strong> &lt; 300 ms = pantalla anterior (o siguiente en boards sin SEC). ≥ 300 ms = Espacio (HID)</li>
         <li><strong>SECONDARY:</strong> &lt; 300 ms = siguiente pantalla. ≥ 300 ms = Shift+Tab (HID)</li>
-        <li><strong>PWR:</strong> &lt; 3 s = brillo (Splash: escena). ≥ 3 s = emparejar</li>
+        <li><strong>PWR:</strong> &lt; 1.5 s = brillo (Splash: escena · Portafolio: modo privado). ≥ 3 s = emparejar</li>
         <li><strong>Toque:</strong> siguiente pantalla (todos los boards)</li>
         <li><em>Espacio y Shift+Tab salen ~300 ms después (hay que distinguir toque de mantener)</em></li>
       </ul>
@@ -568,7 +645,7 @@
 <h2>C — Paleta y tipografía</h2>
 <div class="section-c">
   <div class="palette-section">
-    <h3>Colores</h3>
+    <h3>Colores — OpenCode (Plex)</h3>
     <div id="colorPalette"></div>
   </div>
 
@@ -583,6 +660,23 @@
       <div class="type-specimen"><span class="type-16">16px</span></div>
       <div class="type-specimen"><span class="type-14">14px</span></div>
       <div class="type-specimen"><span class="type-12">12px</span></div>
+    </div>
+  </div>
+
+  <div class="palette-section">
+    <h3>Portafolio BVC — Inter, <em>sustituto</em> de Styrene</h3>
+    <div class="typography-section">
+      <div class="type-specimen pf"><span class="type-48">91.4M</span></div>
+      <div class="type-specimen pf"><span class="type-28" style="font-size:28px;font-weight:400;color:#e06c75;">-523,141</span></div>
+      <div class="type-specimen pf"><span class="type-24">Sin posiciones</span></div>
+      <div class="type-specimen pf" style="white-space:pre">Mayores variaciones     ALPHA  2,450  +1.34%  +4,925</div>
+      <p style="font-size: 11px; color: #888; line-height: 1.5; margin: 4px 0 0;">
+        Styrene B (Commercial Type) es la fuente compilada del firmware y no se
+        puede cargar en el navegador: esta muestra es <strong>Inter</strong>,
+        una neo-grotesca libre usada como aproximación. Las cifras de Inter son
+        ~8&nbsp;% más angostas, así que las filas acá tienen más aire que en la
+        placa. La tipografía real se verifica en el simulador nativo.
+      </p>
     </div>
   </div>
 </div>
@@ -614,10 +708,60 @@ const scenarios = {
   viejo: { k: 'oc', ok: true, src: 'api', p5: 0, r5: -1, pw: 0, rw: 9430, pm: 3, rm: 20354, st: 'ok', t7: 106969, m: 'ds-v4.1-flash', ms: 93, a: 0, ag: 'build', la: 1260 }
 };
 
+// === Portfolio scenarios (portfolio BVC spec §4) ===
+// Separate object from `scenarios` on purpose: the payload is routed by "k":"pf",
+// has its own radio group, and must never be fed to renderOpenCode().
+// NOTE: every string below that reaches this screen is ASCII puro (0x20-0x7E).
+// Styrene, la fuente compilada de la placa, no cubre nada fuera de ese rango, y
+// con LV_USE_FONT_PLACEHOLDER=1 un glifo ausente no deja un hueco: se dibuja
+// como un rectángulo vacío. O sea, un símbolo recortado a 'LONGNAM.' seguido de
+// esa caja es lo que se vería en el dispositivo. La pantalla de OpenCode es
+// la contraria: usa IBM Plex Mono, que sí trae '·', '…' y '○', y ahí
+// esos caracteres son correctos.
+const pfScenarios = {
+  // --- Sesión ---
+  real: { k: 'pf', ok: true, s: 'l', t: '09291042', mv: 91355200, dc: -523141, dp: -57, n: 12,
+          r: [['ALPHA', 2450, 134, 4925], ['BETAGROUP', 1875, 62, 3488], ['THETA', 375, -158, -18368], ['KAPPACO', 18780, -147, -154597]] },
+  cerrado: { k: 'pf', ok: true, s: 'c', t: '09291600', mv: 91355200, dc: -523141, dp: -57, n: 12,
+          r: [['ALPHA', 2450, 134, 4925], ['BETAGROUP', 1875, 62, 3488], ['THETA', 375, -158, -18368], ['KAPPACO', 18780, -147, -154597]] },
+  feriado: { k: 'pf', ok: true, s: 'c', t: '10091200', mv: 91355200, dc: 812400, dp: 110, n: 12,
+          r: [['LONGNAMEGRP', 122900, 425, 1186920], ['BETAGROUP', 1875, 62, 3488]] },
+  sinActualizar: { k: 'pf', ok: true, s: 'l', t: '09291042', mv: 91355200, dc: -523141, dp: -57, n: 12,
+          r: [['ALPHA', 2450, 134, 4925], ['BETAGROUP', 1875, 62, 3488], ['THETA', 375, -158, -18368], ['KAPPACO', 18780, -147, -154597]] },
+
+  // --- Forma de la lista (siempre orden por %, nunca filas de relleno) ---
+  todosSuben: { k: 'pf', ok: true, s: 'l', t: '09291042', mv: 91355200, dc: 170200, dp: 13, n: 12,
+          r: [['ALPHA', 2450, 134, 4925], ['BETAGROUP', 1875, 62, 3488]] },
+  todosBajan: { k: 'pf', ok: true, s: 'l', t: '09291042', mv: 91355200, dc: -219400, dp: -17, n: 12,
+          r: [['THETA', 375, -158, -18368], ['KAPPACO', 18780, -147, -154597]] },
+  unaGanadora: { k: 'pf', ok: true, s: 'l', t: '09291042', mv: 91355200, dc: -181080, dp: -14, n: 12,
+          r: [['BETAGROUP', 1875, 62, 3488], ['THETA', 375, -158, -18368], ['KAPPACO', 18780, -147, -154597]] },
+  sinVariaciones: { k: 'pf', ok: true, s: 'l', t: '09291040', mv: 91355200, dc: 0, dp: 0, n: 12, r: [] },
+  cero: { k: 'pf', ok: true, s: 'l', t: '09291042', mv: 91355200, dc: 0, dp: 0, n: 12,
+          r: [['BETAGROUP', 1875, 62, 3488], ['ZETA', 375, -106, -38320]] },
+  largo: { k: 'pf', ok: true, s: 'l', t: '09291042', mv: 91355200, dc: -1188600, dp: -1025, n: 12,
+          r: [['BETAGROUP', 1875, 62, 3488], ['LONGNAMEGRP', 122900, -1025, -1186920]] },
+
+  // --- Avisos de datos y configuración ---
+  tickerSinPrecio: { k: 'pf', ok: true, s: 'l', t: '09291042', mv: 91355200, dc: -523141, dp: -57, n: 12, u: 1, ux: 'EPMX',
+          r: [['ALPHA', 2450, 134, 4925], ['BETAGROUP', 1875, 62, 3488], ['THETA', 375, -158, -18368], ['KAPPACO', 18780, -147, -154597]] },
+  dosSinPrecio: { k: 'pf', ok: true, s: 'l', t: '09291042', mv: 91355200, dc: -523141, dp: -57, n: 12, u: 2, ux: 'EPMX',
+          r: [['ALPHA', 2450, 134, 4925], ['BETAGROUP', 1875, 62, 3488], ['THETA', 375, -158, -18368], ['KAPPACO', 18780, -147, -154597]] },
+  duplicado: { k: 'pf', ok: true, s: 'l', t: '09291042', mv: 91355200, dc: -523141, dp: -57, n: 12, w: 1,
+          r: [['ALPHA', 2450, 134, 4925], ['BETAGROUP', 1875, 62, 3488], ['THETA', 375, -158, -18368], ['KAPPACO', 18780, -147, -154597]] },
+
+  // --- Estados vacíos (ok:false) ---
+  nopos: { k: 'pf', ok: false, e: 'nopos', n: 0 },
+  nores: { k: 'pf', ok: false, e: 'nores', n: 12 },
+  nonet: { k: 'pf', ok: false, e: 'nonet', n: 12 },
+
+  // --- Enlace ---
+  bleCaido: { k: 'pf', ok: true, s: 'l', t: '09291042', mv: 91355200, dc: -523141, dp: -57, n: 12,
+          r: [['ALPHA', 2450, 134, 4925], ['BETAGROUP', 1875, 62, 3488], ['THETA', 375, -158, -18368], ['KAPPACO', 18780, -147, -154597]] }
+};
+
 const boardSpecs = {
-  grande: { w: 480, h: 480 },
-  compacto: { w: 368, h: 448 },
-  chico: { w: 240, h: 240 }
+  grande: { w: 480, h: 480 }
 };
 
 // === Simulator State ===
@@ -626,10 +770,20 @@ const simulatorState = {
   scenario: 'real',
   connected: true,
   daemonSendsOC: true,
-  currentScreen: 'clawd', // clawd, claude, ocsplash, ocusage
+  // El prototipo abre con PF encendido para que la 5ª pantalla se vea sin
+  // configurar nada. El opt-in real vive en el daemon: `portfolio = off` es el
+  // default del firmware y del collector, y ahí no se toca.
+  daemonSendsPortfolio: true,
+  pfScenario: 'real',
+  currentScreen: 'clawd', // clawd, claude, ocsplash, ocusage, portfolio
   brightness: 255,
   ocSplash: null,
   buttonDownTime: {},
+  // Modo privado (spec privacidad §7.2): persiste al cambiar de pantalla, al
+  // dormir y al reiniciar (NVS `pf_priv`). Por defecto apagado.
+  pfPrivate: false,
+  pfNotice: 0,        // 0 = nada · 1 = 'modo privado' · -1 = 'modo normal'
+  pfNoticeTimer: null,
 
   setBoard(board) {
     this.board = board;
@@ -644,6 +798,38 @@ const simulatorState = {
 
   setScenario(scenario) {
     this.scenario = scenario;
+    render();
+  },
+
+  setPfScenario(scenario) {
+    this.pfScenario = scenario;
+    render();
+  },
+
+  // Toggle del modo privado. `announce` enciende el indicador transitorio de
+  // 1,5 s de la línea de estado (spec privacidad §7.3).
+  setPfPrivate(value, announce = true) {
+    this.pfPrivate = !!value;
+    if (announce) this.showPfNotice();
+    render();
+  },
+
+  showPfNotice() {
+    if (this.pfNoticeTimer) clearTimeout(this.pfNoticeTimer);
+    this.pfNotice = this.pfPrivate ? 1 : -1;
+    this.pfNoticeTimer = setTimeout(() => {
+      this.pfNotice = 0;
+      this.pfNoticeTimer = null;
+      render();
+    }, 1500);
+  },
+
+  setDaemonSendsPortfolio(sends) {
+    this.daemonSendsPortfolio = sends;
+    // El modo privado NO se reinicia acá: es local y persiste.
+    if (!sends && this.currentScreen === 'portfolio') {
+      this.currentScreen = 'clawd';
+    }
     render();
   },
 
@@ -666,9 +852,10 @@ const simulatorState = {
   },
 
   getScreenList() {
-    return this.daemonSendsOC
-      ? ['clawd', 'claude', 'ocsplash', 'ocusage']
-      : ['clawd', 'claude'];
+    const screens = ['clawd', 'claude'];
+    if (this.daemonSendsOC) screens.push('ocsplash', 'ocusage');
+    if (this.daemonSendsPortfolio) screens.push('portfolio');
+    return screens;
   },
 
   getMood() {
@@ -694,13 +881,7 @@ const simulatorState = {
       if (elapsed < 300) {
         const screens = this.getScreenList();
         const idx = screens.indexOf(this.currentScreen);
-        if (this.board === 'compacto') {
-          // 1.8" has no SEC: BOOT goes forward
-          this.currentScreen = screens[(idx + 1) % screens.length];
-        } else {
-          // Others: BOOT goes backward
-          this.currentScreen = screens[(idx - 1 + screens.length) % screens.length];
-        }
+        this.currentScreen = screens[(idx - 1 + screens.length) % screens.length];
         showPageIndicator();
         render();
       } else {
@@ -717,10 +898,16 @@ const simulatorState = {
         showToast('Shift+Tab → HID (cambio de modo)');
       }
     } else if (button === 'pwr') {
-      if (elapsed < 3000) {
+      // El flanco PWR solo dispara al soltar antes de 1,5 s: entre 1,5 s y 3 s
+      // soltar no hace nada (es la franja que cancela el emparejar pendiente).
+      if (elapsed < 1500) {
         if (this.currentScreen === 'ocsplash' || this.currentScreen === 'clawd') {
           const newScene = this.ocSplash ? this.ocSplash.nextScene() : 'scanner';
           showToast(`PWR → escena: ${newScene}`);
+        } else if (this.currentScreen === 'portfolio') {
+          // Cada pantalla con algo propio lo cicla; el resto, brillo
+          // (spec privacidad §2.1)
+          this.setPfPrivate(!this.pfPrivate);
         } else {
           // Cycle brightness: 64 → 128 → 200 → 255 → 64
           const levels = [64, 128, 200, 255];
@@ -728,6 +915,8 @@ const simulatorState = {
           this.brightness = levels[(idx + 1) % levels.length];
           render();
         }
+      } else if (elapsed < 3000) {
+        showToast('PWR 1.5-3 s → nada (cancela el emparejar pendiente)');
       } else {
         showToast('PWR 3 s → modo emparejar');
       }
@@ -735,6 +924,7 @@ const simulatorState = {
   },
 
   cycleScreen() {
+    // El modo privado se mantiene al cambiar de pantalla (spec privacidad §7.2)
     const screens = this.getScreenList();
     const idx = screens.indexOf(this.currentScreen);
     this.currentScreen = screens[(idx + 1) % screens.length];
@@ -758,17 +948,8 @@ function renderPhysicalButtons() {
   const buttonConfigs = {
     grande: [
       { name: 'BOOT ◀', actions: 'toque ◀ · mantener: Espacio', id: 'boot' },
-      { name: 'PWR', actions: 'brillo · splash: escena · 3 s: emparejar', id: 'pwr' },
+      { name: 'PWR', actions: 'brillo · splash: escena · portafolio: privado · 3 s: emparejar', id: 'pwr' },
       { name: 'SEC ▶', actions: 'toque ▶ · mantener: Shift+Tab', id: 'sec' }
-    ],
-    compacto: [
-      { name: 'BOOT ▶', actions: 'toque ▶ · mantener: Espacio (sin SEC)', id: 'boot' },
-      { name: 'PWR', actions: 'brillo · splash: escena · 3 s: emparejar', id: 'pwr' }
-    ],
-    chico: [
-      { name: 'BOOT ◀', actions: 'toque ◀ · mantener: Espacio', id: 'boot' },
-      { name: 'SEC ▶', actions: 'toque ▶ · mantener: Shift+Tab', id: 'sec' },
-      { name: 'PWR', actions: 'brillo · splash: escena · 3 s: emparejar', id: 'pwr' }
     ]
   };
 
@@ -840,6 +1021,96 @@ function fmtMins(minutes) {
   return `${minutes}m`;
 }
 
+// === Portfolio number formats (portfolio spec §7) ===
+// Regla general: coma para miles, punto para decimales. Signo '+' / '-' (guion
+// ASCII, nunca U+2212), nada para cero. El redondeo va ANTES de elegir unidad.
+const PF_MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+
+function pfInt(n) {
+  const s = String(Math.abs(Math.round(n)));
+  let out = '';
+  for (let i = 0; i < s.length; i++) {
+    if (i > 0 && (s.length - i) % 3 === 0) out += ',';
+    out += s[i];
+  }
+  return out;
+}
+
+// Market value: sin signo y nunca con color. < 1M entero · < 999.95M X.XM · si no X.XXB
+function pfMarketValue(mv) {
+  const a = Math.abs(mv);
+  if (a < 1000000) return pfInt(mv);
+  if (a < 999950000) return (mv / 1000000).toFixed(1) + 'M';
+  return (mv / 1000000000).toFixed(2) + 'B';
+}
+
+function pfSign(n) {
+  return n > 0 ? '+' : n < 0 ? '-' : '';
+}
+
+// Contribución en grande: completa (máx 8 caracteres)
+function pfCopFull(n) {
+  const a = Math.abs(n);
+  if (a < 1000000) return pfSign(n) + pfInt(n);
+  return pfSign(n) + (a / 1000000).toFixed(2) + 'M';
+}
+
+// Contribución abreviada (máx 5 caracteres con signo)
+function pfCopShort(n) {
+  const a = Math.abs(Math.round(n));
+  if (a < 1000) return pfSign(n) + pfInt(a);
+  if (a < 10000) return pfSign(n) + (a / 1000).toFixed(1) + 'k';
+  if (a < 1000000) return pfSign(n) + Math.round(a / 1000) + 'k';
+  return pfSign(n) + (a / 1000000).toFixed(1) + 'M';
+}
+
+// % de fila: signo + 2 decimales (máx 7 caracteres)
+function pfRowPct(cents) {
+  return pfSign(cents) + (Math.abs(cents) / 100).toFixed(2) + '%';
+}
+
+// % del day change: el signo sale de `dc`, NO de `dp` (spec §7)
+function pfDayPct(dp, dc) {
+  if (dc === 0) return '0.00%';
+  return (dc < 0 ? '-' : '+') + (Math.abs(dp) / 100).toFixed(2) + '%';
+}
+
+// Símbolo sin sufijo .CL, recortado al presupuesto de px de su fila. Nunca '…':
+// la marca de abreviatura es un '.' ASCII, y es lo que impide leer "LONGNAMEGR."
+// como un ticker que existe. El piso son tres letras más el punto; bajar de ahí
+// haría que la fila ya no identificara la acción, así que eso no se dibuja (de
+// eso se ocupa la guardia de pfTightestBudget, que primero saca columnas).
+function pfTrimSym(sym, symMax, size = PF_ROW.font) {
+  if (pfTextW(sym, size) <= symMax) return sym;
+  for (let n = sym.length - 1; n > 3; n--) {
+    const cut = sym.substring(0, n) + '.';
+    if (pfTextW(cut, size) <= symMax) return cut;
+  }
+  return sym.substring(0, 3) + '.';
+}
+
+// t = "MMDDhhmm" en hora de Colombia
+function pfClock(t) {
+  if (!t || t.length < 8) return '--:--';
+  return t.substring(4, 6) + ':' + t.substring(6, 8);
+}
+
+function pfSessionDate(t) {
+  if (!t || t.length < 8) return '-- ---';
+  return parseInt(t.substring(2, 4), 10) + ' ' + PF_MONTHS[parseInt(t.substring(0, 2), 10) - 1];
+}
+
+function pfMoneyColor(n) {
+  return n > 0 ? pfTokens.success : n < 0 ? pfTokens.error : pfTokens.text;
+}
+
+// Payloads de error: l1 cuenta qué pasa, l2 y l3 dicen cómo arreglarlo
+const PF_EMPTY = {
+  nopos: { l1: 'sin posiciones', l2: '~/.config/claude-usage-monitor/portfolio', l2c: 'config: portfolio', l3: 'formato: SIMBOLO.CL cantidad' },
+  nores: { l1: 'sin precios', l3: 'revisar simbolos (.CL)' },
+  nonet: { l1: 'sin precios', l2: 'Yahoo no responde', l3: 'reintenta cada 60 s' }
+};
+
 // === SVG Logos (cleaned IDs) ===
 function getLogoSVG(id) {
   return `<svg width="40" height="50" viewBox="0 0 240 300" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -884,40 +1155,113 @@ const L = {
     stats: { titlesTop: 386, valsTop: 410, cols: [20, 150, 370], size: 18, truncate: 12 },
     status: { top: 448, size: 18, square: 10, textX: 38 },
     pageIndicator: { centerY: 472 }
-  },
-  compacto: {
-    w: 368, h: 448,
-    logo: { x: 20, y: 22, w: 32, h: 40 },
-    wordmark: { x: 109, y: 30, w: 150 },
-    battery: { x: 316, y: 30, w: 32, h: 16 },
-    panel1: { x: 20, y: 80, w: 328, h: 116 },
-    panel2: { x: 20, y: 206, w: 328, h: 116 },
-    panelPadding: 14,
-    hero: { top: 10, size: 40 },
-    chip: { top: 14, h: 22, size: 16, px: 6 },
-    bar: { top: 60, segments: 25, w: 10, h: 16, gap: 2 },
-    costLine: { top: 92, size: 16 },
-    stats: { titlesTop: 334, valsTop: 356, cols: [20, 120, 276], size: 16, truncate: 9 },
-    status: { top: 404, size: 16, square: 8, textX: 34 },
-    pageIndicator: { centerY: 440 }
-  },
-  chico: {
-    w: 240, h: 240,
-    logo: { x: 8, y: 6, w: 16, h: 20 },
-    wordmark: { x: 70, y: 10, w: 100 },
-    battery: { x: 208, y: 10, w: 24, h: 12 },
-    panel1: { x: 8, y: 34, w: 224, h: 82 },
-    panel2: { x: 8, y: 122, w: 224, h: 82 },
-    panelPadding: 8,
-    hero: { top: 6, size: 24 },
-    chip: { top: 8, h: 16, size: 12, px: 5 },
-    bar: { top: 38, segments: 18, w: 9, h: 10, gap: 2 },
-    costLine: { top: 58, size: 12 },
-    stats: null,
-    status: { top: 214, size: 12, square: 6, textX: 18 },
-    pageIndicator: { centerY: 234 }
   }
 };
+
+// === Paleta del portafolio (objeto propio, no el compartido) ===
+// `tokens` sigue intacto porque la pantalla de OpenCode lo usa. Acá `primary`
+// es un aviso sobre el fondo: dentro de una tarjeta el ojo no lo busca, así que
+// nunca se usa. Ni un borde de 1 px: las tarjetas son superficies redondeadas.
+const pfTokens = {
+  bg: '#000000',
+  surface: '#1a1a1a',   // relleno de las tarjetas
+  text: '#eeeeee',
+  muted: '#8c8c8c',     // era #808080: sube de 4,41:1 a 5,18:1 sobre surface
+  primary: '#fab283',   // avisos, SOLO sobre bg
+  error: '#e06c75',
+  success: '#2ee88a'    // era #7fd88f, más brillante
+};
+
+// === Anexo A (portfolio): coordinate table (source of truth) ===
+// Las `top` de tarjeta son relativas a la tarjeta; las de la pantalla son absolutas.
+// Las claves `*Ri` son bordes derechos relativos a la tarjeta.
+const LT = {
+  grande: {
+    w: 480, h: 480,
+    header:  { x: 20, top: 36, size: 16 },
+    battery: { x: 412, y: 34, w: 40, h: 20 },
+    card1:   { x: 20, y: 72,  h: 172, radius: 12, pad: 20 },  // 72..244
+    card2:   { x: 20, y: 256, h: 180, radius: 12, pad: 20 },  // 256..436
+    label:   { top: 18, size: 16, unitRi: 20 },
+    hero:    { top: 40, size: 48 },                 // "91.4M" abreviado con M
+    cols:    { labelTop: 104, valueTop: 124, labelSize: 16, valueSize: 28, x1: 20, x2: 240 },
+    listTitle: { top: 18, size: 16, countRi: 20 },
+    rows:    { top: 48, pitch: 28, size: 16, lineH: 17, gapExtra: 10 },
+    noRows:  { top: 48, size: 16 },
+    empty:   { h: 114, l1: { top: 20, size: 24 }, l2: { top: 58, size: 14 }, l3: { top: 80, size: 14 } },
+    status:  { x: 20, top: 448, size: 16, dot: 8, dotY: 452, textX: 36 },
+    pageIndicator: { centerY: 472 },
+    // Modo privado: la tarjeta 1 baja a una sola línea y la 2 sube
+    pvCard1H: 109,
+    pvCard2Y: 193
+  }
+};
+
+// === La fila: anclada a la derecha y medida (spec §2.3.1) ===
+// Las claves son insets desde el borde derecho de la tarjeta, los mismos que
+// `L.f` / `L.f_priv` del firmware. Lo que sigue es su `row_layout()` en JS.
+const PF_ROW = {
+  // La fuente de la fila, que es la de la raíz de la pantalla. El ancho se
+  // mide: `pfTextW()` es el equivalente de `text_w()`.
+  family: "'IBM Plex Mono', monospace",
+  font: LT.grande.rows.size,          // 16 px: una sola fuente para toda la fila
+  minSym: 'WWW.',                     // tres letras + el punto: el piso del símbolo
+  normal:  { symX: 20, gap: 16, priceRi: 199, pctRi: 118, contribRi: 20,  contrib: 'full' },
+  private: { symX: 20, gap: 16, priceRi: 101, pctRi:  20, contribRi: null, contrib: 'full' },
+  // Rutas cortas de config: solo en el board chico, que ya no está acá
+  shortPaths: false
+};
+
+const _pfCtx = document.createElement('canvas').getContext('2d');
+function pfTextW(s, size, family = PF_ROW.family) {
+  _pfCtx.font = size + 'px ' + family;
+  return _pfCtx.measureText(s).width;
+}
+
+// Composición de una fila, de derecha a izquierda y una sola vez por fila, con
+// el ancho MEDIDO de los textos que se van a dibujar:
+//
+//   cR  = cardW - contribRi    (contra el padding: es la columna de más a la
+//   cL  = cR - W(contrib)       derecha y nada la puede empujar)
+//   pR  = min(cardW - pctRi,   cL - gap)
+//   pL  = pR - W(pct)
+//   prR = min(cardW - priceRi, pL - gap)
+//   prL = prR - W(price)
+//   symBudget = prL - gap - symX
+//
+// El `min` es el punto entero: los insets por defecto alinean las columnas de
+// fila a fila, y un valor más ancho de lo previsto solo empuja a las columnas
+// que tiene a su izquierda, nunca las encima. Lo que sobra es del símbolo, que
+// se recorta. El margen de una fila es "cuánto pueden crecer todavía los
+// números", no lo que quedó de una constante.
+function pfRowLayout(cardW, f, w, withC, withPr) {
+  let left = Infinity;                  // borde izquierdo de la columna vecina
+  let contribR = null, priceR = null;
+
+  if (withC) {
+    contribR = cardW - f.contribRi;
+    left = contribR - w.contrib;
+  }
+  let pctR = cardW - f.pctRi;
+  if (pctR > left - f.gap) pctR = left - f.gap;   // Infinity deja el default quieto
+  left = pctR - w.pct;
+  if (withPr) {
+    priceR = cardW - f.priceRi;
+    if (priceR > left - f.gap) priceR = left - f.gap;
+    left = priceR - w.price;
+  }
+  return { contribR, pctR, priceR, symBudget: left - f.gap - f.symX };
+}
+
+// El presupuesto de símbolo más apretado de las filas en pantalla: es contra
+// ese número que se decide la guardia, sin tocar el placement de cada fila.
+function pfTightestBudget(cardW, f, widths, withC, withPr) {
+  let tightest = Infinity;
+  for (const w of widths) {
+    tightest = Math.min(tightest, pfRowLayout(cardW, f, w, withC, withPr).symBudget);
+  }
+  return tightest;
+}
 
 // === Main render function: OpenCode screen ===
 function renderOpenCode(container, sizeKey, data, uiState = {}) {
@@ -1172,6 +1516,326 @@ function renderOpenCode(container, sizeKey, data, uiState = {}) {
   container.appendChild(root);
 }
 
+// === Main render function: Portfolio screen (spec portafolio BVC) ===
+// uiState.private = modo privado (spec privacidad). El payload NO cambia:
+// es visibilidad, no transporte.
+function renderPortfolio(container, sizeKey, data, uiState = {}) {
+  const layout = LT[sizeKey];
+  if (!layout) return;
+
+  const { w, h } = layout;
+  const isOffline = uiState.offline || false;
+  const isStale = uiState.stale || false;
+  const brightness = uiState.brightness || 255;
+  const ok = data.ok !== false;
+  const err = ok ? null : (data.e || 'nores');
+
+  // Modo privado: solo cambian las dos cajas. La tarjeta 1 baja a una sola
+  // línea (109) y la 2 sube a 193, y nada más (spec privacidad §4). Los
+  // estados vacíos (ok:false) conservan la caja normal y solo cambian el texto
+  // que revela n.
+  const isPrivate = !!(uiState.private && ok);
+  const pad = layout.card1.pad;
+  const cardW = w - layout.card1.x * 2;
+  const right = (edge) => Math.round(cardW - edge); // borde derecho relativo a la tarjeta
+
+  // Geometría de las dos tarjetas, resuelta una vez y en un solo lugar
+  const card1 = {
+    x: layout.card1.x, y: layout.card1.y, w: cardW, radius: layout.card1.radius,
+    h: isPrivate ? layout.pvCard1H : (ok ? layout.card1.h : layout.empty.h)
+  };
+  const card2 = {
+    x: layout.card2.x, y: isPrivate ? layout.pvCard2Y : layout.card2.y,
+    w: cardW, h: layout.card2.h, radius: layout.card2.radius
+  };
+
+  // Hasta 2 ganadoras y 2 perdedoras, en el orden que manda el daemon
+  // (ganadoras de mayor a menor %, después perdedoras de más negativa a menos).
+  // El 0% exacto nunca viaja; si aparece, se descarta acá también. Nunca hay
+  // filas de relleno.
+  const rows = ok && Array.isArray(data.r)
+    ? data.r.filter(r => r[2] !== 0).slice(0, 4)
+    : [];
+  const g = rows.filter(r => r[2] > 0).length;         // ganadoras (van arriba)
+
+  // Clear and setup root container
+  container.innerHTML = '';
+  const root = document.createElement('div');
+  root.className = 'pf';
+  root.style.cssText = `
+    position: relative;
+    width: ${w}px;
+    height: ${h}px;
+    background: ${pfTokens.bg};
+    overflow: hidden;
+    font-family: 'IBM Plex Mono', monospace;
+    filter: brightness(${brightness / 255});
+  `;
+
+  function createDiv(text = '', cssText = '') {
+    const div = document.createElement('div');
+    if (text) div.textContent = text;
+    div.style.cssText = `position:absolute;line-height:1;white-space:nowrap;margin:0;${cssText}`;
+    return div;
+  }
+
+  // Cabecera: dos zonas de aviso. "e" manda sobre "u", y "u" sobre "w".
+  let headerText = 'Portfolio';
+  let headerColor = pfTokens.muted;
+  if (ok && data.u >= 1) {
+    headerText = data.ux
+      ? (data.u > 1 ? `! ${data.ux} +${data.u - 1} sin precio` : `! ${data.ux} sin precio`)
+      : `! ${data.u} sin precio`;
+    headerColor = pfTokens.primary;
+  } else if (ok && data.w >= 1) {
+    headerText = `! ${data.w} aviso, ver log`;
+    headerColor = pfTokens.primary;
+  }
+  root.appendChild(createDiv(
+    headerText,
+    `left:${layout.header.x}px;top:${layout.header.top}px;font-size:${layout.header.size}px;color:${headerColor};`
+  ));
+
+  // Battery
+  const BAT = layout.battery;
+  const batteryDiv = createDiv();
+  batteryDiv.style.cssText += `left:${BAT.x}px;top:${BAT.y}px;width:${BAT.w}px;height:${BAT.h}px;border:1px solid ${pfTokens.text};`;
+  const batteryFill = document.createElement('div');
+  batteryFill.style.cssText = `position:absolute;left:2px;top:2px;width:${Math.round(BAT.w * 0.7 * 0.8)}px;height:${BAT.h - 4}px;background:${pfTokens.text};`;
+  batteryDiv.appendChild(batteryFill);
+  root.appendChild(batteryDiv);
+
+  // Opacity wrapper: solo se atenúa con el enlace caído
+  const dimmedGroup = document.createElement('div');
+  dimmedGroup.style.cssText = `position:absolute;width:${w}px;height:${h}px;opacity:${isOffline ? '0.4' : '1'};`;
+
+  // Superficie redondeada: relleno y radio, nunca un borde de 1 px
+  const cardBox = (c) => {
+    const cardDiv = createDiv();
+    cardDiv.style.cssText += `left:${c.x}px;top:${c.y}px;width:${c.w}px;height:${c.h}px;box-sizing:border-box;` +
+      `border-radius:${c.radius}px;background:${pfTokens.surface};`;
+    return cardDiv;
+  };
+
+  // --- Tarjeta 1: valor total + cambio del día, o estado vacío. En privado: una
+  // sola línea, con el % del día como héroe y 'hoy' en vez de la unidad ---
+  const p1 = cardBox(card1);
+
+  if (!ok) {
+    const e = PF_EMPTY[err] || PF_EMPTY.nores;
+    // '0 de 12 con precio' revela n, que es privado (spec privacidad §3.2):
+    // 'ninguno con precio' dice lo mismo sin el número.
+    const l2 = err === 'nores'
+      ? (uiState.private ? 'ninguno con precio' : `0 de ${data.n || 0} con precio`)
+      : (err === 'nopos' && PF_ROW.shortPaths ? e.l2c : e.l2);
+    const lines = [
+      { text: e.l1, cfg: layout.empty.l1, color: pfTokens.text },
+      { text: l2, cfg: layout.empty.l2, color: pfTokens.muted },
+      { text: e.l3, cfg: layout.empty.l3, color: pfTokens.muted }
+    ];
+    for (const line of lines) {
+      if (!line.text) continue;
+      p1.appendChild(createDiv(line.text,
+        `left:${pad}px;top:${line.cfg.top}px;font-size:${line.cfg.size}px;color:${line.color};`));
+    }
+  } else if (isPrivate) {
+    // Héroe privado: el % del día, en el mismo lugar, tamaño y peso que el
+    // market value. Su signo sale de `dc`, así que no filtra nada (spec §1.5)
+    p1.appendChild(createDiv(pfDayPct(data.dp, data.dc),
+      `left:${pad}px;top:${layout.hero.top}px;font-size:${layout.hero.size}px;font-weight:500;color:${pfMoneyColor(data.dc)};`));
+
+    // 'COP' describía la unidad del market value; sin pesos, miente. 'hoy' dice
+    // que el % es la variación del día (spec §1.4)
+    p1.appendChild(createDiv('hoy',
+      `right:${layout.label.unitRi}px;top:${layout.label.top}px;font-size:${layout.label.size}px;color:${pfTokens.muted};`));
+  } else {
+    const LB = layout.label, K = layout.cols;
+
+    // 'Valor total' + la unidad sola: en muted, no en primary (spec §5)
+    p1.appendChild(createDiv('Valor total',
+      `left:${pad}px;top:${LB.top}px;font-size:${LB.size}px;color:${pfTokens.muted};`));
+    p1.appendChild(createDiv('COP',
+      `right:${LB.unitRi}px;top:${LB.top}px;font-size:${LB.size}px;color:${pfTokens.muted};`));
+
+    // Market value: es un nivel, nunca lleva color ni signo
+    p1.appendChild(createDiv(pfMarketValue(data.mv),
+      `left:${pad}px;top:${layout.hero.top}px;font-size:${layout.hero.size}px;font-weight:500;color:${pfTokens.text};`));
+
+    // El cambio del día son dos columnas: pesos y porcentaje. Las dos llevan
+    // color, porque las dos son variaciones.
+    const dcColor = pfMoneyColor(data.dc);
+    p1.appendChild(createDiv('Cambio hoy',
+      `left:${K.x1}px;top:${K.labelTop}px;font-size:${K.labelSize}px;color:${pfTokens.muted};`));
+    p1.appendChild(createDiv('Cambio %',
+      `left:${K.x2}px;top:${K.labelTop}px;font-size:${K.labelSize}px;color:${pfTokens.muted};`));
+    p1.appendChild(createDiv(pfCopFull(data.dc),
+      `left:${K.x1}px;top:${K.valueTop}px;font-size:${K.valueSize}px;font-weight:500;color:${dcColor};`));
+    p1.appendChild(createDiv(pfDayPct(data.dp, data.dc),
+      `left:${K.x2}px;top:${K.valueTop}px;font-size:${K.valueSize}px;font-weight:500;color:${dcColor};`));
+  }
+  dimmedGroup.appendChild(p1);
+
+  // --- Tarjeta 2: mayores variaciones (oculto cuando ok:false) ---
+  if (ok) {
+    const T = layout.listTitle;
+    const p2 = cardBox(card2);
+
+    p2.appendChild(createDiv('mayores variaciones',
+      `left:${pad}px;top:${T.top}px;font-size:${T.size}px;color:${pfTokens.muted};`));
+    // 'de 12' dice cuántas acciones tenés: se oculta en privado (spec §3.2)
+    if (!isPrivate) {
+      p2.appendChild(createDiv(`de ${data.n}`,
+        `right:${T.countRi}px;top:${T.top}px;font-size:${T.size}px;color:${pfTokens.muted};`));
+    }
+
+    if (rows.length === 0) {
+      p2.appendChild(createDiv('sin cambios por ahora',
+        `left:${pad}px;top:${layout.noRows.top}px;font-size:${layout.noRows.size}px;color:${pfTokens.muted};`));
+    } else {
+      const R = layout.rows;
+      // El salto entre ganadoras y perdedoras lo marca el aire, no una línea
+      const rowTop = (i) => R.top + i * R.pitch + (g > 0 && i >= g ? R.gapExtra : 0);
+
+      const C = isPrivate ? PF_ROW.private : PF_ROW.normal;
+
+      // Pasada 1: formatear y MEDIR cada fila con todas sus columnas encima, que
+      // es lo que deja saber cuánto le sobra al símbolo. En privado la
+      // contribución ni se formatea: depende de la cantidad (spec §3.2).
+      const cells = rows.map(rw => ({
+        price: pfInt(rw[1]),
+        pct: pfRowPct(rw[2]),
+        contrib: C.contribRi === null ? ''
+          : (C.contrib === 'full' ? pfCopFull(rw[3]) : pfCopShort(rw[3]))
+      }));
+      const widths = cells.map(c => ({
+        price: pfTextW(c.price, R.size),
+        pct: pfTextW(c.pct, R.size),
+        contrib: pfTextW(c.contrib, R.size)
+      }));
+      // Medido, no hardcodeado: el ancho del símbolo más corto que todavía
+      // identifica una acción
+      const minSymW = pfTextW(PF_ROW.minSym, R.size);
+
+      // La guardia, decidida UNA vez por pantalla para que las columnas no se
+      // muevan de una fila a otra: si el presupuesto más apretado no alcanza,
+      // se va la contribución y, si tampoco, el precio. Nunca un número encima
+      // de otro, nunca un símbolo de menos de tres letras.
+      let showC = C.contribRi !== null;
+      let showPr = C.priceRi !== null;
+      if (pfTightestBudget(cardW, C, widths, showC, showPr) < minSymW) {
+        showC = false;
+        if (pfTightestBudget(cardW, C, widths, showC, showPr) < minSymW) showPr = false;
+      }
+
+      // Pasada 2: colocar las columnas que sobrevivieron y cortar cada símbolo
+      // a SU presupuesto, que es el que le quedó en esa fila.
+      cells.forEach((c, i) => {
+        const L2 = pfRowLayout(cardW, C, widths[i], showC, showPr);
+        const top = rowTop(i);
+        const pctColor = pfMoneyColor(rows[i][2]);
+
+        if (L2.symBudget >= minSymW) {
+          p2.appendChild(createDiv(pfTrimSym(rows[i][0], L2.symBudget, R.size),
+            `left:${C.symX}px;top:${top}px;font-size:${R.size}px;color:${pfTokens.text};`));
+        }
+
+        // El precio es la cifra de referencia: la única columna en muted y la
+        // única sin signo. Si el reparto no lo bancó, no se dibuja.
+        if (showPr) {
+          p2.appendChild(createDiv(c.price,
+            `right:${right(L2.priceR)}px;top:${top}px;font-size:${R.size}px;color:${pfTokens.muted};`));
+        }
+
+        p2.appendChild(createDiv(c.pct,
+          `right:${right(L2.pctR)}px;top:${top}px;font-size:${R.size}px;color:${pctColor};`));
+
+        // La contribución depende de la cantidad: nunca se muestra en privado
+        if (showC) {
+          p2.appendChild(createDiv(c.contrib,
+            `right:${right(L2.contribR)}px;top:${top}px;font-size:${R.size}px;color:${pctColor};`));
+        }
+      });
+    }
+    dimmedGroup.appendChild(p2);
+  }
+
+  root.appendChild(dimmedGroup);
+
+  // --- Línea de estado: sesión y enlace ---
+  const ST = layout.status;
+  let statusText = '';
+  let statusColor = pfTokens.muted;
+  let showSquare = false;
+
+  if (uiState.privNotice) {
+    // Indicador transitorio del modo: 1,5 s en muted y sin cuadrado, y después
+    // vuelve el estado de sesión (spec privacidad §7.3)
+    statusText = isPrivate ? 'modo privado' : 'modo normal';
+  } else if (isOffline) {
+    statusText = '! bluetooth desconectado';
+    statusColor = pfTokens.primary;
+  } else if (!ok) {
+    statusText = '';
+  } else if (data.s === 'l') {
+    if (isStale) {
+      // Deja de decir "en vivo" (era lo único falso), pero no se atenúa
+      statusText = 'sin actualizar desde ' + pfClock(data.t);
+    } else {
+      statusText = 'en vivo, ' + pfClock(data.t);
+      statusColor = pfTokens.text;
+      showSquare = true;
+    }
+  } else {
+    statusText = 'cierre ' + pfSessionDate(data.t);
+  }
+
+  if (statusText) {
+    if (showSquare) {
+      // Cuadrado blanco fijo: en esta pantalla rojo y verde son del dinero,
+      // y cada parpadeo sería un redibujado (spec §9)
+      root.appendChild(createDiv('',
+        `left:${ST.x}px;top:${ST.dotY}px;width:${ST.dot}px;height:${ST.dot}px;background:${pfTokens.text};`));
+    }
+    root.appendChild(createDiv(
+      statusText,
+      `left:${showSquare ? ST.textX : ST.x}px;top:${ST.top}px;font-size:${ST.size}px;color:${statusColor};`
+    ));
+  }
+
+  // Indicador de página (5 puntos). Lo dibuja quien lo necesita (grilla de
+  // variantes); en el simulador lo pone showPageIndicator() sobre el device.
+  if (uiState.dots) {
+    const count = 5, dSize = 6, dGap = 10;
+    const strip = count * dSize + (count - 1) * dGap;
+    for (let i = 0; i < count; i++) {
+      root.appendChild(createDiv('', `left:${Math.round((w - strip) / 2) + i * (dSize + dGap)}px;top:${layout.pageIndicator.centerY - dSize / 2}px;width:${dSize}px;height:${dSize}px;border-radius:50%;background:${i === count - 1 ? pfTokens.text : pfTokens.surface};`));
+    }
+  }
+
+  container.appendChild(root);
+}
+
+// Serializa el payload "pf" respetando las reglas de omisión de la spec §6.
+function buildPfPayload(data) {
+  const p = { k: 'pf', ok: data.ok !== false };
+  if (!p.ok) p.e = data.e || 'nores';
+  if (p.ok) {
+    p.s = data.s;
+    p.t = data.t;
+    p.mv = data.mv;
+    p.dc = data.dc;
+    p.dp = data.dp;
+  }
+  p.n = data.n;
+  if (p.ok && data.u) {
+    p.u = data.u;
+    if (data.ux) p.ux = data.ux;
+  }
+  if (p.ok && data.w) p.w = data.w;
+  if (p.ok && Array.isArray(data.r) && data.r.length) p.r = data.r;
+  return JSON.stringify(p);
+}
+
 // === Simulator render ===
 function render() {
   const specs = boardSpecs[simulatorState.board];
@@ -1224,36 +1888,53 @@ function render() {
       brightness: simulatorState.brightness
     });
     deviceScreen.innerHTML = tempDiv.innerHTML;
+  } else if (simulatorState.currentScreen === 'portfolio') {
+    const pfData = { ...pfScenarios[simulatorState.pfScenario] };
+    const tempDiv = document.createElement('div');
+    renderPortfolio(tempDiv, simulatorState.board, pfData, {
+      offline: !simulatorState.connected,
+      stale: simulatorState.pfScenario === 'sinActualizar',
+      brightness: simulatorState.brightness,
+      private: simulatorState.pfPrivate,
+      privNotice: simulatorState.pfNotice
+    });
+    deviceScreen.innerHTML = tempDiv.innerHTML;
   }
 
   // Update info line
-  const screenNames = { clawd: 'Clawd', claude: 'Claude', ocsplash: 'OCSplash', ocusage: 'OCUsage' };
+  const screenNames = { clawd: 'Clawd', claude: 'Claude', ocsplash: 'OCSplash', ocusage: 'OCUsage', portfolio: 'Portafolio' };
   document.getElementById('deviceInfo').textContent =
-    `Pantalla: ${screenNames[simulatorState.currentScreen]} · ${simulatorState.brightness} / 255`;
+    `Pantalla: ${screenNames[simulatorState.currentScreen]} · ${simulatorState.brightness} / 255` +
+    (simulatorState.currentScreen === 'portfolio' && simulatorState.pfPrivate ? ' · modo privado' : '');
 
   // Update payload (compact, omit keys marked —)
-  const payload = {};
-  payload.k = 'oc';
-  payload.ok = true;
-  if (data.src) payload.src = data.src;
-  if (data.p5 !== undefined) payload.p5 = data.p5;
-  if (data.r5 !== undefined) payload.r5 = data.r5;
-  if (data.pw !== undefined) payload.pw = data.pw;
-  if (data.rw !== undefined) payload.rw = data.rw;
-  if (data.pm !== undefined) payload.pm = data.pm;
-  if (data.rm !== undefined) payload.rm = data.rm;
-  if (data.st) payload.st = data.st;
-  if (data.t7) payload.t7 = data.t7;
-  if (data.m) payload.m = data.m;
-  if (data.ms) payload.ms = data.ms;
-  if (data.a !== undefined) payload.a = data.a;
-  if (data.ag) payload.ag = data.ag;
-  if (data.la) payload.la = data.la;
-  if (data.tk) payload.tk = data.tk;
-  if (data.cd !== undefined) payload.cd = data.cd;
-  if (data.c7) payload.c7 = data.c7;
+  let payloadStr;
+  if (simulatorState.currentScreen === 'portfolio') {
+    payloadStr = buildPfPayload(pfScenarios[simulatorState.pfScenario]);
+  } else {
+    const payload = {};
+    payload.k = 'oc';
+    payload.ok = true;
+    if (data.src) payload.src = data.src;
+    if (data.p5 !== undefined) payload.p5 = data.p5;
+    if (data.r5 !== undefined) payload.r5 = data.r5;
+    if (data.pw !== undefined) payload.pw = data.pw;
+    if (data.rw !== undefined) payload.rw = data.rw;
+    if (data.pm !== undefined) payload.pm = data.pm;
+    if (data.rm !== undefined) payload.rm = data.rm;
+    if (data.st) payload.st = data.st;
+    if (data.t7) payload.t7 = data.t7;
+    if (data.m) payload.m = data.m;
+    if (data.ms) payload.ms = data.ms;
+    if (data.a !== undefined) payload.a = data.a;
+    if (data.ag) payload.ag = data.ag;
+    if (data.la) payload.la = data.la;
+    if (data.tk) payload.tk = data.tk;
+    if (data.cd !== undefined) payload.cd = data.cd;
+    if (data.c7) payload.c7 = data.c7;
+    payloadStr = JSON.stringify(payload);
+  }
 
-  const payloadStr = JSON.stringify(payload);
   const bytes = new Blob([payloadStr]).size;
   document.getElementById('payloadJson').textContent = payloadStr;
   const payloadBytesEl = document.getElementById('payloadBytes');
@@ -1270,8 +1951,8 @@ function render() {
 // === Variants grid ===
 function buildVariantsGrid() {
   const grid = document.getElementById('variantsGrid');
-  const boardSizes = ['grande', 'compacto', 'chico'];
-  const boardNames = { grande: '2.16" 480×480', compacto: '1.8" 368×448', chico: '1.54" 240×240' };
+  const boardSizes = ['grande'];
+  const boardNames = { grande: '2.16" 480×480' };
 
   // Calculate grid columns based on board sizes
   let minWidth = 0;
@@ -1390,6 +2071,89 @@ function buildVariantsGrid() {
 
   section2.appendChild(section2Grid);
   grid.appendChild(section2);
+
+  // --- Section 3: Portfolio screens ---
+  const section3 = document.createElement('div');
+  section3.style.cssText = 'grid-column: 1/-1; margin-top: 40px;';
+
+  const section3Title = document.createElement('h3');
+  section3Title.textContent = 'Portafolio BVC — DATOS FICTICIOS';
+  section3Title.style.cssText = 'margin-bottom: 20px; font-size: 14px; color: #bbb;';
+  section3.appendChild(section3Title);
+
+  const pfLabels = {
+    real: 'Mercado abierto',
+    cerrado: 'Cierre 29 sep',
+    feriado: 'Cierre 9 oct (feriado)',
+    sinActualizar: 'Sin actualizar',
+    todosSuben: 'Todos suben',
+    todosBajan: 'Todos bajan',
+    unaGanadora: 'Una sola ganadora',
+    sinVariaciones: 'Sin variaciones',
+    cero: 'Day change 0',
+    largo: 'Simbolo largo',
+    nopos: 'Sin posiciones',
+    tickerSinPrecio: 'EPMX sin precio',
+    dosSinPrecio: '2 sin precio',
+    nores: 'Ningun ticker resolvio',
+    nonet: 'Yahoo no responde',
+    duplicado: '1 aviso · ver log',
+    bleCaido: 'BLE desconectado'
+  };
+
+  // Normal y privado, con el mismo set de estados (spec privacidad §5)
+  const buildPfGrid = (privateMode) => {
+    const block = document.createElement('div');
+    block.style.cssText = 'margin-top: 24px;';
+
+    const subTitle = document.createElement('div');
+    subTitle.textContent = privateMode
+      ? 'Modo privado — PWR corto en la pantalla de portafolio'
+      : 'Modo normal — pesos a la vista';
+    subTitle.style.cssText = 'margin-bottom: 16px; font-size: 12px; color: #888;';
+    block.appendChild(subTitle);
+
+    const gridDiv = document.createElement('div');
+    gridDiv.style.cssText = 'display:grid;gap:40px;grid-template-columns:repeat(auto-fit,minmax(' + (minWidth + 40) + 'px,1fr));';
+
+    for (const board of boardSizes) {
+      for (const key of Object.keys(pfLabels)) {
+        const data = { ...pfScenarios[key] };
+
+        const cell = document.createElement('div');
+        cell.className = 'variant-cell';
+
+        const caption = document.createElement('div');
+        caption.className = 'variant-caption';
+        caption.textContent = boardNames[board] + ' — ' + pfLabels[key] +
+          (privateMode ? ' · privado' : ' · normal');
+        cell.appendChild(caption);
+
+        const screenDiv = document.createElement('div');
+        screenDiv.className = 'variant-screen';
+        const specs = boardSpecs[board];
+        screenDiv.style.width = specs.w + 'px';
+        screenDiv.style.height = specs.h + 'px';
+
+        renderPortfolio(screenDiv, board, data, {
+          offline: key === 'bleCaido',
+          stale: key === 'sinActualizar',
+          dots: true,
+          private: privateMode
+        });
+
+        cell.appendChild(screenDiv);
+        gridDiv.appendChild(cell);
+      }
+    }
+
+    block.appendChild(gridDiv);
+    return block;
+  };
+
+  section3.appendChild(buildPfGrid(false));
+  section3.appendChild(buildPfGrid(true));
+  grid.appendChild(section3);
 }
 
 // === Palette display ===

@@ -21,3 +21,12 @@ daemon/.venv/
 # Python bytecode cache
 __pycache__/
 *.pyc
+
+# Local working notes — decision records and debug scratch from design
+# sessions. They quote real portfolio figures, so they never go to the public
+# repo. The masked prototype under design/opencode-screen/ is the artifact
+# that carries the screen itself.
+cooked-ideas/
+
+# Herdr subagent helper, local tooling, not part of the project
+.herdr-wait-agent.sh

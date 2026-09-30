@@ -57,3 +57,25 @@ opencode = off
 #   opencode_auth = ~/.local/share/opencode/auth.json    (holds the Go key)
 # opencode_db = ~/.local/share/opencode/opencode.db
 # opencode_auth = ~/.local/share/opencode/auth.json
+
+# Send the BVC portfolio screen as well (macOS daemon). When on, the daemon
+# polls Yahoo every 60s — independently of Claude, so the screen keeps working
+# even when Claude has no token — and sends its payload between the Claude and
+# OpenCode ones. No API key, no account, no cost: one public request per poll.
+#   off = the screen stays out of the cycle (default)
+#   on  = the portfolio screen joins the cycle
+# Positions live in their own file, one per line, re-read on every poll so an
+# edit lands in ~60s without a restart:
+#   ALPHA.CL 150
+#   BETAGROUP.CL 300
+#   # blank lines and # comments are fine
+# Symbols go to Yahoo VERBATIM — do not let the daemon guess a suffix for you.
+# "EPM.CL" is a ticker Yahoo does not know; "EPM" answers with a US oil company
+# at USD 3.50, which is why the daemon only accepts quotes whose exchange is
+# BVC and reports the rest as "sin precio" instead of showing you the wrong
+# company. Quantities must be positive numbers. A duplicated symbol keeps its
+# first line; anything the file gets wrong is written to the log.
+portfolio = off
+# Optional: point the daemon at a different positions file. Defaults to
+# ~/.config/claude-usage-monitor/portfolio; ~ is expanded.
+# portfolio_path = ~/.config/claude-usage-monitor/portfolio

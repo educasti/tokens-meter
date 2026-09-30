@@ -1,0 +1,31 @@
+# Sim scenario with the ZETA portfolio screen — the 17 states of the portfolio
+# spec §4, as {"k":"pf"} beats. The first three lines are one Claude beat and one
+# OpenCode beat so SIM_START_SCREEN=portfolio (which waits for every payload
+# kind) lands on the new screen instead of timing out; after that each beat
+# advances the portfolio by one state, and the scenario loops.
+# Play with SIM_SCENARIO=sim/scenario-portfolio.jsonl SIM_START_SCREEN=portfolio.
+# Extra keys: "name" (window title), "hold_ms" (time on this state, default 3000).
+# Keys: space play/pause · arrows step · 1-9 jump · d = BLE link toggle ·
+#       p = PWR (on this screen: private mode) · see boards/sim/board.h.
+#
+# Every string that reaches the screen is ASCII only (+ '·'): the compiled Plex
+# fonts have no tildes, no ñ and no U+2212.
+{"name":"claude fresh","hold_ms":2000,"s":3.0,"sr":295,"w":12.0,"wr":9000,"st":"allowed","ok":true,"t":1785474000,"tf":24}
+{"name":"oc real","hold_ms":2000,"k":"oc","ok":true,"src":"api","p5":37,"r5":134,"pw":22,"wr":5040,"pm":4,"rm":20340,"st":"ok","t7":112480,"m":"ds-v4.1-flash","ms":86,"a":1,"ag":"build","la":35}
+{"name":"pf 01 real (mercado abierto)","hold_ms":2000,"k":"pf","ok":true,"s":"l","t":"09291042","mv":91355200,"dc":-523141,"dp":-57,"n":12,"r":[["ALPHA",66260,128,131880],["BETAGROUP",14800,54,38320],["THETA",375,-106,-124000],["DELTACORP",76820,-47,-95400]]}
+{"name":"pf 02 mercado cerrado","hold_ms":2000,"k":"pf","ok":true,"s":"c","t":"09291600","mv":91355200,"dc":-523141,"dp":-57,"n":12,"r":[["ALPHA",66260,128,131880],["BETAGROUP",14800,54,38320],["THETA",375,-106,-124000],["DELTACORP",76820,-47,-95400]]}
+{"name":"pf 03 feriado (cierre 9 oct)","hold_ms":2000,"k":"pf","ok":true,"s":"c","t":"10091200","mv":91355200,"dc":812400,"dp":110,"n":12,"r":[["LONGNAMEGRP",122960,425,1186920],["BETAGROUP",14800,54,38320]]}
+{"name":"pf 04 sin actualizar","hold_ms":2000,"k":"pf","ok":true,"s":"l","t":"09291042","mv":91355200,"dc":-523141,"dp":-57,"n":12,"r":[["ALPHA",66260,128,131880],["BETAGROUP",14800,54,38320],["THETA",375,-106,-124000],["DELTACORP",76820,-47,-95400]]}
+{"name":"pf 05 todos suben (sin divisor)","hold_ms":2000,"k":"pf","ok":true,"s":"l","t":"09291042","mv":91355200,"dc":170200,"dp":13,"n":12,"r":[["ALPHA",66260,128,131880],["BETAGROUP",14800,54,38320]]}
+{"name":"pf 06 todos bajan (sin divisor)","hold_ms":2000,"k":"pf","ok":true,"s":"l","t":"09291042","mv":91355200,"dc":-219400,"dp":-17,"n":12,"r":[["THETA",375,-106,-124000],["DELTACORP",76820,-47,-95400]]}
+{"name":"pf 07 una sola ganadora","hold_ms":2000,"k":"pf","ok":true,"s":"l","t":"09291042","mv":91355200,"dc":-181080,"dp":-14,"n":12,"r":[["BETAGROUP",14800,54,38320],["THETA",375,-106,-124000],["DELTACORP",76820,-47,-95400]]}
+{"name":"pf 08 sin variaciones","hold_ms":2000,"k":"pf","ok":true,"s":"l","t":"09291040","mv":91355200,"dc":0,"dp":0,"n":12,"r":[]}
+{"name":"pf 09 day change 0","hold_ms":2000,"k":"pf","ok":true,"s":"l","t":"09291042","mv":91355200,"dc":0,"dp":0,"n":12,"r":[["BETAGROUP",14800,54,38320],["THETA",375,-106,-38320]]}
+{"name":"pf 10 simbolo largo","hold_ms":2000,"k":"pf","ok":true,"s":"l","t":"09291042","mv":91355200,"dc":-1188600,"dp":-1025,"n":12,"r":[["BETAGROUP",14800,54,38320],["LONGNAMEGRP",122960,-1025,-1186920]]}
+{"name":"pf 11 1 ticker sin precio","hold_ms":2000,"k":"pf","ok":true,"s":"l","t":"09291042","mv":91355200,"dc":-523141,"dp":-57,"n":12,"u":1,"ux":"EPM","r":[["ALPHA",66260,128,131880],["BETAGROUP",14800,54,38320],["THETA",375,-106,-124000],["DELTACORP",76820,-47,-95400]]}
+{"name":"pf 12 2 tickers sin precio","hold_ms":2000,"k":"pf","ok":true,"s":"l","t":"09291042","mv":91355200,"dc":-523141,"dp":-57,"n":12,"u":2,"ux":"EPM","r":[["ALPHA",66260,128,131880],["BETAGROUP",14800,54,38320],["THETA",375,-106,-124000],["DELTACORP",76820,-47,-95400]]}
+{"name":"pf 13 1 aviso de config","hold_ms":2000,"k":"pf","ok":true,"s":"l","t":"09291042","mv":91355200,"dc":-523141,"dp":-57,"n":12,"w":1,"r":[["ALPHA",66260,128,131880],["BETAGROUP",14800,54,38320],["THETA",375,-106,-124000],["DELTACORP",76820,-47,-95400]]}
+{"name":"pf 14 sin posiciones","hold_ms":2000,"k":"pf","ok":false,"e":"nopos","n":0}
+{"name":"pf 15 ningun ticker resolvio","hold_ms":2000,"k":"pf","ok":false,"e":"nores","n":12}
+{"name":"pf 16 yahoo no responde","hold_ms":2000,"k":"pf","ok":false,"e":"nonet","n":12}
+{"name":"pf 17 BLE caido (payload = real; el enlace se baja con 'd')","hold_ms":2000,"k":"pf","ok":true,"s":"l","t":"09291042","mv":91355200,"dc":-523141,"dp":-57,"n":12,"r":[["ALPHA",66260,128,131880],["BETAGROUP",14800,54,38320],["THETA",375,-106,-124000],["DELTACORP",76820,-47,-95400]]}

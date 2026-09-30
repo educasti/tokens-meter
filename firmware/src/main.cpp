@@ -10,6 +10,8 @@
 #include "splash.h"
 #include "oc_splash.h"
 #include "oc_data.h"
+#include "pf_data.h"
+#include "pf_privacy.h"
 #include "usage_rate.h"
 #include "idle.h"
 #include "idle_cfg.h"
@@ -25,6 +27,7 @@
 
 static UsageData usage = {};
 static OcData    oc = {};
+static PfData    pf = {};
 
 // ---- LVGL draw buffers (partial render mode) ----
 // PSRAM-equipped boards (S3) can comfortably hold larger strips. PSRAM-free
@@ -201,6 +204,7 @@ void setup() {
     display_hal_begin();
     idle_init();        // takes over panel brightness and starts the idle timer
     brightness_init();  // load the user's saved brightness level and apply via idle
+    pf_privacy_init();  // load the saved portfolio private-mode flag (default off)
 
     power_hal_init();
     imu_hal_init();
@@ -320,10 +324,14 @@ void loop() {
     //   SECONDARY → tap: next screen
     //               hold: HID Shift+Tab held down (mode toggle; 2-button boards)
     //   PWR       → on the Clawd splash: next animation; on the OpenCode
-    //               splash: next scene; elsewhere: cycle brightness
+    //               splash: next scene; on the portfolio: toggle its private
+    //               mode; elsewhere: cycle brightness
     //   touch      → next screen (ui.cpp's global_click_cb)
     //   hold PWR ~3s + release → pairing, unchanged
-    // First press from sleep is consumed as a wake-only event by
+    // power_hal_pwr_pressed() is a *release* edge that only fires under
+    // PWR_LONG_MS (1.5 s): between 1.5 s and 3 s the release cancels the
+    // pending pair gesture and does nothing else, so no action may be hung
+    // there. First press from sleep is consumed as a wake-only event by
     // idle_consume_wake_press(); a swallowed press does nothing at all until
     // release. Activity bookkeeping happens inside idle_consume_wake_press, so
     // a navigation needs no separate idle_note_activity() call.
@@ -390,12 +398,13 @@ void loop() {
 
         if (power_hal_pwr_pressed()) {
             if (!idle_consume_wake_press()) {
-                // Each splash owns a scene/animation of its own; the two usage
-                // screens have nothing to cycle, so brightness it is.
+                // Each screen with something of its own cycles it; the rest get
+                // the brightness, which is global and persistent anyway.
                 switch (ui_get_current_screen()) {
-                case SCREEN_SPLASH:    splash_next(); break;
-                case SCREEN_OC_SPLASH: oc_splash_next_scene(); break;
-                default:               brightness_cycle(); break;
+                case SCREEN_SPLASH:     splash_next(); break;
+                case SCREEN_OC_SPLASH:  oc_splash_next_scene(); break;
+                case SCREEN_PORTFOLIO:  pf_privacy_toggle(); break;
+                default:                brightness_cycle(); break;
                 }
             }
         }
@@ -424,13 +433,21 @@ void loop() {
 
     if (ble_has_data()) {
         // Route on the payload tag (SPEC.md §8): an OpenCode beat never touches
-        // the Claude path — no usage-rate sample, no chime, no ui_update — and
-        // vice versa. oc_is_payload() is a substring test, so this costs
-        // nothing next to the parse either way.
+        // the Claude path — no usage-rate sample, no chime, no ui_update — a
+        // portfolio beat never touches either, and vice versa. The two
+        // is_payload() calls are substring tests, so they cost nothing next to
+        // the parse either way.
         const char* msg = ble_get_data();
         if (oc_is_payload(msg)) {
             if (oc_parse(msg, &oc)) {
                 ui_update_opencode(&oc);
+                ble_send_ack();
+            } else {
+                ble_send_nack();
+            }
+        } else if (pf_is_payload(msg)) {
+            if (pf_parse(msg, &pf)) {
+                ui_update_portfolio(&pf);
                 ble_send_ack();
             } else {
                 ble_send_nack();
