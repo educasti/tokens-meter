@@ -23,10 +23,15 @@ __pycache__/
 *.pyc
 
 # Local working notes — decision records and debug scratch from design
-# sessions. They quote real portfolio figures, so they never go to the public
+# sessions. They quote real portfolio figures, so they stay out of the public
 # repo. The masked prototype under design/opencode-screen/ is the artifact
 # that carries the screen itself.
-cooked-ideas/
+#
+# One exception is tracked on purpose: the standalone-backend decision log
+# (architecture only, no figures). Everything else under this folder stays
+# local.
+cooked-ideas/*
+!cooked-ideas/pasar-device-a-backend-wifi.md
 
 # Herdr subagent helper, local tooling, not part of the project
 .herdr-wait-agent.sh
