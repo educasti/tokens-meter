@@ -304,3 +304,8 @@ mode on (`{"cmd":"ota","mode":"on"}`), reads the device IP, runs `espota.py` fro
 `~/.platformio/packages`, then turns OTA mode off and restarts the daemon. WiFi
 defaults live in the config file (`ota_ssid` / `ota_wifi_password` /
 `ota_password`) and CLI flags override them. Tests: `daemon/tests/test_ota_flash.py`.
+
+**Roadmap (not implemented).** The plan to make the device standalone over WiFi —
+the Mac pushes numbers to an always-on VM, the device pulls with a per-device
+bearer token, SoftAP provisioning, timer polling — is in
+[`design/backend-wifi/ROADMAP.md`](design/backend-wifi/ROADMAP.md).
