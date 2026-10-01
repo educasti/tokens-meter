@@ -133,6 +133,25 @@ python daemon\claude_usage_daemon_windows.py
 
 Press **Ctrl+C** in the terminal. The daemon logs `Daemon stopping` and exits cleanly.
 
+### OTA firmware update
+
+Use the hybrid OTA helper to update the device over WiFi without a USB cable:
+
+```powershell
+python daemon\ota_flash.py --firmware firmware\.pio\build\waveshare_amoled_216\firmware.bin
+```
+
+The helper triggers OTA mode over BLE, then uploads the binary with PlatformIO's
+`espota.py`. **The tray app must not be running while it flashes** — the tray holds the
+single BLE link the helper needs for the control commands. `ota_flash.py` detects the
+running tray (the `pythonw.exe` process running `tray_windows.py`), stops it, and
+relaunches it from the `Clawdmeter` autostart entry when it is done.
+
+If the helper cannot detect the tray (for example, a portable setup with no autostart
+entry), it will say so and you must **right-click the tray icon → Quit** and re-run the
+helper. Passing `--keep-daemon` tells the helper to leave the daemon alone — use it only
+when you have already quit the tray yourself, otherwise the BLE connection stays busy.
+
 ---
 
 ## Troubleshooting

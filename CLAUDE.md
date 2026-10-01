@@ -41,7 +41,7 @@ firmware/src/
     imu_hal.h               — init / tick / rotation_quadrant
   boards/
     waveshare_amoled_216/   — CO5300 + CST9220 + AXP PKEY + QMI8658 rotation
-    sim/                    — native desktop simulator: SDL2 + Arduino shims + scenario playback
+    sim/                    — native desktop simulator: SDL2 + Arduino shims + scenario playback (`ota_sim.cpp` no-ops the OTA module)
   main.cpp                  — setup() + loop(): HAL calls only, zero #ifdef BOARD_*
   ui.{h,cpp}                — screen cycle, page dots, battery, Claude usage screen. compute_layout() picks fonts/positions from board_caps() (responsive — current breakpoint: H >= 460 → large, else compact)
   ui_opencode.{h,cpp}       — OpenCode usage screen: own container, own palette, IBM Plex Mono
@@ -49,6 +49,7 @@ firmware/src/
   oc_data.{h,cpp}           — OcData struct + oc_is_payload()/oc_parse() for the "k":"oc" payload
   splash.{h,cpp}            — Clawd pixel-art engine on a 60×60 stage (cell = min(W,H)/60) + the shared-canvas API (splash_set_external / splash_render_external)
   ble.{h,cpp}               — NimBLE peripheral: custom data service + HID keyboard
+  ota.{h,cpp}               — hybrid OTA: WiFi + ArduinoOTA, CTRL-char commands, NVS creds, app-level rollback
   data.h                    — UsageData struct
   icons.h                   — icon arrays. Battery (5×) are RGB565A8 with alpha; rest are raw RGB565.
   logo.h                    — 80×80 RGB565 logo
@@ -93,6 +94,7 @@ pio run -d firmware -e waveshare_amoled_216                                     
 pio run -d firmware -e sim                                                      # build native desktop simulator
 pio run -d firmware -e waveshare_amoled_216 -t upload --upload-port /dev/cu.usbmodem101   # flash 2.16 on macOS
 pio run -d firmware -e waveshare_amoled_216 -t upload --upload-port /dev/ttyACM0         # flash 2.16 on Linux
+python daemon/ota_flash.py --firmware firmware/.pio/build/waveshare_amoled_216/firmware.bin --ssid S --pass P   # OTA over WiFi (needs the daemon installed)
 ```
 
 If `pio` isn't on PATH: try `~/.platformio/penv/bin/pio` (Linux/macOS pio install) or `brew install platformio` on macOS.
@@ -179,6 +181,7 @@ The boot screen is `SCREEN_SPLASH` and only advances on a physical button press,
 12. **`lv_label_set_text_fmt()` has no float support** — it runs LVGL's own printf with `LV_USE_FLOAT` off, so `%f` prints garbage. Format money and token counts with `snprintf` into a buffer and use `lv_label_set_text()` (see the `$%.2f spent` line in `ui_opencode.cpp`).
 13. **The OpenCode Go usage endpoint needs its trailing slash**: `https://opencode.ai/zen/go/v1/usage/`. Without the slash the server answers 401 and the daemon quietly falls back to the local estimate, so the chips start showing `· est.` for no visible reason.
 14. **The OpenCode Go key is a credential.** The `opencode-go.key` field in `auth.json` must never reach a log line, an exception message, the BLE payload or an argv. Every failure path in `daemon/opencode_collector.py` logs one fixed generic line instead, and `test_key_never_appears_in_log_output` / `test_daemon_logging_never_shows_the_key` enforce it.
+15. **OTA is hybrid: BLE triggers, WiFi transfers.** The device takes commands on the CTRL characteristic `4c41555a-…0005` (`WRITE_ENC`, bonded only) and runs `ArduinoOTA` only while OTA mode is on. `daemon/ota_flash.py` stops the daemon first, because the device allows two BLE connections and the OS HID link holds one of them. Rollback is **application-level, not bootloader-driven**: `ota.cpp` counts boots in NVS and, after three unconfirmed boots, calls `esp_ota_set_boot_partition()` back to the other slot. `FW_VERSION` is a `-D` build flag. Adding the characteristic changes the GATT table, so a host that caches GATT needs one re-pair.
 
 ## Icons
 
@@ -261,6 +264,7 @@ The notes below describe the Linux bash daemon. The unit file's `ExecStart` is t
 
 - `...0002` RX — daemon writes JSON usage payload here.
 - `...0003` TX — firmware notifies ack/nack (daemon doesn't subscribe).
+- `...0005` CTRL — OTA/config control (writes). Bonded + encrypted only; handled by `ota.cpp`, never the usage path.
 - `...0004` REQ — firmware fires `0x01` notify in `onSubscribe` if `has_received_data` is false. Daemon subscribes via `setsid bash -c "stdbuf -oL dbus-monitor … | awk …"`; awk drops a flag file the inner loop picks up. See the `feedback_dbus_monitor_pipe` memory for the three subtle gotchas (pipe buffering, busctl-exits race, `wait` blocking on pipeline jobs).
 
 **Payload routing (`main.cpp`):** both payload kinds share the RX characteristic and
@@ -291,3 +295,12 @@ numbers and the estimated fallback, and the OpenCode Go key from `auth.json` for
 the official usage endpoint. Tests live in `daemon/tests/test_opencode_collector.py`
 (temp SQLite + an injected fake fetch). Verified on a real AMOLED-2.16 (see `design/opencode-screen/research/hw1-test-216.md`); the daemon requires Python ≥ 3.10. The Linux and Windows daemons don't send
 the OpenCode payload yet.
+
+**Hybrid OTA helper (macOS / Linux / Windows).** `daemon/ota_flash.py` is the host
+half of `design/ota-hybrid/DESIGN.md`: it stops the daemon (freeing the BLE link),
+connects, sends `{"cmd":"info"}` and aborts unless `board` is
+`waveshare_amoled_216`, optionally provisions WiFi (`{"cmd":"wifi",…}`), turns OTA
+mode on (`{"cmd":"ota","mode":"on"}`), reads the device IP, runs `espota.py` from
+`~/.platformio/packages`, then turns OTA mode off and restarts the daemon. WiFi
+defaults live in the config file (`ota_ssid` / `ota_wifi_password` /
+`ota_password`) and CLI flags override them. Tests: `daemon/tests/test_ota_flash.py`.

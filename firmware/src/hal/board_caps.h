@@ -9,6 +9,7 @@
 // main loop needs at runtime — display size, optional-feature presence —
 // goes here so shared code stays free of #ifdef BOARD_*.
 struct BoardCaps {
+    const char* id;          // stable machine id, e.g. "waveshare_amoled_216"
     const char* name;        // human-readable, e.g. "Waveshare AMOLED 2.16"
 
     int16_t width;           // active display width in pixels

@@ -2,6 +2,7 @@
 #include "board.h"
 
 static const BoardCaps caps = {
+    .id = "waveshare_amoled_216",
     .name = BOARD_NAME,
     .width = LCD_WIDTH,
     .height = LCD_HEIGHT,

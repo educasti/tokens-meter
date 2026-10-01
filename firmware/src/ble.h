@@ -21,6 +21,10 @@ void ble_send_ack(void);
 void ble_send_nack(void);
 void ble_request_refresh(void);
 
+// Notify a status/ack JSON line on the TX characteristic (…0003). Used by the
+// hybrid-OTA control path so the host has a single place to await results.
+void ble_notify_status(const char* json);
+
 void ble_set_battery_level(int pct);
 
 // BLE HID keyboard

@@ -1,4 +1,5 @@
 #include "ble.h"
+#include "ota.h"
 #include <Arduino.h>
 #include <NimBLEDevice.h>
 #include <NimBLEHIDDevice.h>
@@ -13,6 +14,7 @@
 #define RX_CHAR_UUID        "4c41555a-4465-7669-6365-000000000002"  // host writes here
 #define TX_CHAR_UUID        "4c41555a-4465-7669-6365-000000000003"  // device ack/nack notifies
 #define REQ_CHAR_UUID       "4c41555a-4465-7669-6365-000000000004"  // device-initiated refresh request
+#define CTRL_CHAR_UUID      "4c41555a-4465-7669-6365-000000000005"  // OTA control (bonded/encrypted)
 
 #define BLE_BUF_SIZE 512
 
@@ -63,6 +65,7 @@ static NimBLECharacteristic* input_kbd = nullptr;
 static NimBLECharacteristic* tx_char = nullptr;
 static NimBLECharacteristic* rx_char = nullptr;
 static NimBLECharacteristic* req_char = nullptr;
+static NimBLECharacteristic* ctrl_char = nullptr;
 
 static ble_state_t state = BLE_STATE_INIT;
 static bool need_advertise = false;
@@ -327,6 +330,32 @@ class RxCallbacks : public NimBLECharacteristicCallbacks {
     }
 };
 
+// Hybrid-OTA control (…0005). Writes are gated to a bonded+encrypted link and
+// to the owner machine, mirroring RxCallbacks. The characteristic is also
+// created with NIMBLE_PROPERTY::WRITE_ENC so the stack rejects unencrypted
+// writes before they reach us; this check is the belt-and-suspenders layer
+// and supplies the design's {"err":"not_owner"} reply.
+class CtrlCallbacks : public NimBLECharacteristicCallbacks {
+    void onWrite(NimBLECharacteristic* chr, NimBLEConnInfo& info) override {
+        std::string id = info.getIdAddress().toString();
+        if (!info.isEncrypted()) {
+            Serial.println("BLE: dropping CTRL write from unencrypted link");
+            ble_notify_status("{\"ok\":false,\"err\":\"not_owner\"}");
+            return;
+        }
+        if (!owner_set && id != ZERO_ADDR) {
+            claim_owner(id);
+        }
+        if (owner_set && strcmp(id.c_str(), owner_addr) != 0) {
+            Serial.printf("BLE: dropping CTRL write from non-owner %s\n", id.c_str());
+            ble_notify_status("{\"ok\":false,\"err\":\"not_owner\"}");
+            return;
+        }
+        std::string val = chr->getValue();
+        ota_handle_ctrl(val.c_str());
+    }
+};
+
 // When the daemon enables notifications on the refresh char, ask for data
 // if we have none yet. Firing on subscribe (not on connect) ensures the
 // notification isn't dropped before the daemon's CCCD write completes.
@@ -398,6 +427,15 @@ void ble_init(void) {
     );
     static ReqCallbacks reqCb;
     req_char->setCallbacks(&reqCb);
+
+    // OTA control. WRITE_ENC makes the ATT layer itself refuse an unencrypted
+    // write, so the helper must be on the bonded owner link (DESIGN.md §2).
+    ctrl_char = svc->createCharacteristic(
+        CTRL_CHAR_UUID,
+        NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR | NIMBLE_PROPERTY::WRITE_ENC
+    );
+    static CtrlCallbacks ctrlCb;
+    ctrl_char->setCallbacks(&ctrlCb);
 
     svc->start();
     server->start();
@@ -488,6 +526,13 @@ void ble_send_nack(void) {
         tx_char->setValue("{\"err\":true}");
         tx_char->notify();
     }
+}
+
+void ble_notify_status(const char* json) {
+    if (state != BLE_STATE_CONNECTED || !tx_char || !json) return;
+    tx_char->setValue(json);
+    tx_char->notify();
+    Serial.printf("BLE: TX status %s\n", json);
 }
 
 void ble_set_battery_level(int pct) {

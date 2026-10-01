@@ -12,6 +12,7 @@ static int sim_button_count(void) {
 }
 
 static BoardCaps caps = {
+    .id = "sim",
     .name = BOARD_NAME,
     .width = LCD_WIDTH,
     .height = LCD_HEIGHT,

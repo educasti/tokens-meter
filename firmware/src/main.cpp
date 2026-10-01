@@ -7,6 +7,7 @@
 #include "data.h"
 #include "ui.h"
 #include "ble.h"
+#include "ota.h"
 #include "splash.h"
 #include "oc_splash.h"
 #include "oc_data.h"
@@ -200,6 +201,11 @@ void setup() {
 
     board_init();
 
+    // Hybrid OTA (§4): load WiFi creds and arm/roll back the boot-verify
+    // counter as early as possible — a failed slot should reboot before any
+    // heavy display/BLE bring-up.
+    ota_init();
+
     display_hal_init();
     display_hal_begin();
     idle_init();        // takes over panel brightness and starts the idle timer
@@ -302,6 +308,7 @@ void loop() {
     lv_timer_handler();
     ui_tick_anim();
     ble_tick();
+    ota_tick();
     power_hal_tick();
     imu_hal_tick();
     sound_hal_tick();
@@ -442,6 +449,7 @@ void loop() {
             if (oc_parse(msg, &oc)) {
                 ui_update_opencode(&oc);
                 ble_send_ack();
+                ota_confirm();   // valid owner payload → boot is good (§4)
             } else {
                 ble_send_nack();
             }
@@ -449,6 +457,7 @@ void loop() {
             if (pf_parse(msg, &pf)) {
                 ui_update_portfolio(&pf);
                 ble_send_ack();
+                ota_confirm();
             } else {
                 ble_send_nack();
             }
@@ -470,6 +479,7 @@ void loop() {
             }
             ui_update(&usage);
             ble_send_ack();
+            ota_confirm();
         } else {
             ble_send_nack();
         }

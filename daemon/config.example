@@ -79,3 +79,25 @@ portfolio = off
 # Optional: point the daemon at a different positions file. Defaults to
 # ~/.config/claude-usage-monitor/portfolio; ~ is expanded.
 # portfolio_path = ~/.config/claude-usage-monitor/portfolio
+
+# --- Hybrid OTA (daemon/ota_flash.py) ---------------------------------------
+# These keys are ONLY read by the OTA helper, never by the running daemon. They
+# supply defaults for its CLI flags; any flag given on the command line wins.
+#
+# ota_ssid          = WiFi network the device should join for the upload.
+#                     Equivalent to `--ssid`.
+# ota_wifi_password = Password for ota_ssid. Equivalent to `--pass`.
+# ota_password      = Shared ArduinoOTA password; passed to the device's `ota`
+#                     command and to espota via `-a`. Equivalent to
+#                     `--ota-password`. Leave unset for no shared password.
+#
+# Example:
+# ota_ssid = MyHomeWiFi
+# ota_wifi_password = hunter2
+# ota_password = ota-shared-secret
+#
+# Flash with the defaults above:
+#   python daemon/ota_flash.py \
+#       --firmware firmware/.pio/build/waveshare_amoled_216/firmware.bin
+# or override the SSID for one run:
+#   python daemon/ota_flash.py --firmware ... --ssid Guest --pass guestpw

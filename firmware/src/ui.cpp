@@ -3,6 +3,7 @@
 #include "ui_opencode.h"
 #include "ui_portfolio.h"
 #include "oc_splash.h"
+#include "ota.h"
 #include <lvgl.h>
 #include <time.h>
 #include "logo.h"
@@ -842,6 +843,17 @@ void ui_tick_anim(void) {
                                                     : (SPINNER_PHASES - anim_phase);
 
     // Status text by priority. Whimsical messages only when connected & settled.
+    // An in-flight OTA borrows this line rather than adding a screen (§5): the
+    // usage path keeps running, so the badge is purely additive. ota_is_active()
+    // is a hard-coded false in the native sim.
+    if (ota_is_active()) {
+        static char obuf[32];
+        snprintf(obuf, sizeof(obuf), "%s OTA\xE2\x80\xA6",
+                 spinner_frames[anim_spinner_idx]);
+        lv_label_set_text(lbl_anim, obuf);
+        return;
+    }
+
     const char* text;
     if (!s_ble_connected) {
         text = "Waiting";              // advertising / waiting for a host connection

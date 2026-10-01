@@ -81,7 +81,7 @@ Neither file is written to, and the key is never logged.
 
 ## Hardware
 
-The only supported hardware is the [Waveshare ESP32-S3-Touch-AMOLED-2.16](https://www.waveshare.com/esp32-s3-touch-amoled-2.16.htm?&aff_id=149786) — a 480×480 AMOLED touch panel with 16 MB flash and dual OTA-ready app slots (no OTA feature is implemented yet).
+The only supported hardware is the [Waveshare ESP32-S3-Touch-AMOLED-2.16](https://www.waveshare.com/esp32-s3-touch-amoled-2.16.htm?&aff_id=149786) — a 480×480 AMOLED touch panel with 16 MB flash and dual OTA app slots (see [Firmware updates](#firmware-updates-hybrid-ota)).
 
 ## Prerequisites
 
@@ -266,6 +266,7 @@ The device advertises a custom GATT service alongside the standard HID keyboard 
 | **Data Service**           | `4c41555a-4465-7669-6365-000000000001` |
 | RX Characteristic (write)  | `4c41555a-4465-7669-6365-000000000002` |
 | TX Characteristic (notify) | `4c41555a-4465-7669-6365-000000000003` |
+| CTRL Characteristic (write) | `4c41555a-4465-7669-6365-000000000005` |
 | **HID Service**            | `00001812-0000-1000-8000-00805f9b34fb` |
 
 JSON payload format (written to RX):
@@ -275,6 +276,47 @@ JSON payload format (written to RX):
 ```
 
 Fields: `s` = session %, `sr` = session reset (minutes), `w` = weekly %, `wr` = weekly reset (minutes), `st` = status, `ok` = success flag.
+
+The CTRL characteristic carries the OTA control commands; it is writable only over a
+bonded and encrypted link, and every command is answered on the TX characteristic. See
+[Firmware updates](#firmware-updates-hybrid-ota) and
+[`design/ota-hybrid/DESIGN.md`](design/ota-hybrid/DESIGN.md).
+
+## Firmware updates (hybrid OTA)
+
+The device can update its own firmware over WiFi, triggered over the BLE link you
+already have — no USB cable. BLE is only the control path; the binary transfer
+happens over WiFi, and the radio is brought up only for the transfer.
+
+```bash
+# from the repo root, with the daemon installed
+python daemon/ota_flash.py \
+    --firmware firmware/.pio/build/waveshare_amoled_216/firmware.bin \
+    --ssid "<your wifi>" --pass "<password>"
+```
+
+The helper:
+
+1. Stops the running daemon so the single BLE connection is free, and restarts it
+   when it finishes (`--keep-daemon` skips this).
+2. Connects, checks the device reports `board = "waveshare_amoled_216"`, and
+   provisions the WiFi credentials over the CTRL characteristic.
+3. Puts the device into OTA mode and reads back its IP.
+4. Uploads the binary with `espota` over WiFi.
+5. Switches OTA mode back off; the device reboots into the new slot.
+
+Optional shared password for the transfer: `--ota-password <pw>`. The config file
+documents `ota_ssid` / `ota_wifi_password` / `ota_password` as defaults the CLI
+flags override (see `daemon/config.example`).
+
+The host must be on the same network as the device, since the upload is a direct
+WiFi connection. If the new image fails to boot repeatedly, the firmware switches
+back to the previous slot on its own after three attempts. On Windows, quit the
+tray app before flashing — see [`daemon/README-windows.md`](daemon/README-windows.md).
+
+Adding the CTRL characteristic changes the GATT table; if your host caches GATT
+per device, re-pair the device once (hold PWR ~3 s then release) so it sees the
+new characteristic.
 
 ## Development
 
