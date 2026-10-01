@@ -6,27 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project context
 
-ESP32-S3 / ESP32-C6 firmware for a desk-side Claude Code usage monitor. Each
-supported board lives in its own `firmware/src/boards/<name>/` folder and is
-selected via PlatformIO's `build_src_filter`. Adding a board means dropping in
-a new folder + a new `[env:...]` block — `main.cpp`, `ui.cpp`, and `splash.cpp`
-never see board-specific code. See [`docs/porting/adding-a-board.md`](docs/porting/adding-a-board.md).
+ESP32-S3 firmware for a desk-side Claude Code usage monitor. The supported
+hardware is the Waveshare ESP32-S3-Touch-AMOLED-2.16 (480×480 AMOLED, 16 MB
+flash, dual OTA-ready app slots — no OTA feature implemented yet).
 
-Seven ports today (two SoC families, five panel sizes):
+Two build targets today:
 
-- `boards/waveshare_amoled_216/` — original Waveshare ESP32-S3-Touch-AMOLED-2.16 (CO5300, 480×480 square, CST9220 touch, IMU rotation). Build env: `waveshare_amoled_216`.
-- `boards/waveshare_amoled_18/` — Waveshare ESP32-S3-Touch-AMOLED-1.8 (368×448 portrait, XCA9554 IO expander). Build env: `waveshare_amoled_18`. **Two panel revisions are auto-detected at boot** (`board_rev()` in `board_init.cpp`, enum in `board_rev.h`): original = SH8601 display + FT3168 touch (0x38); later = CO5300 display + CST816 touch (0x15). One binary drives both.
-- `boards/waveshare_amoled_216_c6/` — Waveshare ESP32-C6-Touch-AMOLED-2.16 (SH8601, 480×480, CST9217 touch). Build env: `waveshare_amoled_216_c6`. ESP32-C6 SoC: single-core RISC-V, **no PSRAM**, BLE 5 only.
-- `boards/waveshare_amoled_18_c6/` — Waveshare ESP32-C6-Touch-AMOLED-1.8 (368×448 portrait, SH8601, FT3168 touch, TCA9554 expander). Build env: `waveshare_amoled_18_c6`. Same panel as the S3 1.8 but on the C6 SoC. All subsystems (display, touch, BOOT + PWR buttons, battery, BLE) verified on hardware.
-- `boards/waveshare_amoled_206/` — Waveshare ESP32-S3-Touch-AMOLED-2.06 (CO5300, 410×502 watch form factor, FT3168 touch, no IO expander, 32 MB flash, PCF85063 RTC, ES8311 codec). Build env: `waveshare_amoled_206`. Display, touch, battery, IMU init, and BLE verified on hardware; the ES8311 chime path is not wired up (`sound.cpp` no-ops).
-- `boards/waveshare_lcd_154/` — Waveshare ESP32-S3-Touch-LCD-1.54 (ST7789, 240×240 square, CST816T touch @ 0x15). Build env: `waveshare_lcd_154`. **The first non-AMOLED port**: a plain 4-wire SPI TFT, not QSPI, and the panel has no brightness command — backlight is LEDC PWM on `LCD_BL`. **No PMU**: battery is an ADC divider on GPIO1 and `BAT_EN` (GPIO2) is a power-hold line that must be driven HIGH early in `board_init()` or the board browns out on battery. Three buttons (BOOT + GPIO5 + a PWR-role GPIO4); ES8311 chime wired up; QMI8658 populated but unused (fixed orientation, no rotation).
-- `boards/waveshare_lcd_4/` — Waveshare ESP32-S3-Touch-LCD-4 (ST7701 RGB parallel, 480×480 square, GT911 touch). Build env: `waveshare_lcd_4`. **RGB-panel port**: Arduino_ESP32RGBPanel + bounce buffers (tearing fix). IO expander @ 0x24 (TCA9554 / CH32V003) must init before `gfx->begin()` or the panel stays dark; backlight is expander pin 2 (on/off only). No AXP2101 / IMU; KEY/PWR is hardware RST. Single BOOT button (GPIO 0 → Space/PTT).
+- `boards/waveshare_amoled_216/` — Waveshare ESP32-S3-Touch-AMOLED-2.16 (CO5300, 480×480 square, CST9220 touch, IMU rotation). Build env: `waveshare_amoled_216`.
+- `boards/sim/` — **native desktop simulator** (SDL2 window, 480×480, `platform = native`). Build env: `sim`. See "Desktop simulator" below.
 
-Plus one non-hardware target: `boards/sim/` — **native desktop simulator** (SDL2 window, 480×480, `platform = native`). Build env: `sim`. See "Desktop simulator" below.
-
-**C6 ports have no PSRAM** — shared code gates on `BOARD_HAS_PSRAM` (absent on C6) to use `MALLOC_CAP_INTERNAL` for LVGL/splash buffers, and the `screenshot` serial command is disabled (`LV_USE_SNAPSHOT=0`), so UI changes on a C6 board must be eyeballed on hardware, not auto-captured.
-
-The shared code calls a small HAL (`firmware/src/hal/`) that each board implements: display, touch, input, power, IMU. Optional features are guarded by `BoardCaps` (runtime) and `BOARD_HAS_*` (compile-time) rather than `#ifdef BOARD_*`.
+The shared code calls a small HAL (`firmware/src/hal/`) that the board implements: display, touch, input, power, IMU. Optional features are guarded by `BoardCaps` (runtime) and `BOARD_HAS_*` (compile-time) rather than `#ifdef BOARD_*`.
 
 Connects to a host daemon over BLE; daemon polls Anthropic API for usage data. This file is for future Claude Code sessions to bootstrap quickly. Read this first.
 
@@ -38,45 +27,6 @@ Connects to a host daemon over BLE; daemon polls Anthropic API for usage data. T
 - PMU: **AXP2101** on same I2C bus (addr=0x34) — battery, USB VBUS, PWR button IRQ
 - IMU: **QMI8658** on same I2C bus (addr=0x6B) — accelerometer for auto-rotation
 - Buttons: GPIO 0 (left → Space/voice-mode), GPIO 18 (right → Shift+Tab/mode-toggle), AXP PKEY (middle → brightness; next animation/scene on a splash). See "Screens and navigation" for the tap-vs-hold split.
-
-### AMOLED-1.8 (newer port)
-**Two hardware revisions ship under this name; the firmware probes I2C at boot and picks drivers automatically (`board_rev()`):**
-- Display: **SH8601** (original) or **CO5300** (later rev) AMOLED via QSPI (CS=12, **SCLK=11** ← different!, SDIO0..3=4..7, RST routed via XCA9554 EXIO1). Both are `Arduino_OLED` subclasses held behind one base pointer in `display.cpp`. The CO5300's 368-wide active area starts at GRAM column 16, so it gets `CO5300_COL_OFFSET 16` to center; SH8601 needs none.
-- Touch: **FT3168** @ 0x38 (original) or **CST816** @ 0x15 (later rev), via I2C (SDA=15, SCL=14, INT=21). Both expose the same FocalTech-style data layout at regs 0x02..0x06, so one inline reader in `touch.cpp` serves both — only the address differs. Avoids vendoring the GPLv3 `Arduino_DriveBus` library. Revision is detected by which touch address ACKs (CST816 present ⇒ CO5300 panel).
-- PMU: AXP2101 @ 0x34 (same chip as 2.16 — `XPowersLib` reused; battery is an optional kit add-on but PMU + charging circuitry are populated)
-- IMU: QMI8658 @ 0x6B (same chip — initialized for I2C bus health, rotation logic disabled)
-- IO expander: **XCA9554 / PCA9554** @ I2C 0x20. Gates LCD_RST, TP_RST, audio amp enable, and reads the PWR button. **`io_expander_init()` MUST run before `gfx->begin()` or `ft3168_init()`** — otherwise display/touch stay in reset and silently fail. PWR button is on EXIO4, active HIGH (verified empirically with the deleted `iox` serial debug command).
-- Orientation: **fixed at 0°**. IMU auto-rotation is disabled; `rotate_strip()` / `handle_rotation_change()` are excluded via `#ifndef BOARD_AMOLED_18`.
-- Buttons: GPIO 0 (BOOT → Space/voice-mode), XCA9554 EXIO4 (PWR → brightness; next animation/scene on a splash). **No third button** (GPIO 18 button doesn't exist on this board).
-
-### AMOLED-1.8 (C6) — `waveshare_amoled_18_c6`
-ESP32-C6 sibling of the S3 1.8: same 368×448 SH8601 panel + FocalTech touch, different SoC and GPIO map. **All pins/edges below verified on hardware via temporary GPIO/IRQ scans, since Waveshare's wiki publishes no pin table and the third-party BSP's numbers were partly wrong.**
-- Display: **SH8601** AMOLED via QSPI (CS=5, SCLK=0, SDIO0..3=1..4, no MCU reset pin — internal POR; effective reset is the TCA9554 power-cycle). Stock `Arduino_SH8601` init (no vendor-register patch — that's only needed on the C6 2.16).
-- Touch: **FT3168** (some units FT6146) @ I2C 0x38, INT=15. Same inline FocalTech reader as the S3 1.8 (regs 0x02..0x06); no reset pin (gated by TCA9554 touch power).
-- I2C bus: SDA=8, SCL=7 (shared by TCA9554, AXP2101, FT3168, QMI8658, PCF85063 RTC, ES8311 codec).
-- IO expander: **TCA9554 / PCA9554** @ 0x20 — here it gates **power**, not reset: **P4 = display power, P5 = touch power, P7 = audio amp**. `io_expander_init()` runs the documented power-on sequence (P4/P5 LOW → 200 ms → HIGH) and **MUST run before `display_hal_init()`** or the panel stays unpowered. Amp (P7) left off (no audio path).
-- PMU: AXP2101 @ 0x34 (owned by `power.cpp`, not `board_init` — LCD isn't on an ALDO rail here).
-- IMU: QMI8658 @ 0x6B (init'd for bus health, rotation disabled).
-- Orientation: **fixed at 0°**, no rotation (no PSRAM headroom).
-- Buttons: **GPIO 9** (BOOT → Space/voice-mode, active LOW — *not* the docs' GPIO 0/9 guess; confirmed by scan), **AXP2101 PKEY** (PWR → brightness; next animation/scene on a splash). The PKEY **SHORT-press IRQ fires on release** — that's the edge `power.cpp` acts on. No secondary button.
-
-### AMOLED-2.06 (watch form factor) — `waveshare_amoled_206`
-- Display: **CO5300** AMOLED via QSPI (CS=12, **SCLK=11** ← same as 1.8, SDIO0..3=4..7, RST=8 direct GPIO). 410×502 portrait. Requires **`col_offset1 = 23`** in the `Arduino_CO5300` constructor — the panel's visible viewport sits at a 22–23 column offset inside the controller's internal RAM. Without it, a vertical strip of stale/garbage content shows through on the right edge (23 was picked empirically for centering; Waveshare's reference library uses 22). The 2.16 dodges this because its 480×480 viewport fills the controller's RAM.
-- Touch: **FT3168** via I2C (SDA=15, SCL=14, **INT=38, RST=9** direct GPIO, addr=0x38). Same inline FocalTech reader as the 1.8 port (no GPLv3 `Arduino_DriveBus` dependency). Coordinates verified end-to-end with the BLE reset zone.
-- PMU: AXP2101 @ 0x34 (same chip as 2.16/1.8 — `XPowersLib` reused). PWR button routes through AXP PKEY IRQs (short / long / positive), same path as the 2.16 — no IO expander.
-- IMU: QMI8658 @ 0x6B (initialized for I2C bus health; rotation logic disabled — fixed watch enclosure orientation).
-- RTC: **PCF85063** on the same I2C bus, powered through AXP2101 for retention. Not used by Clawdmeter but present for future features.
-- Audio codec: **ES8311** + ES7210 ADC on the same I2C bus. The amp path is unverified on this board, so `sound.cpp` no-ops (same posture as the C6 1.8) — the shared `chime.cpp` engine is ready to wire up once it's tested on hardware.
-- **No IO expander** despite the Waveshare wiki FAQ implying one. The schematic shows Key3/PWR wired directly to AXP2101 PWRON; touch reset and display reset are direct GPIOs. `board_init()` pulses LCD_RESET (GPIO 8) and TP_RESET (GPIO 9) before display/touch HAL init.
-- Buttons: GPIO 0 (BOOT → Space/voice-mode), AXP PKEY (PWR → brightness / next animation; hold-to-pair). **No third button**.
-- Flash: 32 MB. Uses `default_32MB.csv` partition table.
-
-### LCD-4 — `waveshare_lcd_4`
-- Display: **ST7701** 480×480 RGB parallel (DE=40, VSYNC=39, HSYNC=38, PCLK=41, R0-4=46/3/8/18/17, G0-5=14/13/12/11/10/9, B0-4=5/45/48/47/21); ST7701 init via SW SPI (CS=42, SCK=2, MOSI=1).
-- Touch: **GT911** via I2C (SDA=15, SCL=7), polled (wiki INT=GPIO 16 unused). Probe 0x5D then 0x14.
-- IO expander: **addr 0x24** (fallback 0x20) on the same I2C bus — must init before `gfx->begin()` (output 0xFF, config 0x3A). Backlight is expander pin 2.
-- No PMU / IMU. Buttons: GPIO 0 only (BOOT → Space/PTT). KEY/PWR is EN/RST (hardware reset). GPIO 18 is display R3.
-- RGB tearing fix: pass `bounce_buffer_size_px = LCD_WIDTH * 10` to `Arduino_ESP32RGBPanel`. Do not call `rgbpanel->getFrameBuffer()` after `gfx->begin()`.
 
 ## Architecture
 
@@ -91,14 +41,7 @@ firmware/src/
     imu_hal.h               — init / tick / rotation_quadrant
   boards/
     waveshare_amoled_216/   — CO5300 + CST9220 + AXP PKEY + QMI8658 rotation
-    waveshare_amoled_18/    — SH8601 + FT3168 + AXP + XCA9554 (PWR via EXIO4), no rotation
-    waveshare_amoled_216_c6/— C6: SH8601 + CST9217 + AXP PKEY, no PSRAM
-    waveshare_amoled_18_c6/ — C6: SH8601 + FT3168 + AXP PKEY + TCA9554 (gates power), no PSRAM
-    waveshare_amoled_206/   — CO5300 + FT3168 + AXP PKEY, no IO expander, 32 MB, no rotation
-    waveshare_lcd_154/      — ST7789 SPI TFT + CST816T + ADC battery (no PMU), PWM backlight
-    waveshare_lcd_4/         — ST7701 RGB parallel + GT911 + expander backlight, no PMU/IMU
     sim/                    — native desktop simulator: SDL2 + Arduino shims + scenario playback
-    template/               — copy this to bootstrap a new port
   main.cpp                  — setup() + loop(): HAL calls only, zero #ifdef BOARD_*
   ui.{h,cpp}                — screen cycle, page dots, battery, Claude usage screen. compute_layout() picks fonts/positions from board_caps() (responsive — current breakpoint: H >= 460 → large, else compact)
   ui_opencode.{h,cpp}       — OpenCode usage screen: own container, own palette, IBM Plex Mono
@@ -112,13 +55,11 @@ firmware/src/
   oc_logo.h                 — OpenCode mark + wordmark, RGB565 descriptors (generated by tools/gen_oc_logo.js)
   font_*.c                  — pre-compiled LVGL 9 bitmap fonts (Tiempos 56/34, Styrene 48/28/24/20/16/14/12, Mono 32/18, Plex 48/40/24/18/16/12)
   splash_animations.h       — generated, do not hand-edit
-docs/porting/               — adding-a-board.md, hal-contract.md, capability-flags.md
 ```
 
 Each board folder contains: `board.h` (pins, I2C addresses, `BOARD_HAS_*` flags),
 `board_init.cpp` (Wire.begin + any IO expander), `display.cpp`, `touch.cpp`,
-`input.cpp`, `power.cpp`, `imu.cpp`, `caps.cpp` (the `BoardCaps` instance), plus
-any board-private hardware drivers (e.g. `io_expander.{h,cpp}` on AMOLED-1.8).
+`input.cpp`, `power.cpp`, `imu.cpp`, `caps.cpp` (the `BoardCaps` instance).
 PlatformIO's `build_src_filter` includes shared code + one board's folder per env.
 
 ## Screens and navigation
@@ -133,10 +74,10 @@ bottom for 1.5 s after every change.
 
 | Input | Tap (< 300 ms) | Hold (≥ 300 ms) |
 |---|---|---|
-| PRIMARY / BOOT (left) | previous screen (next on 1-button boards) | HID Space held until release |
+| PRIMARY / BOOT (left) | previous screen | HID Space held until release |
 | SECONDARY (right) | next screen | HID Shift+Tab held until release |
 | PWR (middle) | Clawd splash: next animation · OpenCode splash: next scene · usage screens: brightness | 3 s: pairing (unchanged) |
-| Touch | next screen, on every board | — |
+| Touch | next screen | — |
 
 `BUTTON_HOLD_MS` (300, in `main.cpp`) is the only threshold: the HID key goes
 down once the tap window closes and stays down until release, so a tap can no
@@ -148,24 +89,17 @@ release.
 ## Build / flash
 
 ```bash
-pio run -d firmware -e waveshare_amoled_216                                     # build 2.16 (S3, default original)
-pio run -d firmware -e waveshare_amoled_18                                      # build 1.8 (S3)
-pio run -d firmware -e waveshare_amoled_216_c6                                  # build 2.16 (C6)
-pio run -d firmware -e waveshare_amoled_18_c6                                   # build 1.8 (C6)
-pio run -d firmware -e waveshare_amoled_206                                     # build 2.06 (S3, watch)
-pio run -d firmware -e waveshare_lcd_154                                        # build 1.54 (S3, SPI TFT)
-pio run -d firmware -e waveshare_lcd_4                                           # build LCD-4 (S3, RGB TFT)
-pio run -d firmware -e waveshare_amoled_18 -t upload --upload-port /dev/cu.usbmodem101   # flash 1.8 on macOS
+pio run -d firmware -e waveshare_amoled_216                                     # build 2.16 (S3)
+pio run -d firmware -e sim                                                      # build native desktop simulator
+pio run -d firmware -e waveshare_amoled_216 -t upload --upload-port /dev/cu.usbmodem101   # flash 2.16 on macOS
 pio run -d firmware -e waveshare_amoled_216 -t upload --upload-port /dev/ttyACM0         # flash 2.16 on Linux
-# C6 boards: same native USB-JTAG flashing; flag a chip mismatch ("This chip is ESP32-C6,
-# not ESP32-S3") means you picked an S3 env — use a *_c6 env for C6 hardware.
 ```
 
 If `pio` isn't on PATH: try `~/.platformio/penv/bin/pio` (Linux/macOS pio install) or `brew install platformio` on macOS.
 
-Device path differs by OS: `/dev/cu.usbmodem*` on macOS, `/dev/ttyACM0` on Linux. Both expose the ESP32-S3 native USB-JTAG (no boot-mode dance needed).
+Device path differs by OS: `/dev/cu.usbmodem*` on macOS, `/dev/ttyACM0` on Linux, `COMx` on Windows. All expose the ESP32-S3 native USB-JTAG (no boot-mode dance needed).
 
-Wrapper scripts: `./flash-mac.sh <env> [port]` / `./flash.sh <env> [port]` (no args lists the envs scraped from `platformio.ini`).
+Wrapper scripts: `./flash-mac.sh [env] [port]` / `./flash.sh [env] [port]` — the env defaults to `waveshare_amoled_216`; macOS auto-detects `/dev/cu.usbmodem*`, Linux defaults to `/dev/ttyACM0`.
 
 ## Tests
 
@@ -204,12 +138,6 @@ play/pause scenario · ←/→ = step · 1-9 = jump · d = BLE link toggle ·
 b/n = BOOT/secondary (tap = navigate the cycle, hold = the HID key) · p = PWR ·
 c/-/= = charging/battery · s = screenshot BMP · esc = quit.
 
-Two more envs run the same board folder at the other two panel sizes, so all
-three layout breakpoints are checkable without hardware: `sim_368` (368×448) and
-`sim_240` (240×240). They extend `env:sim` and override nothing but
-`-DLCD_WIDTH` / `-DLCD_HEIGHT` / `-DBOARD_NAME`, which `boards/sim/board.h`
-guards with `#ifndef`.
-
 | Env var | Effect |
 |---|---|
 | `SIM_SCENARIO` | scenario file; `sim/scenario-opencode.jsonl` interleaves Claude beats with `{"k":"oc"}` ones (real / one session / two sessions / near the limit / limited / window reset / estimated / consumption-only) |
@@ -218,7 +146,7 @@ guards with `#ifndef`.
 
 ```bash
 SIM_SCENARIO=sim/scenario-opencode.jsonl SIM_START_SCREEN=oc_usage \
-  SDL_VIDEODRIVER=dummy SIM_AUTOSHOT_MS=3000 .pio/build/sim_368/program
+  SDL_VIDEODRIVER=dummy SIM_AUTOSHOT_MS=3000 .pio/build/sim/program
 ```
 
 Headless screenshots (works in CI, no display):
@@ -231,7 +159,7 @@ hardware boards, not shared code).
 
 ## QA your own UI changes — don't ask the user
 
-The firmware ships a `screenshot` serial command that dumps the LVGL framebuffer. `./screenshot.sh out.png [port]` captures a PNG sized to the active display (480×480 or 368×448). **Use this on every UI iteration** — Read the PNG with the Read tool, verify the change visually, iterate. Script auto-picks the macOS/Linux default port and falls back to pio's bundled Python if pyserial isn't on the system Python.
+The firmware ships a `screenshot` serial command that dumps the LVGL framebuffer. `./screenshot.sh out.png [port]` captures a PNG sized to the 480×480 display. **Use this on every UI iteration** — Read the PNG with the Read tool, verify the change visually, iterate. Script auto-picks the macOS/Linux default port and falls back to pio's bundled Python if pyserial isn't on the system Python.
 
 The boot screen is `SCREEN_SPLASH` and only advances on a physical button press, so a fresh flash will sit on the splash. To screenshot the screen you're actually editing without asking the user to press a button, **temporarily change the default boot screen** in `main.cpp` (search for `ui_show_screen(SCREEN_SPLASH);`) to `SCREEN_USAGE` / `SCREEN_OC_SPLASH` / `SCREEN_OC_USAGE`, do your iteration, then revert before committing.
 
@@ -242,18 +170,15 @@ The boot screen is `SCREEN_SPLASH` and only advances on a physical button press,
 3. **pioarduino platform required.** GFX Library for Arduino needs Arduino Core 3.x (`esp32-hal-periman.h`), not the 2.x that standard `espressif32` ships. We pin `pioarduino/platform-espressif32` 55.03.38-1.
 4. **LVGL 9 font patching.** `lv_font_conv` outputs LVGL 8 format. Must remove `#if LVGL_VERSION_MAJOR >= 8` guards, drop `.cache` field, add `.release_glyph`, `.kerning`, `.static_bitmap`, `.fallback`, `.user_data`. Without patching, fonts render invisible. Full regeneration recipe: `docs/fonts.md`.
 5. **Touch reading is centralized inside each board's `touch.cpp`.** The HAL `touch_hal_read()` is called once per loop from `my_touch_cb`; the board's implementation owns its latched `touch_pressed/x/y` state. Don't call the underlying controller from anywhere else — CST9220's `getPoint()` etc. do a full I2C transaction and concurrent callers consume each other's data.
-6. **Even-aligned flush regions.** `display_hal_round_area` (called from `rounder_cb`) is what each board uses to enforce this. Required on CO5300, harmless on SH8601.
-7. **Touch axis swap/mirror is per-board.** The 2.16's CST9220 needs `setSwapXY(true)` + `setMirrorXY(true, false)` — applied inside `boards/waveshare_amoled_216/touch.cpp::touch_hal_init()`. New ports apply their own.
+6. **Even-aligned flush regions.** `display_hal_round_area` (called from `rounder_cb`) is what the board uses to enforce this. Required on CO5300.
+7. **Touch axis swap/mirror is per-board.** The 2.16's CST9220 needs `setSwapXY(true)` + `setMirrorXY(true, false)` — applied inside `boards/waveshare_amoled_216/touch.cpp::touch_hal_init()`.
 8. **LVGL RGB565A8 is planar.** `w*h` RGB565 pixels followed by `w*h` alpha bytes; `data_size = w*h*3`, `stride = w*2`. Use `init_icon_dsc_rgb565a8()` for icons that overlap non-uniform backgrounds (e.g. battery over splash). Lucide source PNGs are black-on-transparent — converter must tint to white or icons render invisible. See `tools/png_to_lvgl.js`.
-9. **Per-board pre-init is `board_init()`.** Each board's `board_init.cpp` brings up `Wire` and any reset-gating IO expander BEFORE `display_hal_init()`. Skipping the IO expander release on AMOLED-1.8 leaves SH8601 + FT3168 in reset and they silently fail to probe. Same for LCD-4: expander @ 0x24 must run before `gfx->begin()` or the ST7701 stays dark.
-10. **No `#ifdef BOARD_*` in shared code.** The whole point of the refactor — if you're about to add one, you probably want a `BoardCaps` field or a per-board file instead. See `docs/porting/capability-flags.md`.
-11. **LCD-4 RGB bounce buffers.** `Arduino_RGB_Display` DMA-scans PSRAM. Pass `bounce_buffer_size_px = LCD_WIDTH * 10` so ESP-IDF allocates SRAM bounce buffers. Do not call `rgbpanel->getFrameBuffer()` after `gfx->begin()` — it constructs a second RGB panel and crashes.
-12. **LCD-4 has only one user button (GPIO 0 / BOOT).** GPIO 18 is display R3. KEY/PWR is EN/RST (hardware reset). Hold-to-pair and PWR-short animation/brightness cycling are unavailable; tap the panel to advance the screen cycle.
-13. **AMOLED-1.8: XCA9554 EXIO2 must stay HIGH.** Amp enable is GPIO 46 only. Pulling EXIO2 low takes the FT3168 off the I2C bus; IDF reports it as `ESP_ERR_INVALID_STATE`, which looks like an I2S/driver wedge but isn't.
-14. **The splash canvas is single-owner.** `splash_set_external(true)` — which `oc_splash_start()` does — freezes Clawd's advance, makes `splash_show()` skip its rate pick and idles the corner mascot; `splash_next()` and `splash_pick_for_current_rate()` no-op while external. Draw through `splash_render_external(cells, palette)` (60×60 palette indices + an RGB565 palette) so the PSRAM canvas and the C6 strip blit both keep working, and only one module may hold it. Turning it off forces a full repaint and restarts Clawd's clocks. Cell values index the palette and are capped at `SPLASH_PALETTE_MAX` (32); an owner that rewrites its palette in place gets a full repaint automatically.
-15. **`lv_label_set_text_fmt()` has no float support** — it runs LVGL's own printf with `LV_USE_FLOAT` off, so `%f` prints garbage. Format money and token counts with `snprintf` into a buffer and use `lv_label_set_text()` (see the `$%.2f spent` line in `ui_opencode.cpp`).
-16. **The OpenCode Go usage endpoint needs its trailing slash**: `https://opencode.ai/zen/go/v1/usage/`. Without the slash the server answers 401 and the daemon quietly falls back to the local estimate, so the chips start showing `· est.` for no visible reason.
-17. **The OpenCode Go key is a credential.** The `opencode-go.key` field in `auth.json` must never reach a log line, an exception message, the BLE payload or an argv. Every failure path in `daemon/opencode_collector.py` logs one fixed generic line instead, and `test_key_never_appears_in_log_output` / `test_daemon_logging_never_shows_the_key` enforce it.
+9. **Per-board pre-init is `board_init()`.** The board's `board_init.cpp` brings up `Wire` and any reset-gating IO expander BEFORE `display_hal_init()`.
+10. **No `#ifdef BOARD_*` in shared code.** The whole point of the refactor — if you're about to add one, you probably want a `BoardCaps` field or a per-board file instead.
+11. **The splash canvas is single-owner.** `splash_set_external(true)` — which `oc_splash_start()` does — freezes Clawd's advance, makes `splash_show()` skip its rate pick and idles the corner mascot; `splash_next()` and `splash_pick_for_current_rate()` no-op while external. Draw through `splash_render_external(cells, palette)` (60×60 palette indices + an RGB565 palette) so the PSRAM canvas keeps working, and only one module may hold it. Turning it off forces a full repaint and restarts Clawd's clocks. Cell values index the palette and are capped at `SPLASH_PALETTE_MAX` (32); an owner that rewrites its palette in place gets a full repaint automatically.
+12. **`lv_label_set_text_fmt()` has no float support** — it runs LVGL's own printf with `LV_USE_FLOAT` off, so `%f` prints garbage. Format money and token counts with `snprintf` into a buffer and use `lv_label_set_text()` (see the `$%.2f spent` line in `ui_opencode.cpp`).
+13. **The OpenCode Go usage endpoint needs its trailing slash**: `https://opencode.ai/zen/go/v1/usage/`. Without the slash the server answers 401 and the daemon quietly falls back to the local estimate, so the chips start showing `· est.` for no visible reason.
+14. **The OpenCode Go key is a credential.** The `opencode-go.key` field in `auth.json` must never reach a log line, an exception message, the BLE payload or an argv. Every failure path in `daemon/opencode_collector.py` logs one fixed generic line instead, and `test_key_never_appears_in_log_output` / `test_daemon_logging_never_shows_the_key` enforce it.
 
 ## Icons
 
@@ -282,19 +207,18 @@ emitted), synthesizes the **eyes** (transparent holes in the source GIFs) as
 (trumpet notes → ivory, magnifier fedora → gray) via component analysis.
 
 The splash engine (`splash.cpp`) plays intro → loop → outro on a **60×60
-stage** (`SPLASH_GRID`, cell = min(W,H)/60 → 8 px on 480, 6 px on 368, 4 px on
-240): loops hold until released (walk arrival, scene timer, rotation), so
+stage** (`SPLASH_GRID`, cell = min(W,H)/60 → 8 px on 480): loops hold until
+released (walk arrival, scene timer, rotation), so
 switches always pass through the shared idle pose. Walkers translate with
 foot-locked per-frame schedules and mirror when heading left. Usage-rate
 groups pick animations by name; the same rate drives the **corner mascot** on
-the usage screen (`splash_mascot_*`, PSRAM boards; C6 falls back to the static
-`clawd_still.h` icon) — idle stills, rate-scaled acts, and walk-off/lurk/
-walk-back trips. Default boot screen.
+the usage screen (`splash_mascot_*`) — idle stills, rate-scaled acts, and
+walk-off/lurk/walk-back trips. Default boot screen.
 
 The **OpenCode splash** (`oc_splash.cpp`) is procedural rather than pregenerated
 — few cells, no frame budget — and renders the official OpenCode mark, wordmark,
 terminal block scanner and typing cursor onto the same 60×60 canvas through
-`splash_render_external()` (see gotcha 14). Its scene follows the OpenCode mood
+`splash_render_external()` (see gotcha 11). Its scene follows the OpenCode mood
 (`oc_mood_t`, set by `ui_update_opencode`): idle → typeon, any session active →
 scanner (20 ms/frame from two up), 5 h or week ≥ 75% → amber scanner, limit
 reached → frozen scanner with a red blink. PWR steps typeon → assemble → scanner;

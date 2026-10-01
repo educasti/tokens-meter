@@ -181,7 +181,7 @@ static void compute_layout(const BoardCaps &c) {
         L.st_font = &font_styrene_14;
         L.pv_c1_h = 98; L.pv_c2_y = 172;
     } else {
-        // ---- chico: 240x240 (LCD-1.54, sim_240) ----
+        // ---- chico: 240x240 (compact breakpoint, currently unused) ----
         L.header_x = 8; L.header_top = 10;  L.header_font = &font_styrene_12;
         L.card_x = 8;  L.pad = 8;
         L.c1_y = 30;  L.c1_h = 63;  L.c1_radius = 8;        // 30..93

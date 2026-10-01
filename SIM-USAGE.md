@@ -18,19 +18,6 @@ cd firmware && .pio/build/sim/program
 Launch from the `firmware/` directory — the default scenario path
 (`sim/scenario.jsonl`) is resolved relative to it.
 
-`sim_368` (368×448) and `sim_240` (240×240) are the same board folder at the
-other two panel sizes, so all three UI breakpoints can be checked without
-hardware:
-
-```bash
-pio run -d firmware -e sim_368
-cd firmware && .pio/build/sim_368/program
-```
-
-They extend `env:sim` and override nothing but `-DLCD_WIDTH` / `-DLCD_HEIGHT` /
-`-DBOARD_NAME`; `boards/sim/board.h` guards those with `#ifndef` so the
-`build_flags` win.
-
 ## Controls
 
 | Key | Action |
@@ -117,13 +104,13 @@ plus `SIM_START_SCREEN`, to capture any specific screen:
 
 ```bash
 SIM_SCENARIO=sim/scenario-opencode.jsonl SIM_START_SCREEN=oc_usage \
-  SDL_VIDEODRIVER=dummy SIM_AUTOSHOT_MS=3000 .pio/build/sim_368/program
+  SDL_VIDEODRIVER=dummy SIM_AUTOSHOT_MS=3000 .pio/build/sim/program
 ```
 
 ## Caveat
 
-The sim mirrors the S3 2.16 geometry by default (`sim_368` / `sim_240` cover the
-other two breakpoints) but renders with desktop LVGL and fake data. It's ideal
+The sim mirrors the S3 2.16 geometry (480×480) but renders with desktop LVGL and
+fake data. It's ideal
 for iterating UI layouts, but panel-level behavior — column offsets, rotation,
 flush rounding — lives in the hardware board folders, so always do a final check
 on real hardware before merging panel-related changes.

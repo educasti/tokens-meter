@@ -26,10 +26,9 @@
 // sim/scenario-opencode.jsonl interleaves the Claude beats with OpenCode ones
 // (tagged "k":"oc"), which grows the screen cycle to four screens.
 //
-// Geometry: 480x480 by default. The sim_368 / sim_240 envs override it from
-// build_flags (-DLCD_WIDTH/-DLCD_HEIGHT/-DBOARD_NAME), so the three layout
-// breakpoints can be checked without a different board folder. SIM_BUTTONS=1
-// at run time emulates a board with no SECONDARY button.
+// Geometry is 480x480 (the panel this fork targets). LCD_WIDTH / LCD_HEIGHT /
+// BOARD_NAME can still be overridden from build_flags. SIM_BUTTONS=1 at run
+// time emulates a board with no SECONDARY button.
 //
 // Headless / CI: SDL_VIDEODRIVER=dummy SIM_AUTOSHOT_MS=<ms> saves a
 // screenshot (SIM_AUTOSHOT_PATH, default sim-autoshot.bmp) after <ms> and

@@ -4,8 +4,8 @@
 > [HermannBjorgvin/Clawdmeter](https://github.com/HermannBjorgvin/Clawdmeter).
 > All credit for the original work goes to that author. See
 > [ATTRIBUTION.md](ATTRIBUTION.md) — including the licensing status, which
-> matters if you plan to redistribute this. Everything below is the upstream
-> README, unmodified.
+> matters if you plan to redistribute this. The README below is adapted from
+> the upstream one: this fork supports a single board only.
 
 > Also check out [Beam](https://github.com/notaharness/beam)! A CLI that lets you pair your machines using a passkey and [@Tailscale's tailcat](https://tailscale.com/blog/tailcat).
 
@@ -13,7 +13,7 @@
 
 A small ESP32 dashboard I made for my desk to keep an eye on Claude Code usage.
 
-It runs on a [Waveshare ESP32-S3-Touch-AMOLED-2.16](https://www.waveshare.com/esp32-s3-touch-amoled-2.16.htm?&aff_id=149786) as well as a few other alternative boards and pairs over Bluetooth, the splash screen plays pixel-art Clawd animations that get
+It runs on a [Waveshare ESP32-S3-Touch-AMOLED-2.16](https://www.waveshare.com/esp32-s3-touch-amoled-2.16.htm?&aff_id=149786) and pairs over Bluetooth, the splash screen plays pixel-art Clawd animations that get
 busier when your usage rate climbs. The two side buttons send Space and
 Shift+Tab over BLE HID for Claude Code's voice mode and mode-toggle shortcuts.
 
@@ -81,19 +81,7 @@ Neither file is written to, and the key is never logged.
 
 ## Hardware
 
-Boards supported out of the box:
-
-- [Waveshare ESP32-S3-Touch-AMOLED-2.16](https://www.waveshare.com/esp32-s3-touch-amoled-2.16.htm?&aff_id=149786)
-- [Waveshare ESP32-C6-Touch-AMOLED-2.16](https://www.waveshare.com/esp32-c6-touch-amoled-2.16.htm?&aff_id=149786)
-- [Waveshare ESP32-S3-Touch-AMOLED-1.8](https://www.waveshare.com/esp32-s3-touch-amoled-1.8.htm?&aff_id=149786)
-- [Waveshare ESP32-C6-Touch-AMOLED-1.8](https://www.waveshare.com/esp32-c6-touch-amoled-1.8.htm?&aff_id=149786)
-- [Waveshare ESP32-S3-Touch-AMOLED-2.06](https://www.waveshare.com/esp32-s3-touch-amoled-2.06.htm?&aff_id=149786)
-- [Waveshare ESP32-S3-Touch-LCD-1.54](https://www.waveshare.com/esp32-s3-lcd-1.54.htm?sku=33869&aff_id=149786)
-- [Waveshare ESP32-S3-Touch-LCD-4](https://www.waveshare.com/esp32-s3-touch-lcd-4.htm)
-
-> Please check if a pull request exists for your alternative hardware port before opening a new one, providing QA feedback and testing on the same hardware is more valuable than duplicate pull requests.
-
-**Porting to another board:** the firmware is a thin HAL with per-board folders under `firmware/src/boards/`. Drop in a new folder and a new PlatformIO env — `main.cpp`, `ui.cpp`, and `splash.cpp` never need to change. See [`docs/porting/adding-a-board.md`](docs/porting/adding-a-board.md) for the walk-through and [`docs/porting/hal-contract.md`](docs/porting/hal-contract.md) for the interfaces a port must implement.
+The only supported hardware is the [Waveshare ESP32-S3-Touch-AMOLED-2.16](https://www.waveshare.com/esp32-s3-touch-amoled-2.16.htm?&aff_id=149786) — a 480×480 AMOLED touch panel with 16 MB flash and dual OTA-ready app slots (no OTA feature is implemented yet).
 
 ## Prerequisites
 
@@ -111,12 +99,11 @@ The macOS host pieces — Python daemon, LaunchAgent, and flash helper — were 
 ### Flash the firmware
 
 ```bash
-./flash-mac.sh waveshare_amoled_216                       # ESP32-S3 2.16" (auto-detects /dev/cu.usbmodem*)
-./flash-mac.sh waveshare_amoled_216_c6                    # ESP32-C6 2.16" variant
-./flash-mac.sh waveshare_amoled_18  /dev/cu.usbmodem1101  # ESP32-S3 1.8" (or pass an explicit USB serial port)
+./flash-mac.sh                                             # waveshare_amoled_216, auto-detects /dev/cu.usbmodem*
+./flash-mac.sh waveshare_amoled_216 /dev/cu.usbmodem1101   # or pass an explicit USB serial port
 ```
 
-The board env name is required. Run `./flash-mac.sh` with no args to see the available envs (scraped from `firmware/platformio.ini`).
+`flash-mac.sh` defaults to the `waveshare_amoled_216` env and auto-detects the USB serial port (`/dev/cu.usbmodem*`).
 
 ### Pair the device
 
@@ -146,12 +133,11 @@ launchctl load -w ~/Library/LaunchAgents/com.user.claude-usage-daemon.plist # st
 ### Flash the firmware
 
 ```bash
-./flash.sh waveshare_amoled_216                  # ESP32-S3 2.16" (defaults to /dev/ttyACM0)
-./flash.sh waveshare_amoled_216_c6               # ESP32-C6 2.16" variant
-./flash.sh waveshare_amoled_18  /dev/ttyACM1     # ESP32-S3 1.8" (or pass an explicit USB serial port)
+./flash.sh                                    # waveshare_amoled_216 on /dev/ttyACM0
+./flash.sh waveshare_amoled_216 /dev/ttyACM1  # or pass an explicit USB serial port
 ```
 
-The board env name is required. Run `./flash.sh` with no args to see the available envs (scraped from `firmware/platformio.ini`).
+`flash.sh` defaults to the `waveshare_amoled_216` env and `/dev/ttyACM0`.
 
 ### Pair the device
 
@@ -197,10 +183,10 @@ Runs natively on Windows — no WSL required. A system-tray app polls your usage
 ### Flash the firmware
 
 ```powershell
-pio run -d firmware -e waveshare_amoled_216 -t upload --upload-port COM5   # use your device's COM port
+pio run -d firmware -e waveshare_amoled_216 -t upload --upload-port COM5   # use your device's COM port (COMx)
 ```
 
-Run `pio run -d firmware` with no env to see the available board envs.
+The env is `waveshare_amoled_216`; the port is your device's COM port on Windows.
 
 ### Pair the device
 
@@ -269,7 +255,7 @@ The board has three side buttons. The two side buttons are **tap or hold**: a sh
 | **Middle** (PWR) | AXP2101 PKEY | On a splash: next animation or scene. On usage: brightness | 3 s + release: pairing mode                          |
 | **Right**        | GPIO 18      | Next screen                                              | Shift+Tab (Claude Code mode toggle)                  |
 
-Space and Shift+Tab go out as standard BLE HID keyboard reports, so they trigger in whatever window has focus on the paired host — not just Claude Code. Tapping the panel always moves to the next screen, and on the boards that have only one side button — the 1.8 (both SoCs), the 2.06 and the LCD-4 — the left button steps forward instead of back. Telling a tap from a hold means the HID keys now reach the host about 300 ms after you press rather than straight away.
+Space and Shift+Tab go out as standard BLE HID keyboard reports, so they trigger in whatever window has focus on the paired host — not just Claude Code. Tapping the panel always moves to the next screen. Telling a tap from a hold means the HID keys now reach the host about 300 ms after you press rather than straight away.
 
 ## BLE protocol
 
@@ -307,8 +293,6 @@ sim`, then `cd firmware && .pio/build/sim/program`). See
   `tools/png_to_lvgl.js`. See [`tools/README.md`](tools/README.md).
 - **Fonts** — the pre-compiled LVGL fonts and the LVGL-9 patching they need:
   [`docs/fonts.md`](docs/fonts.md).
-- **Porting** — [`docs/porting/adding-a-board.md`](docs/porting/adding-a-board.md)
-  and [`docs/porting/hal-contract.md`](docs/porting/hal-contract.md).
 
 ## Credits
 
