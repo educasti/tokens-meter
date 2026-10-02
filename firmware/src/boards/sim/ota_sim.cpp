@@ -3,6 +3,7 @@
 // code (main.cpp / ui.cpp) links against the same ota_* symbols as hardware.
 // Mirrors the boards/sim/ble_sim.cpp split.
 #include "../../ota.h"
+#include "../../ota_pull.h"
 #include <stdio.h>
 
 void ota_init(void) {}
@@ -18,3 +19,11 @@ void ota_stop(void) {}
 bool ota_is_active(void) { return false; }
 void ota_confirm(void) {}
 const char* ota_version(void) { return "sim"; }
+
+// Pull-OTA stubs: ota_pull.cpp is hardware-only (excluded from the sim build),
+// so the shared main.cpp links these no-ops instead.
+void ota_pull_init(void) {}
+void ota_pull_tick(void) {}
+void ota_pull_handle_ctrl(const char* json) { (void)json; }
+bool ota_pull_is_active(void) { return false; }
+const char* ota_pull_state_name(void) { return "idle"; }

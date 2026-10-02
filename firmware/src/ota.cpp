@@ -21,6 +21,8 @@
 
 #include "ble.h"
 #include "hal/board_caps.h"
+#include "ota_pull.h"
+#include "ota_wifi.h"
 
 #ifndef FW_VERSION
 #define FW_VERSION "dev"   // set per env in platformio.ini (-DFW_VERSION="...")
@@ -219,12 +221,20 @@ static void make_hostname(char* out, size_t n) {
     snprintf(out, n, "clawdmeter-%s", tail);
 }
 
-static void wifi_begin(void) {
+static bool wifi_begin(void) {
+    // The radio has a single owner (DESIGN §7.4): refuse to start if the pull
+    // engine already holds it, mirroring the "busy" reply for a double start.
+    if (!ota_wifi_acquire(OTA_WIFI_HYBRID)) {
+        Serial.println("OTA: wifi busy (held by another owner)");
+        send_status("{\"ok\":false,\"err\":\"busy\"}");
+        return false;
+    }
     Serial.printf("OTA: joining WiFi ssid=%s\n", s_ssid);
     WiFi.mode(WIFI_STA);
     WiFi.begin(s_ssid, s_pass);
     s_connect_deadline = millis() + WIFI_JOIN_MS;
     s_state = OTA_MODE_CONNECTING;
+    return true;
 }
 
 static void ota_server_begin(const char* pass) {
@@ -257,8 +267,7 @@ static void ota_server_begin(const char* pass) {
 
 static void ota_stop_now(void) {
     if (s_state == OTA_MODE_READY) ArduinoOTA.end();
-    WiFi.disconnect(true);   // radio off, keep the AP config
-    WiFi.mode(WIFI_OFF);
+    ota_wifi_release();   // disconnect(true) + WiFi.mode(WIFI_OFF)
     s_state = OTA_MODE_IDLE;
     s_ota_pass_set = false;
     s_ota_pass[0] = '\0';
@@ -283,8 +292,9 @@ void ota_handle_ctrl(const char* json) {
     if (strcmp(cmd, "info") == 0) {
         char buf[192];
         snprintf(buf, sizeof(buf),
-                 "{\"ok\":true,\"board\":\"%s\",\"fw\":\"%s\",\"id\":\"%s\"}",
-                 board_caps().id, ota_version(), ble_get_mac_address());
+                 "{\"ok\":true,\"board\":\"%s\",\"fw\":\"%s\",\"sha\":\"%s\",\"build\":\"%s\",\"id\":\"%s\"}",
+                 board_caps().id, ota_version(), FW_GIT_SHA, FW_BUILD_DATE,
+                 ble_get_mac_address());
         send_status(buf);
         return;
     }
@@ -314,6 +324,13 @@ void ota_handle_ctrl(const char* json) {
         } else {
             send_status("{\"ok\":false,\"err\":\"bad_mode\"}");
         }
+        return;
+    }
+
+    if (strcmp(cmd, "update") == 0) {
+        // Pull-engine commands (DESIGN §9): parse/enqueue only; the BLE owner
+        // check was already enforced before ota_handle_ctrl() ran.
+        ota_pull_handle_ctrl(json);
         return;
     }
 

@@ -8,6 +8,7 @@
 #include "ui.h"
 #include "ble.h"
 #include "ota.h"
+#include "ota_pull.h"
 #include "splash.h"
 #include "oc_splash.h"
 #include "oc_data.h"
@@ -205,6 +206,9 @@ void setup() {
     // counter as early as possible — a failed slot should reboot before any
     // heavy display/BLE bring-up.
     ota_init();
+    // Pull OTA shares the "otah" namespace and the WiFi owner; load its schedule
+    // and start the worker right after the hybrid path is armed.
+    ota_pull_init();
 
     display_hal_init();
     display_hal_begin();
@@ -309,6 +313,7 @@ void loop() {
     ui_tick_anim();
     ble_tick();
     ota_tick();
+    ota_pull_tick();
     power_hal_tick();
     imu_hal_tick();
     sound_hal_tick();
