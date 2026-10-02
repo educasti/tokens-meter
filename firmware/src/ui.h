@@ -29,3 +29,11 @@ void ui_prev_screen(void);
 screen_t ui_get_current_screen(void);
 void ui_update_ble_status(ble_state_t state, const char* name, const char* mac);
 void ui_update_battery(int percent, bool charging);
+
+// Transient pull-OTA status line (DESIGN.md §12). `pct < 0` means "no
+// percentage". Reuses the animated status area — never adds a screen — and
+// auto-clears after a few seconds. Transport-free and safe to call from any
+// task (e.g. the OTA pull worker): the text is copied under a tiny critical
+// section and drawn by ui_tick_anim() on the loop task; this call never
+// touches LVGL and never blocks.
+void ui_ota_status(const char* text, int pct);

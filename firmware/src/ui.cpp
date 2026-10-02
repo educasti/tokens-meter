@@ -4,12 +4,20 @@
 #include "ui_portfolio.h"
 #include "oc_splash.h"
 #include "ota.h"
+#include "ota_pull.h"
 #include <lvgl.h>
 #include <time.h>
 #include "logo.h"
 #include "clawd_still.h"
 #include "icons.h"
 #include "hal/board_caps.h"
+
+// The OTA status handoff below uses a critical section on hardware; the native
+// sim is single-threaded and has no FreeRTOS, so the lock compiles away there.
+#ifndef BOARD_SIM
+#include <freertos/FreeRTOS.h>
+#include <freertos/portmacro.h>
+#endif
 
 // Custom fonts (scaled for 314 PPI, ~1.9x from original 165 PPI)
 LV_FONT_DECLARE(font_tiempos_56);
@@ -271,6 +279,26 @@ static uint8_t anim_phase = 0;
 static uint8_t anim_msg_idx = 0;
 static uint32_t anim_msg_start = 0;
 #define ANIM_MSG_MS     4000
+
+// ---- Transient pull-OTA line (DESIGN §12) ----
+// ui_ota_status() is called from the OTA pull worker, which must never touch
+// LVGL. It only copies the text + pct and stamps a deadline here; ui_tick_anim()
+// (loop task) performs the lv_label_set_text. The line auto-clears after a few
+// seconds, so a dark panel never holds the engine back.
+#define OTA_STATUS_MAX   32
+#define OTA_STATUS_MS    3000
+static char     ota_status_text[OTA_STATUS_MAX];
+static int      ota_status_pct   = -1;
+static uint32_t ota_status_until = 0;       // lv_tick deadline
+static bool     ota_status_valid = false;
+#ifndef BOARD_SIM
+static portMUX_TYPE ota_status_mux = portMUX_INITIALIZER_UNLOCKED;
+#define OTA_STATUS_LOCK()   portENTER_CRITICAL(&ota_status_mux)
+#define OTA_STATUS_UNLOCK() portEXIT_CRITICAL(&ota_status_mux)
+#else
+#define OTA_STATUS_LOCK()   ((void)0)
+#define OTA_STATUS_UNLOCK() ((void)0)
+#endif
 
 static const char* const spinner_frames[] = {
     "\xC2\xB7", "\xE2\x9C\xBB", "\xE2\x9C\xBD",
@@ -844,12 +872,37 @@ void ui_tick_anim(void) {
 
     // Status text by priority. Whimsical messages only when connected & settled.
     // An in-flight OTA borrows this line rather than adding a screen (§5): the
-    // usage path keeps running, so the badge is purely additive. ota_is_active()
-    // is a hard-coded false in the native sim.
-    if (ota_is_active()) {
-        static char obuf[32];
-        snprintf(obuf, sizeof(obuf), "%s OTA\xE2\x80\xA6",
-                 spinner_frames[anim_spinner_idx]);
+    // usage path keeps running, so the badge is purely additive. Both
+    // ota_is_active() and ota_pull_is_active() are hard-coded false in the sim.
+    //
+    // A transient pull-OTA line, if one is live, wins over the generic badge.
+    // Its text was stashed by ui_ota_status() (possibly on the pull task); the
+    // label is written here, on the loop task, so no LVGL call crosses threads.
+    char sbuf[OTA_STATUS_MAX];
+    int  spct = -1;
+    bool sactive = false;
+    OTA_STATUS_LOCK();
+    if (ota_status_valid) {
+        for (size_t i = 0; i < sizeof(sbuf); i++) sbuf[i] = ota_status_text[i];
+        spct = ota_status_pct;
+        sactive = (int32_t)(now - ota_status_until) < 0;
+        if (!sactive) ota_status_valid = false;   // expired → stop re-showing it
+    }
+    OTA_STATUS_UNLOCK();
+
+    if (sactive || ota_is_active() || ota_pull_is_active()) {
+        static char obuf[64];
+        if (sactive) {
+            if (spct >= 0)
+                snprintf(obuf, sizeof(obuf), "%s %s\xE2\x80\xA6 %d%%",
+                         spinner_frames[anim_spinner_idx], sbuf, spct);
+            else
+                snprintf(obuf, sizeof(obuf), "%s %s\xE2\x80\xA6",
+                         spinner_frames[anim_spinner_idx], sbuf);
+        } else {
+            snprintf(obuf, sizeof(obuf), "%s OTA\xE2\x80\xA6",
+                     spinner_frames[anim_spinner_idx]);
+        }
         lv_label_set_text(lbl_anim, obuf);
         return;
     }
@@ -870,6 +923,26 @@ void ui_tick_anim(void) {
     snprintf(buf, sizeof(buf), "%s %s\xE2\x80\xA6",
              spinner_frames[anim_spinner_idx], text);
     lv_label_set_text(lbl_anim, buf);
+}
+
+// Non-blocking handoff from the OTA pull worker to the UI. Only copies the
+// text + pct and stamps a deadline under a tiny critical section; the actual
+// lv_label_set_text happens in ui_tick_anim() on the loop task, so this is
+// safe to call from any task and never touches LVGL. pct < 0 = no percentage.
+void ui_ota_status(const char* text, int pct) {
+    uint32_t until = lv_tick_get() + OTA_STATUS_MS;
+    OTA_STATUS_LOCK();
+    size_t i = 0;
+    if (text) {
+        for (; text[i] && i < sizeof(ota_status_text) - 1; i++) {
+            ota_status_text[i] = text[i];
+        }
+    }
+    ota_status_text[i] = '\0';
+    ota_status_pct   = pct;
+    ota_status_until = until;
+    ota_status_valid = true;
+    OTA_STATUS_UNLOCK();
 }
 
 // Both splash screens are wordless (Clawd, or the OpenCode scene on the same

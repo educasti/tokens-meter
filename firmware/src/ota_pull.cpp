@@ -43,6 +43,7 @@
 #include <freertos/portmacro.h>
 
 #include "ota.h"
+#include "ui.h"
 #include "ble.h"
 #include "ota_manifest.h"
 #include "ota_semver.h"
@@ -171,7 +172,16 @@ static void pull_send_available(const char* ver, long size) {
     pull_send(buf);
 }
 
+// "Update <ver>" on the transient UI line when a newer build is available
+// (DESIGN §12). Purely additive: the BLE reply above is the source of truth.
+static void pull_ui_available(const char* ver) {
+    char line[OTA_VERSION_MAX + 8];
+    snprintf(line, sizeof(line), "Update %s", ver);
+    ui_ota_status(line, -1);
+}
+
 static void pull_send_downloading(int pct) {
+    ui_ota_status("Updating", pct);   // transient line; never blocks the worker
     char buf[96];
     snprintf(buf, sizeof(buf),
              "{\"ok\":true,\"cmd\":\"update\",\"state\":\"downloading\",\"pct\":%d}", pct);
@@ -230,6 +240,7 @@ static void pull_record_ok(void) {
 
 // A completed check with a permanently bad manifest/image — do not retry it.
 static void pull_record_terminal(void) {
+    ui_ota_status("Update failed", -1);   // short transient line, DESIGN §12
     time_t now = time(nullptr);
     if ((long)now > MIN_VALID_EPOCH) s_last_chk = (uint32_t)now;
     s_defer = 0;
@@ -646,6 +657,10 @@ static bool pull_activate(const OtaManifest& mf, const esp_partition_t* part) {
 
 // ---- Worker ----------------------------------------------------------------
 
+// Runs on the OTA pull worker (never the loop or NimBLE task). The
+// ui_ota_status() calls below are the only UI interaction: each one just
+// stashes a short line for the loop task (DESIGN §12), so they are
+// non-blocking and a dark or sleeping panel never affects control flow.
 static void pull_cycle_inner(const pull_req_t& req) {
     char ssid[64] = { 0 }, pass[64] = { 0 };
     if (!pull_load_creds(ssid, sizeof(ssid), pass, sizeof(pass))) {
@@ -654,15 +669,18 @@ static void pull_cycle_inner(const pull_req_t& req) {
     }
 
     s_state = PS_JOIN;
+    ui_ota_status("Checking", -1);
     if (!pull_wifi_join(ssid, pass)) { pull_fail_transient(req, "timeout"); return; }
 
     s_state = PS_SNTP;
+    ui_ota_status("Checking", -1);
     if (!pull_sntp()) { pull_fail_transient(req, "timeout"); return; }
 
     OtaManifest mf;
     memset(&mf, 0, sizeof(mf));
     int http_code = 0, parse_err = OTA_MF_OK;
     s_state = PS_MANIFEST;
+    ui_ota_status("Checking", -1);
     fetch_res_t fr = pull_fetch_manifest(&mf, &http_code, &parse_err);
     if (fr == FETCH_304) {
         pull_send_up_to_date(ota_version());
@@ -700,11 +718,15 @@ static void pull_cycle_inner(const pull_req_t& req) {
     }
     if (cr == CR_BATTERY_LOW) {
         if (req.from_ble && req.apply) pull_send_err("battery_low");
-        else                           pull_send_available(mf.version, mf.size);
+        else {
+            pull_send_available(mf.version, mf.size);
+            pull_ui_available(mf.version);
+        }
         pull_defer_battery();
         return;
     }
     pull_send_available(mf.version, mf.size);
+    pull_ui_available(mf.version);
     if (cr == CR_CHECK_ONLY) {
         pull_record_ok();
         return;
@@ -712,12 +734,16 @@ static void pull_cycle_inner(const pull_req_t& req) {
 
     dl_ctx dl;
     s_state = PS_DOWNLOAD;
+    ui_ota_status("Updating", -1);
     if (!pull_download(&dl, mf, req.force || mf.mandatory)) {
         const char* e = dl.err[0] ? dl.err : "timeout";
         bool battery_low = (strcmp(e, "battery_low") == 0);
         if (battery_low) {
             if (req.from_ble) pull_send_err("battery_low");
-            else              pull_send_available(mf.version, mf.size);
+            else {
+                pull_send_available(mf.version, mf.size);
+                pull_ui_available(mf.version);
+            }
             pull_defer_battery();
         } else {
             pull_fail_transient(req, e);
@@ -726,6 +752,7 @@ static void pull_cycle_inner(const pull_req_t& req) {
     }
 
     s_state = PS_VERIFY;
+    ui_ota_status("Verifying", -1);
     pull_send_verifying();
     const char* verr = "bad_image";
     if (!pull_verify(&dl, mf, &verr)) {
@@ -743,6 +770,7 @@ static void pull_cycle_inner(const pull_req_t& req) {
     }
 
     s_state = PS_REBOOT;
+    ui_ota_status("Restarting", -1);
     pull_send_rebooting(mf.version);
     pull_record_ok();
     ota_wifi_release();                 // radio off before the reset (§10.3)
