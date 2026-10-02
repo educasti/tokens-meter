@@ -1,0 +1,62 @@
+# Caddy v2 site block for pull-based automatic OTA.
+#
+# Serves the static firmware directory over HTTPS with an automatic Let's
+# Encrypt certificate (design/ota-pull/DESIGN.md sections 4 and 6; the backend
+# direction is design/backend-wifi/ROADMAP.md D8 and section 10).
+#
+# This is an example: replace ota.example.com and /srv with the real hostname
+# and document root (the publish script writes to <root>/firmware/<board>/).
+# ota.example.com is a placeholder, not the owner's VM.
+#
+# Prerequisites (ROADMAP.md section 10):
+#   - a reserved public IP and a real DNS name pointing at the VM;
+#   - port 443 open in BOTH the VPC Security List and the image's iptables;
+#   - Caddy owns :80 and :443 so ACME can complete the HTTP-01/TLS-ALPN challenge.
+
+ota.example.com {
+	# Compress JSON; firmware binaries are already compressed and will not shrink.
+	encode zstd gzip
+
+	# Static root. /srv is the document root and the published files live in
+	# /srv/firmware, so the public /firmware/<board>/... URLs map onto disk
+	# (DESIGN section 6.4):
+	#   URL  /firmware/<board>/manifest.json
+	#   disk /srv/firmware/<board>/manifest.json
+	root * /srv
+
+	# --- Security headers (static files only; no dynamic backend) -------------
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	# --- Manifest: always revalidate; file_server emits ETag/Last-Modified ----
+	# The device sends If-None-Match and treats 304 as "no update".
+	@manifest path */manifest.json
+	header @manifest Cache-Control "no-cache"
+
+	# --- Firmware binaries: content-addressed by version, cache forever -------
+	@bin path *.bin
+	header @bin Content-Type "application/octet-stream"
+	header @bin Cache-Control "public, max-age=31536000, immutable"
+
+	# --- Single-board alias (owner-facing convenience path) -------------------
+	# /firmware/manifest.json -> the canonical per-board manifest. Prefer this
+	# rewrite over a filesystem symlink: no symlink-following ambiguity.
+	handle /firmware/manifest.json {
+		rewrite * /firmware/waveshare_amoled_216/manifest.json
+		file_server
+	}
+
+	# Everything else under the root is served directly (manifest + binaries).
+	handle {
+		file_server
+	}
+
+	log {
+		output file /var/log/caddy/ota-access.log
+		format json
+	}
+}

@@ -25,6 +25,12 @@
 #ifndef FW_VERSION
 #define FW_VERSION "dev"   // set per env in platformio.ini (-DFW_VERSION="...")
 #endif
+#ifndef FW_GIT_SHA
+#define FW_GIT_SHA ""      // injected by scripts/version.py (P0 build stamp)
+#endif
+#ifndef FW_BUILD_DATE
+#define FW_BUILD_DATE ""   // injected by scripts/version.py (P0 build stamp)
+#endif
 
 // NVS location and keys are frozen by the contract (§2 / §4).
 #define OTAH_NS        "otah"
