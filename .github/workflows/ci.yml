@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  daemon-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r daemon/requirements-windows.txt pytest
+
+      - name: Run daemon tests
+        run: python -m pytest daemon/tests -q
+
+  firmware-host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and run portfolio format test
+        run: (cd firmware/test/test_pf_format && g++ -std=c++17 test_pf_format.cpp -o /tmp/pf && /tmp/pf)
+
+      - name: Build and run splash geometry test
+        run: (cd firmware/test/test_splash_geometry && g++ -std=c++17 -I ../../src test_main.cpp -o /tmp/t && /tmp/t)
