@@ -378,6 +378,20 @@ Adding the CTRL characteristic changes the GATT table; if your host caches GATT
 per device, re-pair the device once (hold PWR ~3 s then release) so it sees the
 new characteristic.
 
+## Automatic updates (pull OTA)
+
+The device can also update itself with no host involved. On boot and every 24 h,
+while WiFi credentials are stored, it fetches a small JSON manifest over HTTPS
+from the owner's always-on VM, compares versions, verifies the downloaded
+binary's SHA-256, flashes the **inactive** slot and reboots. If the new image
+fails to boot, the same three-try rollback as the hybrid path returns the device
+to the last good slot. The VM host is injected at build time as
+`OTA_PULL_MANIFEST_URL` and is never committed.
+
+This is additive: the manual [hybrid path](#firmware-updates-hybrid-ota) stays
+as the fallback, and the two never run at once. See
+[`design/ota-pull/DESIGN.md`](design/ota-pull/DESIGN.md) for the full contract.
+
 ## Development
 
 <img src="assets/readme/crab.gif" width="120" align="right" alt="">

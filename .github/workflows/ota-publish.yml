@@ -1,0 +1,117 @@
+# Publish a firmware binary + OTA manifest for pull-based automatic OTA.
+#
+# Contract: design/ota-pull/DESIGN.md sections 5 (versioning) and 6.5 (publish
+# guarantee); plan: design/ota-pull/IMPL.md section 5 (P2). The only writer of
+# the firmware directory is design/ota-pull/deploy/ota-publish.sh.
+#
+# Maintainer setup — create these repository secrets (Settings -> Secrets and
+# variables -> Actions -> New repository secret). Never a password:
+#   OTA_SSH_KEY       private SSH deploy key (whole OpenSSH/PEM text) allowed to
+#                     write the firmware directory on the VM.
+#   OTA_KNOWN_HOSTS   pinned known_hosts lines for the VM, e.g. the output of
+#                     `ssh-keyscan -t ed25519 <vm>`.
+#   OTA_DEST          rsync/ssh target, `user@host:/path` of the firmware dir.
+#
+# The VM hostname lives only in those secrets and is never committed.
+
+name: Publish OTA
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (X.Y.Z). Defaults to the nearest v* tag."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for git describe)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Build firmware
+        run: pio run -d firmware -e waveshare_amoled_216
+
+      # The tag/input version must equal what the pre-build script stamped into
+      # FW_VERSION (firmware/scripts/version.py --print-version). A mismatch
+      # means the published manifest would name a version the image does not
+      # report, so abort before touching the VM.
+      - name: Resolve and guard the version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -n "${INPUT_VERSION}" ]; then
+            VERSION="${INPUT_VERSION#v}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          STAMPED="$(python3 firmware/scripts/version.py --print-version)"
+          if [ "$STAMPED" != "$VERSION" ]; then
+            echo "::error::version mismatch: publishing '$VERSION' but the built firmware stamps '$STAMPED'"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Stage the SSH deploy key
+        env:
+          OTA_SSH_KEY: ${{ secrets.OTA_SSH_KEY }}
+          OTA_KNOWN_HOSTS: ${{ secrets.OTA_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$OTA_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$OTA_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Publish
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          OTA_DEST: ${{ secrets.OTA_DEST }}
+        run: |
+          set -euo pipefail
+          design/ota-pull/deploy/ota-publish.sh \
+            --bin firmware/.pio/build/waveshare_amoled_216/firmware.bin \
+            --version "$VERSION" \
+            --board waveshare_amoled_216 \
+            --keep 5 \
+            --dest "$OTA_DEST"
+
+      - name: Summarize
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          OTA_DEST: ${{ secrets.OTA_DEST }}
+        run: |
+          set -euo pipefail
+          BIN="firmware/.pio/build/waveshare_amoled_216/firmware.bin"
+          SHA256="$(sha256sum -- "$BIN" | awk '{print $1}')"
+          DEST_HOST="${OTA_DEST%%:*}"
+          DEST_HOST="${DEST_HOST##*@}"
+          URL="https://${DEST_HOST}/firmware/waveshare_amoled_216/manifest.json"
+          {
+            echo "## OTA publish"
+            echo ""
+            echo "- version: \`$VERSION\`"
+            echo "- sha256: \`$SHA256\`"
+            echo "- manifest: $URL"
+          } >> "$GITHUB_STEP_SUMMARY"
