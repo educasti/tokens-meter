@@ -1,19 +1,31 @@
 # Caddy v2 site block for pull-based automatic OTA.
 #
-# Serves the static firmware directory over HTTPS with an automatic Let's
-# Encrypt certificate (design/ota-pull/DESIGN.md sections 4 and 6; the backend
-# direction is design/backend-wifi/ROADMAP.md D8 and section 10).
+# Serves the static firmware directory over HTTPS with an explicit self-signed
+# certificate. The update host is a BARE PUBLIC IP (the owner's reserved Oracle
+# Cloud VM address), so ACME / Let's Encrypt cannot be used: no CA issues
+# certificates for a bare IP. The firmware pins this exact certificate with
+# WiFiClientSecure::setCACert and keeps verification on (design/ota-pull/DESIGN.md
+# sections 4, 6 and 8; the backend direction is design/backend-wifi/ROADMAP.md
+# D8 and section 10).
 #
-# This is an example: replace ota.example.com and /srv with the real hostname
-# and document root (the publish script writes to <root>/firmware/<board>/).
-# ota.example.com is a placeholder, not the owner's VM.
+# This is an example: replace 192.0.2.10 (TEST-NET-1, a documentation-only
+# address) with the real VM IP, and /srv with the real document root (the
+# publish script writes to <root>/firmware/<board>/).
 #
 # Prerequisites (ROADMAP.md section 10):
-#   - a reserved public IP and a real DNS name pointing at the VM;
+#   - a reserved/static public IP; no DNS name is needed;
+#   - a self-signed cert/key whose SAN contains that IP, e.g.
+#       openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+#         -keyout /etc/caddy/ota.key -out /etc/caddy/ota.crt \
+#         -subj "/CN=ota" -addext "subjectAltName=IP:<the.vm.ip>"
+#     (ota.crt is the PEM pinned in firmware; both files stay out of the repo);
 #   - port 443 open in BOTH the VPC Security List and the image's iptables;
-#   - Caddy owns :80 and :443 so ACME can complete the HTTP-01/TLS-ALPN challenge.
+#   - Caddy does NOT need :80 or ACME; TLS comes from the explicit certificate.
 
-ota.example.com {
+192.0.2.10 {
+	# Explicit self-signed certificate; no ACME, no hostname.
+	tls /etc/caddy/ota.crt /etc/caddy/ota.key
+
 	# Compress JSON; firmware binaries are already compressed and will not shrink.
 	encode zstd gzip
 
@@ -25,8 +37,8 @@ ota.example.com {
 	root * /srv
 
 	# --- Security headers (static files only; no dynamic backend) -------------
+	# No HSTS: browsers ignore it for bare-IP hosts and there is no domain.
 	header {
-		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "no-referrer"
 		-Server

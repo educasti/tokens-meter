@@ -50,7 +50,33 @@
 #include "ota_wifi.h"
 #include "hal/board_caps.h"
 #include "hal/power_hal.h"
-#include "certs/isrg_roots_pem.h"
+#include "certs/pinned_server_pem.h"
+
+// ---- TLS trust model (DESIGN §8) -------------------------------------------
+// The update origin is a bare public IP, so there is no DNS name to chain to
+// Let's Encrypt: the firmware pins the server's SELF-SIGNED certificate
+// instead of the ISRG roots. `PINNED_SERVER_PEM` is generated at build time
+// from the untracked `certs/pinned_server.pem` (scripts/gen_pinned_cert.py)
+// and passed to WiFiClientSecure::setCACert() for both the manifest fetch and
+// the binary download. Verification is always ON:
+//   * `setInsecure()` is never called, and the CA slot is never left NULL, so
+//     `ssl_client.cpp` configures MBEDTLS_SSL_VERIFY_REQUIRED;
+//   * a missing cert yields a non-parseable placeholder -> the CA parse fails
+//     and the handshake fails closed rather than trusting anything.
+//
+// Hostname check vs. an IP-address SAN: mbedTLS 3.6.x (arduino-esp32 3.3.8)
+// DOES verify IPAddress Subject Alternative Names. It works only when the TLS
+// host string is the bare IP literal (`x509_crt_check_san_ip()` runs the host
+// through inet_pton and byte-compares it against the SAN). HTTPClient feeds
+// the URL host to `set_hostname()`, so the requirement is:
+//   * `-DOTA_PULL_MANIFEST_URL` must be `https://<same IP literal>/...` --
+//     byte-for-byte the address in the cert's SAN, no DNS name, no trailing
+//     dot, IPv6 without URL brackets;
+//   * because a cert that carries a subjectAltName is matched against the SAN
+//     ONLY (CN is ignored), the IP MUST be in the SAN, not just the CN.
+// If a future toolchain drops IP-SAN support, do NOT relax verification: add a
+// DNS name to the cert as a dNSName SAN and point the URL at that name. The
+// pinned cert is the trust anchor either way.
 
 // Base URL of the static firmware directory (DESIGN §6.4, §14.2). The real VM
 // host is injected per build via -DOTA_PULL_MANIFEST_URL="https://<host>/firmware";
@@ -371,7 +397,7 @@ static fetch_res_t pull_fetch_manifest(OtaManifest* mf, int* http_code, int* par
     Serial.printf("OTA: pull GET %s\n", url);
 
     WiFiClientSecure client;
-    client.setCACert(ISRG_ROOTS_PEM);
+    client.setCACert(PINNED_SERVER_PEM);   // pinned self-signed cert, §8
     HTTPClient http;
     http.setTimeout(MANIFEST_TIMEOUT_MS);
     if (!http.begin(client, url)) {
@@ -505,7 +531,7 @@ static bool pull_download_once(dl_ctx* c, const OtaManifest& mf) {
     Serial.printf("OTA: pull GET %s (%ld bytes)\n", url, mf.size);
 
     WiFiClientSecure client;
-    client.setCACert(ISRG_ROOTS_PEM);
+    client.setCACert(PINNED_SERVER_PEM);   // pinned self-signed cert, §8
     HTTPClient http;
     http.setTimeout(DOWNLOAD_IDLE_MS);
     if (!http.begin(client, url)) {

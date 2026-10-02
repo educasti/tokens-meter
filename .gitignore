@@ -2,6 +2,16 @@
 firmware/.pio/
 firmware/.vscode/
 
+# OTA pull TLS material — real infrastructure stays out of the repo.
+# The pinned self-signed server cert (SAN carries the update host's IP) is a
+# local, untracked secret; gen_pinned_cert.py turns it into a generated header.
+# A clean checkout/CI still builds via the generated fail-closed placeholder.
+# Keep any tracked example deliberately (e.g. *.example.pem) by not matching it
+# here.
+firmware/certs/pinned_server.pem
+firmware/src/certs/pinned_server_pem.h
+*.key
+
 # Editor settings
 .vscode/
 

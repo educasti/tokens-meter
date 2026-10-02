@@ -385,8 +385,14 @@ while WiFi credentials are stored, it fetches a small JSON manifest over HTTPS
 from the owner's always-on VM, compares versions, verifies the downloaded
 binary's SHA-256, flashes the **inactive** slot and reboots. If the new image
 fails to boot, the same three-try rollback as the hybrid path returns the device
-to the last good slot. The VM host is injected at build time as
-`OTA_PULL_MANIFEST_URL` and is never committed.
+to the last good slot.
+
+The update host is a **public IP address**, not a domain, and it is reached over
+HTTPS with the server's **self-signed certificate pinned in firmware** — so there
+is no domain name and no certificate authority in the trust path (Let's Encrypt
+does not issue certificates for a bare IP). The IP and the certificate are
+injected at build time — the manifest base URL as `OTA_PULL_MANIFEST_URL` and the
+pinned certificate from an untracked PEM file — and are never committed.
 
 This is additive: the manual [hybrid path](#firmware-updates-hybrid-ota) stays
 as the fallback, and the two never run at once. See

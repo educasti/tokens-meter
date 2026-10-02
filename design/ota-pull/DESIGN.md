@@ -32,7 +32,8 @@ the device discovers it and updates itself over WiFi:
 3. The host-pushed hybrid path keeps working unchanged as the manual / BLE
    fallback.
 4. The design reuses the infrastructure already decided for the backend: the
-   owner's always-on Oracle Cloud VM, Caddy, Let's Encrypt, static files.
+   owner's always-on Oracle Cloud VM, Caddy, an explicit self-signed TLS
+   certificate, static files.
 
 ### 1.2 Non-goals (this phase)
 
@@ -88,9 +89,9 @@ Owner decisions are encoded verbatim; derived decisions are numbered D5+.
 
 | # | Decision | Why / source |
 |---|---|---|
-| **D1** | Update source is the owner's **always-on Oracle Cloud VM**, served by **Caddy with Let's Encrypt HTTPS** as static files. No dynamic backend for OTA. | Owner; `design/backend-wifi/ROADMAP.md` D3 (line 19), D8 (line 24), §10 (lines 98-110) |
+| **D1** | Update source is the owner's **always-on Oracle Cloud VM**, served by **Caddy over HTTPS with an explicit self-signed certificate** as static files. The host is a **bare public IP**, so there is no ACME/Let's Encrypt. No dynamic backend for OTA. | Owner; `design/backend-wifi/ROADMAP.md` D3 (line 19), D8 (line 24), §10 (lines 98-110) |
 | **D2** | Check on **boot** and every **24 h** while stored WiFi credentials exist. Optionally skip on battery below a threshold (recommended 20 %, open question Q3). | Owner |
-| **D3** | Integrity is **HTTPS against a bundled CA root** plus **SHA-256 of the binary checked against the manifest**. Static signing / Secure Boot / flash encryption are out of scope; residual threat and future path in §13. | Owner |
+| **D3** | Integrity is **HTTPS with the server's self-signed certificate pinned in firmware** (`setCACert`, verification never disabled) plus **SHA-256 of the binary checked against the manifest**. Static signing / Secure Boot / flash encryption are out of scope; residual threat and future path in §13. | Owner |
 | **D4** | **Design only** this phase; implementation in a later phase (`IMPL.md`). | Owner |
 | **D5** | Transport is `WiFiClientSecure` + `HTTPClient`; flashing is raw ESP-IDF `esp_ota_begin/write/end` + `esp_ota_set_boot_partition`; hashing is mbedtls SHA-256. `esp_https_ota` is **rejected**. | §7.5 — it must be possible to compare the manifest's SHA-256 *before* activating; `esp_https_ota` fuses download+verify+activate and does not expose the raw-file digest. |
 | **D6** | Canonical URL layout is **per board**: `/firmware/<board>/manifest.json` and `/firmware/<board>/clawdmeter-<version>.bin`. A flat `/firmware/…` alias is kept for the single-board convenience path. | §6.4 — the device knows `board_caps().id`; a second board must not collide. |
@@ -107,9 +108,10 @@ Three actors:
    (`daemon/ota_flash.py` usage header). A publish step computes SHA-256 + size
    and writes the manifest (`deploy/ota-publish.sh`, `deploy/Caddyfile.example`).
 2. **VM (always-on).** The owner's Oracle Cloud VM already chosen for the usage
-   backend (`design/backend-wifi/ROADMAP.md` D3). Caddy terminates TLS with a
-   Let's Encrypt certificate and serves a static firmware directory. No dynamic
-   OTA service.
+   backend (`design/backend-wifi/ROADMAP.md` D3). Caddy terminates TLS with an
+   **explicit self-signed certificate** (no ACME) and serves a static firmware
+   directory. The VM is addressed by its reserved **public IP**. No dynamic OTA
+   service.
 3. **Device firmware.** A new pull engine (state machine §7) that uses the
    existing NVS credentials (`otah`) and the existing inactive slot / rollback
    machinery (`ota.cpp` §4).
@@ -117,10 +119,10 @@ Three actors:
 ```
   Build / CI (repo)                  Oracle Cloud VM (always-on)            Device (ESP32-S3)
   ─────────────────                  ───────────────────────────            ─────────────────
-  pio run → firmware.bin             Caddy :443 (Let's Encrypt TLS)         ota_pull task
+  pio run → firmware.bin             Caddy :443 (self-signed TLS)           ota_pull task
   deploy/ota-publish.sh              /var/www/firmware/<board>/             ├─ WiFi STA (on demand)
     sha256 + size + version            manifest.json                        ├─ SNTP (clock for TLS)
-    tmp upload + atomic mv             clawdmeter-<version>.bin  ◄─ HTTPS ──┤ TLS vs pinned ISRG roots
+    tmp upload + atomic mv             clawdmeter-<version>.bin  ◄─ HTTPS ──┤ TLS vs pinned cert (IP SAN)
     keep last N versions                                        GET        ├─ SHA-256 vs manifest
                                                                           └─ esp_ota_* → inactive slot
 ```
@@ -292,8 +294,8 @@ comes from the site block (`deploy/Caddyfile.example`).
 Canonical (D6):
 
 ```
-https://<VM_HOST>/firmware/<board>/manifest.json
-https://<VM_HOST>/firmware/<board>/clawdmeter-<version>.bin
+https://<ip>/firmware/<board>/manifest.json
+https://<ip>/firmware/<board>/clawdmeter-<version>.bin
 ```
 
 `<board>` is `board_caps().id` (`waveshare_amoled_216`). The device requests
@@ -303,8 +305,8 @@ a second directory — no firmware change, no manifest multiplexing.
 Single-board convenience alias (matches the owner's example):
 
 ```
-https://<VM_HOST>/firmware/manifest.json
-https://<VM_HOST>/firmware/clawdmeter-<version>.bin
+https://<ip>/firmware/manifest.json
+https://<ip>/firmware/clawdmeter-<version>.bin
 ```
 
 The alias is produced by the publish script (copy or Caddy `handle`/`rewrite`)
@@ -436,29 +438,30 @@ path needs the lower-level split.
 
 ## 8. HTTPS / TLS
 
-### 8.1 Bundled root CA
+### 8.1 Pinned self-signed certificate
 
-- Pin a PEM bundle in firmware containing **ISRG Root X1** (RSA) and
-  **ISRG Root X2** (ECDSA), the two trust anchors. Optionally include the
-  **ISRG Root X1 cross-sign** (X1 signed by IdenTrust DST Root CA X3, now
-  retired) for legacy trust stores; it is not required by a device that carries
-  its own trust anchor, so it may be omitted.
-- Let's Encrypt's current hierarchy routes new issuance through the
-  cross-signed **Root YE** (ECDSA) and **Root YR** (RSA) roots, which chain up
-  to ISRG Root X2 / X1. Pinning X1 + X2 is sufficient because the server
-  presents those cross-signed intermediates; the device builds
-  `leaf ← YR1 ← Root YR ← ISRG Root X1` (RSA) or
-  `leaf ← YE1 ← Root YE ← ISRG Root X2` (ECDSA). Track this in Q5, because
-  Root YE/YR are not yet in general trust stores.
-- Load with `WiFiClientSecure::setCACert(ca_pem)` (a `const char[]` in a new
-  `firmware/src/certs/isrg_roots.pem`). Alternative: `setCACertBundle()` uses
-  IDF's `x509_crt_bundle`; the pinned PEM is preferred because it is explicit,
-  smaller, and immune to bundle churn.
-- **Never** `setInsecure()`, never skip common-name verification. The hostname
-  in the URL must match the certificate.
-- Pinning roots rather than the leaf or an intermediate means Caddy's automatic
-  90-day Let's Encrypt renewal *and* intermediate rotation (YE1/YR1 are valid
-  until 2028-09-02) are transparent to the device.
+- The update host is a **bare public IP** (the owner's reserved Oracle Cloud VM
+  address), not a domain. Let's Encrypt and every other ACME CA refuse to issue
+  certificates for a bare IP, so Caddy is configured with an **explicit
+  self-signed certificate** (`tls /etc/caddy/ota.crt /etc/caddy/ota.key`) and
+  ACME is disabled entirely.
+- The self-signed certificate carries the VM's **IP in its SAN** (`IP:<ip>`).
+  The device requests `https://<ip>/firmware`, so certificate verification has a
+  name to check and does not need a hostname.
+- The device **pins that exact self-signed certificate** by loading its PEM with
+  `WiFiClientSecure::setCACert(cert_pem)` (a `const char[]` injected at build
+  time, §14.2). The trust anchor is therefore the server's own leaf certificate:
+  there is no CA, no intermediate, and no third-party trust surface — only this
+  one public key can complete the handshake.
+- **Never** `setInsecure()`, never skip verification. The certificate must
+  contain the IP in its SAN and validate against the pinned PEM.
+- To keep the owner's IP and certificate out of the repository, the pinned PEM
+  is injected at build time from an untracked file (e.g.
+  `firmware/src/certs/ota_pull_ca.pem`, generated into a build header); it is
+  never committed, exactly like `OTA_PULL_MANIFEST_URL`.
+- Unlike a Let's Encrypt leaf, a self-signed certificate can be long-lived, so
+  ordinary expiry is not a recurring event. Rotation is still an operational
+  risk because the leaf is pinned — see §8.4.
 
 ### 8.2 SNTP is mandatory
 
@@ -494,25 +497,26 @@ The ESP32 has no RTC battery; certificate validity checks and
   session + a 4 KB read buffer.
 - The exact stack/heap budget must be measured on hardware (open question Q6).
 
-### 8.4 Certificate rotation and expiry
+### 8.4 Certificate expiry and rotation
 
-- Let's Encrypt leaf certificates are short-lived; Caddy renews automatically.
-  Pinning the ISRG **roots** avoids a firmware update on every renewal.
-- Root expiry (as of the current Let's Encrypt chain-of-trust page, July 2026):
-  ISRG Root X1 is trusted until 2030-06-04 (its self-signed `notAfter` is
-  2035-06-04); ISRG Root X2 until 2035-09-04. Track these in Q5.
-- The newer Root YE / Root YR generation (generated 2025-09-03) is not yet in
-  general trust stores. When Let's Encrypt retires X1/X2, the device must
-  already carry the new roots, or it must trust the cross-sign path through the
-  pinned X1/X2. If Let's Encrypt ever serves a chain that does not terminate at
-  a pinned root, the new root must be shipped in a firmware release *before* the
-  VM switches chains. Keep both old and new roots in the bundle across the
-  transition.
-- This is a chicken-and-egg concern: the device must be able to fetch the update
-  that adds a new root using the old root. Mitigations: (a) keep the previous
-  root for one release cycle; (b) have Caddy serve the old chain until every
-  device has updated (tracked operationally); (c) treat the root bundle as part
-  of the release runbook, not an afterthought.
+- The self-signed certificate can be given a **long validity** (e.g. 10 years),
+  so expiry is not a routine operational event and Caddy does not renew it.
+- **Rotation is the new operational risk.** Because the device pins the exact
+  leaf certificate, replacing it on the VM breaks every fielded device that
+  still carries the old pin. Rotating therefore requires shipping a firmware
+  release that carries the **new** pin *before* the VM switches certificates.
+- Rotation ordering (the pinned-leaf chicken-and-egg problem):
+  1. issue the new cert/key and add the new PEM to the firmware's pinned
+     material while the VM still serves the old cert;
+  2. publish that firmware and let the fleet update over the old TLS session;
+  3. only then switch Caddy to the new cert/key.
+  Keep **both** the old and new pins in firmware across the transition.
+- If the key is lost or compromised, the window cannot be closed by pinning
+  alone: the holder of the trusted key can impersonate the VM until a rotation
+  firmware ships a new pin. Publish the rotation and switch the VM promptly, and
+  treat a leaked key as an incident (§13.2).
+- Track who owns the certificate, where the key lives, and this rotation runbook
+  before first field deployment (Q5).
 
 ## 9. BLE control additions
 
@@ -687,9 +691,10 @@ transient "OTA…" badge when `ota_is_active()` (`ui.cpp` lines 845-855).
 
 - **Passive network eavesdropper:** sees only encrypted bytes. Firmware is
   public anyway, but the manifest and binary are not modifiable in transit.
-- **Active MITM / DNS spoofing:** cannot present a certificate chaining to the
-  pinned ISRG roots, so cannot substitute a manifest or binary. Certificate
-  hostname verification is enforced.
+- **Active MITM / DNS spoofing:** cannot present the pinned self-signed
+  certificate — the pinned public key is the only trust anchor, with no CA or
+  intermediate to chain through — so cannot substitute a manifest or binary.
+  Certificate verification (including the IP SAN) is enforced.
 - **Corrupted or partial download:** SHA-256 mismatch aborts before activation.
 - **Replay of an old manifest (CDN, VM rollback, captured response):** the
   strictly-greater version rule refuses to downgrade (§5.4).
@@ -700,12 +705,17 @@ transient "OTA…" badge when `ota_is_active()` (`ui.cpp` lines 845-855).
 
 ### 13.2 What it does **not** protect (residual threat)
 
-- **A compromised VM or compromised publish pipeline.** Whoever can write the
-  firmware directory and obtain a valid TLS certificate (i.e. controls the VM or
-  its DNS/ACME account) can serve a malicious manifest and binary whose SHA-256
-  matches. TLS+SHA-256 proves *transport* integrity, not *author* authenticity.
-  This is the central residual risk of D3.
-- **A compromised CA or the owner's TLS private key.** Same outcome.
+- **A compromised VM or compromised publish pipeline.** Whoever controls the VM
+  also holds the **self-signed TLS private key** (it lives on the same VM), so
+  they can present the pinned certificate and serve a malicious manifest and
+  binary whose SHA-256 matches. Pinning a self-signed certificate removes the CA
+  trust surface — there is no CA, ACME account, or intermediate to subvert — but
+  it does not add *author* authenticity: TLS+SHA-256 proves *transport*
+  integrity, not *author* authenticity. This is the central residual risk of D3.
+- **The owner's TLS private key leaking.** The key is the sole trust anchor;
+  anyone who obtains it can impersonate the VM to every fielded device until a
+  rotation firmware ships the new pin (§8.4). This replaces the old
+  "compromised CA" risk, which no longer exists under pinning.
 - **A malicious firmware author.** An insider with publish access.
 - **Offline device.** A device with no internet never updates and keeps running
   its current (possibly vulnerable) version; `mandatory` cannot reach it.
@@ -722,8 +732,8 @@ Concrete next step, layered on top of this design without changing the transport
 1. **Sign the image.** Produce a detached Ed25519 signature over the binary
    (or sign the manifest's `sha256`), and add `"sig"` + `"sig_alg":"ed25519"` +
    `"key_id"` to the manifest.
-2. **Pin the public key** in firmware (separate from the TLS roots, so a
-   compromised VM/TLS cannot forge an image).
+2. **Pin the public key** in firmware (separate from the pinned TLS
+   certificate, so a compromised VM/TLS cannot forge an image).
 3. **Verify before activation** in `VERIFY_SHA256`: the signature is checked
    against the pinned key; only then does `FLASH_INACTIVE_SLOT` run.
 4. **Optionally enable Secure Boot v2 + flash encryption** so the device only
@@ -733,7 +743,7 @@ Concrete next step, layered on top of this design without changing the transport
    production path (today it is the trusted manual path).
 
 Until then, the security of an update is only as good as the security of the
-VM, its ACME account, and the owner's SSH keys.
+VM — which now also holds the pinned TLS private key — and the owner's SSH keys.
 
 ## 14. NVS and build-time symbols
 
@@ -762,10 +772,12 @@ the cadence; recommend it clears only `ssid`/`pass` (unchanged behaviour).
 | `FW_VERSION` | existing (`platformio.ini` line 20) | semver, now generated (§5.2). |
 | `FW_GIT_SHA` | new | 7-hex commit, exposed in `info`. |
 | `FW_BUILD_DATE` | new | ISO-8601 UTC, exposed in `info`. |
-| `OTA_PULL_MANIFEST_URL` | new (optional) | Compile-time base URL `https://<VM_HOST>/firmware`; if unset, use a build default. Keep the host out of source by injecting it per build (local `platformio_override.ini` / CI secret). |
+| `OTA_PULL_MANIFEST_URL` | new (optional) | Compile-time base URL `https://<ip>/firmware` (bare VM IP, no domain); if unset, use a build default. Keep the IP out of source by injecting it per build (local `platformio_override.ini` / CI secret). |
+| `OTA_PULL_CERT_PEM` | new | The pinned self-signed certificate, injected at build time from an untracked PEM file (e.g. `firmware/src/certs/ota_pull_ca.pem` → generated header) and loaded with `WiFiClientSecure::setCACert`. Must contain the VM IP in its SAN. Never committed. |
 
-The VM hostname is **not** hard-coded in the repository; it is injected as a
-build macro (`OTA_PULL_MANIFEST_URL`) so no real hostname or credential is
+The VM IP and the pinned certificate are **not** hard-coded in the repository;
+the IP is injected as the `OTA_PULL_MANIFEST_URL` build macro and the certificate
+as the `OTA_PULL_CERT_PEM` build-time file, so no real IP or certificate is
 committed.
 
 ## 15. Out of scope
@@ -780,11 +792,11 @@ committed.
 
 | # | Question | Recommendation / note |
 |---|---|---|
-| Q1 | Is the VM's public IP reserved and is the OTA hostname decided? | Required before P0; `ROADMAP.md` §12 already asks this. |
+| Q1 | Is the VM's public IP **reserved/static** (it is baked into the self-signed cert SAN and `OTA_PULL_MANIFEST_URL`)? | Required before P0; `ROADMAP.md` §12 already asks this. No domain name is needed. |
 | Q2 | Single-board flat manifest vs per-board directories? | Recommend per-board canonical + flat alias (D6); revisit if a second board ships. |
 | Q3 | Exact battery floors: check at 20 %, apply only when charging or ≥ 50 %? | Recommended values above; measure real draw on hardware. |
 | Q4 | Retry schedule and 24 h cadence: is 24 h right, or 12 h for security fixes? | `mandatory` could shorten the interval; keep 24 h in v1. |
-| Q5 | Who tracks ISRG root expiry / rotation (X1 trusted to 2030-06-04, X2 to 2035-09-04, new Root YE/YR not yet widely trusted), and when is the new root shipped? | Operational checklist; add to the release runbook before the VM chain changes. |
+| Q5 | Who owns **certificate rotation**: the device pins the exact self-signed certificate, so rotating it requires shipping a firmware release carrying the new pin before the VM switches certs? | Operational runbook; define owner, key storage and the dual-pin rotation ordering in §8.4 before first field deployment. |
 | Q6 | Measured peak internal RAM and stack for TLS + flash? | Verify on hardware before trimming buffers (D9). |
 | Q7 | Should `{"cmd":"update","mode":"check"}` be allowed before pairing (non-owner)? | Recommend owner-only for now; it is already owner-gated. |
 | Q8 | Does the publish pipeline run in GitHub Actions or manually on the VM? | P2 `IMPL.md` sketches CI; the owner may prefer a manual signed publish. |

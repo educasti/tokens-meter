@@ -29,7 +29,7 @@ Repo rules that apply to every package (from `CLAUDE.md`):
 | WP | Owner files (create or edit ONLY these) | Depends on |
 |---|---|---|
 | **P0 Version + hosting + manifest** | `firmware/scripts/version.py` (new), `firmware/platformio.ini`, `design/ota-pull/deploy/ota-publish.sh`, `design/ota-pull/deploy/Caddyfile.example`, `design/ota-pull/manifest.example.json` | — |
-| **P1 Firmware pull updater** | `firmware/src/ota_pull.{h,cpp}` (new), `firmware/src/ota_semver.h` (new, pure), `firmware/src/ota_manifest.{h,cpp}` (new, pure parse + constants), `firmware/src/ota_wifi.{h,cpp}` (new, hardware), `firmware/src/certs/isrg_roots.pem` (new), `firmware/src/ota.{h,cpp}`, `firmware/src/ble.cpp`, `firmware/src/main.cpp`, `firmware/src/boards/sim/ota_sim.cpp`, `firmware/src/boards/sim/shim/Preferences.h`, `firmware/platformio.ini` | P0 |
+| **P1 Firmware pull updater** | `firmware/src/ota_pull.{h,cpp}` (new), `firmware/src/ota_semver.h` (new, pure), `firmware/src/ota_manifest.{h,cpp}` (new, pure parse + constants), `firmware/src/ota_wifi.{h,cpp}` (new, hardware), `firmware/src/certs/ (pinned server cert)` (new), `firmware/src/ota.{h,cpp}`, `firmware/src/ble.cpp`, `firmware/src/main.cpp`, `firmware/src/boards/sim/ota_sim.cpp`, `firmware/src/boards/sim/shim/Preferences.h`, `firmware/platformio.ini` | P0 |
 | **P2 CI publish automation** | `.github/workflows/ota-publish.yml` (new), `design/ota-pull/deploy/ota-publish.sh` (reuse), `README.md` (new section only) | P0, P1 |
 | **P3 UI + telemetry** | `firmware/src/ui.{h,cpp}`, `firmware/src/ota_pull.{h,cpp}`, `firmware/src/main.cpp` | P1 |
 | **P4 Optional signing** | `tools/sign_firmware.py` (new), `firmware/src/ota_manifest.{h,cpp}`, `firmware/src/ota_pull.cpp`, `firmware/src/certs/` (public key), `design/ota-pull/deploy/ota-publish.sh` | P1, P2 |
@@ -179,7 +179,7 @@ Keep the buffer at ≥192 bytes (`ota.cpp` line 278); the reply is ~140 bytes.
    `--board`, `--dest user@host:/var/www/firmware`, `--keep N`; computes
    `sha256sum` + `stat`, renders the manifest from `manifest.example.json`,
    `rsync` to a temp dir, `ssh mv` atomically, prunes to N.
-4. `deploy/Caddyfile.example`: site block, TLS via Let's Encrypt, `file_server`,
+4. `deploy/Caddyfile.example`: site block, TLS with the explicit self-signed certificate (no ACME), `file_server`,
    explicit `Content-Type` for `.bin`, `Cache-Control` per DESIGN §6.3, and a
    `handle /firmware/manifest.json` alias to the canonical per-board path.
 
@@ -211,7 +211,7 @@ Keep the buffer at ≥192 bytes (`ota.cpp` line 278); the reply is ~140 bytes.
 ### 4.1 Files
 
 - **Add** `firmware/src/ota_pull.{h,cpp}`, `ota_semver.h`,
-  `ota_manifest.{h,cpp}`, `ota_wifi.{h,cpp}`, `firmware/src/certs/isrg_roots.pem`.
+  `ota_manifest.{h,cpp}`, `ota_wifi.{h,cpp}`, `firmware/src/certs/ (pinned server cert)`.
 - **Change** `firmware/src/ota.{h,cpp}` (route `update`, add `sha`/`build`, route
   WiFi through `ota_wifi`), `firmware/src/ble.cpp` (no change expected; CTRL
   already routes to `ota_handle_ctrl`), `firmware/src/main.cpp`
@@ -319,7 +319,7 @@ Keep the buffer at ≥192 bytes (`ota.cpp` line 278); the reply is ~140 bytes.
   | crash loop | force a bad image that boots then panics | rollback to old slot after 3 tries |
   | battery low | battery < 20 %, no charging | check skipped/deferred |
   | hybrid busy | hybrid `ota on` during pull | `busy`, no radio contention |
-  | cert failure | serve with a self-signed cert | `tls_fail`, no download |
+  | cert failure | serve with a cert that does not match the pin | `tls_fail`, no download |
   | SNTP failure | block NTP | `timeout` before TLS, no download |
 
 ## 5. P2 — CI publish automation
@@ -438,7 +438,7 @@ Keep the buffer at ≥192 bytes (`ota.cpp` line 278); the reply is ~140 bytes.
 3. Host C++ tests: `(cd firmware/test/test_ota_pull && g++ -std=c++17 -I ../../src <sources> -o /tmp/otapull && /tmp/otapull)`.
 4. `caddy validate --config design/ota-pull/deploy/Caddyfile.example`.
 5. Hardware smoke matrix (P1 §4.4) signed off by the operator.
-6. No live config references a real VM hostname or credential: the host is
+6. No live config references a real VM IP or credential: the host is
    injected via `OTA_PULL_MANIFEST_URL` (DESIGN §14.2).
 7. `README.md` gains a pull-OTA subsection that links `design/ota-pull/DESIGN.md`
    and states the same-LAN requirement is lifted for pull.
