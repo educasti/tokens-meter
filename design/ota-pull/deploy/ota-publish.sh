@@ -17,13 +17,16 @@
 #       [--board waveshare_amoled_216] \
 #       [--dest user@vm.example.com:/srv/firmware] \
 #       [--keep 5] [--min-from 0.1.0] [--mandatory] [--notes "..."] \
+#       [--sign-key /path/to/p256.pem] [--key-id ID] \
 #       [--allow-dirty] [--dry-run]
 #
 # Environment overrides:
 #   OTA_DEST   default --dest (keep credentials out of the command line)
 #   OTA_KEEP   default --keep
 #
-# Requires: sha256sum (or shasum), stat, python3, ssh, rsync.
+# Requires: sha256sum (or shasum), stat, python3, ssh, rsync. --sign-key also
+# requires openssl; the private key stays outside the repo (design/ota-pull/
+# SIGNING.md) and only its public counterpart is pinned in firmware.
 #
 # Output contract:
 #   --dry-run writes the rendered manifest JSON to stdout and nothing else on
@@ -46,6 +49,22 @@ set -euo pipefail
 die() { printf 'ota-publish: error: %s\n' "$*" >&2; exit 1; }
 info() { printf 'ota-publish: %s\n' "$*" >&2; }
 
+# tools/sign_firmware.py, resolved relative to this script so the caller can be
+# in any directory. SIG_ALG is the manifest's sig_alg (design/ota-pull/SIGNING.md).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SIGN_FIRMWARE="$SCRIPT_DIR/../../../tools/sign_firmware.py"
+SIG_ALG="ecdsa-p256-sha256"
+
+# sha256sum with a shasum fallback (DESIGN section 6.2); also used for the
+# public-key fingerprint that becomes the default key_id.
+sha256_file() {
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum -- "$1" | awk '{print $1}'
+	else
+		shasum -a 256 -- "$1" | awk '{print $1}'
+	fi
+}
+
 usage() {
 	cat <<'EOF'
 ota-publish.sh — stage and atomically publish one firmware binary + manifest
@@ -56,7 +75,8 @@ Usage:
       --bin PATH --version X.Y.Z \
       [--board NAME] [--dest user@host:/path] \
       [--keep N] [--min-from X.Y.Z] [--mandatory] \
-      [--notes TEXT] [--allow-dirty] [--dry-run] [-h|--help]
+      [--notes TEXT] [--sign-key PATH] [--key-id ID] \
+      [--allow-dirty] [--dry-run] [-h|--help]
 
 Options:
   --bin PATH        built .bin to publish (required)
@@ -68,6 +88,11 @@ Options:
   --min-from X.Y.Z  manifest min_from (optional; omitted when unset)
   --mandatory       mark the manifest mandatory
   --notes TEXT      manifest notes (optional; omitted when empty)
+  --sign-key PATH   sign the binary with this ECDSA P-256 private key and add
+                    sig / sig_alg / key_id to the manifest (key stays out of
+                    the repo; see design/ota-pull/SIGNING.md)
+  --key-id ID       key_id to record with the signature (default: first 16 hex
+                    of the SHA-256 of the public key); requires --sign-key
   --allow-dirty     publish even when the git tree is dirty
   --dry-run         render the manifest to stdout without touching the remote
                     (logs go to stderr; stdout is JSON only)
@@ -88,6 +113,9 @@ KEEP="${OTA_KEEP:-5}"
 MIN_FROM=""
 MANDATORY="false"
 NOTES=""
+SIGN_KEY=""
+KEY_ID=""
+SIGN_B64=""
 ALLOW_DIRTY=0
 DRY_RUN=0
 
@@ -102,6 +130,8 @@ while [ $# -gt 0 ]; do
 		--min-from)    [ $# -ge 2 ] || die "$1 requires a value"; MIN_FROM="$2"; shift 2 ;;
 		--mandatory)   MANDATORY="true"; shift ;;
 		--notes)       [ $# -ge 2 ] || die "$1 requires a value"; NOTES="$2"; shift 2 ;;
+		--sign-key)    [ $# -ge 2 ] || die "$1 requires a value"; SIGN_KEY="$2"; shift 2 ;;
+		--key-id)      [ $# -ge 2 ] || die "$1 requires a value"; KEY_ID="$2"; shift 2 ;;
 		--allow-dirty) ALLOW_DIRTY=1; shift ;;
 		--dry-run)     DRY_RUN=1; shift ;;
 		-h|--help)     usage; exit 0 ;;
@@ -127,6 +157,14 @@ if [ -n "$MIN_FROM" ]; then
 fi
 printf '%s' "$DEST" | grep -Eq '^[^:]+:[^:]+$' \
 	|| die "--dest must look like user@host:/path (got: $DEST)"
+if [ -n "$KEY_ID" ] && [ -z "$SIGN_KEY" ]; then
+	die "--key-id requires --sign-key"
+fi
+if [ -n "$SIGN_KEY" ]; then
+	[ -f "$SIGN_KEY" ] || die "signing key not found: $SIGN_KEY"
+	command -v openssl >/dev/null 2>&1 || die "--sign-key requires openssl on PATH"
+	[ -f "$SIGN_FIRMWARE" ] || die "signer not found: $SIGN_FIRMWARE"
+fi
 
 # --- refuse to publish a dirty tree unless told otherwise --------------------
 if [ "$ALLOW_DIRTY" -ne 1 ] && command -v git >/dev/null 2>&1 \
@@ -137,11 +175,7 @@ if [ "$ALLOW_DIRTY" -ne 1 ] && command -v git >/dev/null 2>&1 \
 fi
 
 # --- hash + size (DESIGN section 6.2) ----------------------------------------
-if command -v sha256sum >/dev/null 2>&1; then
-	SHA256="$(sha256sum -- "$BIN" | awk '{print $1}')"
-else
-	SHA256="$(shasum -a 256 -- "$BIN" | awk '{print $1}')"
-fi
+SHA256="$(sha256_file "$BIN")"
 SIZE="$(stat -c '%s' "$BIN" 2>/dev/null || stat -f '%z' "$BIN")"
 [ "${#SHA256}" -eq 64 ] || die "unexpected sha256 length: ${#SHA256}"
 printf '%s' "$SIZE" | grep -Eq '^[0-9]+$' || die "unexpected size: $SIZE"
@@ -154,13 +188,34 @@ STAGE="$(mktemp -d "${TMPDIR:-/tmp}/ota-publish.XXXXXX")"
 trap 'rm -rf "$STAGE"' EXIT
 cp "$BIN" "$STAGE/$BINNAME"
 
+# --- sign after hashing (design/ota-pull/SIGNING.md) -------------------------
+# Detached ECDSA P-256/SHA-256 over the exact .bin bytes. The private key is
+# supplied by path (CI secret / VM keystore) and never enters the repo; the
+# captured base64 DER becomes the manifest's `sig`. Without --sign-key this is
+# skipped and the manifest is byte-for-byte what it was before.
+if [ -n "$SIGN_KEY" ]; then
+	SIGN_B64="$(python3 "$SIGN_FIRMWARE" --bin "$BIN" --key "$SIGN_KEY")" \
+		|| die "signing failed"
+	[ -n "$SIGN_B64" ] || die "signing produced an empty signature"
+	if [ -z "$KEY_ID" ]; then
+		openssl pkey -in "$SIGN_KEY" -pubout -outform DER \
+			-out "$STAGE/ota_pubkey.der" 2>/dev/null \
+			|| die "could not export the public key for key_id"
+		KEY_ID="$(sha256_file "$STAGE/ota_pubkey.der" | cut -c1-16)"
+	fi
+	info "signed $BINNAME ($SIG_ALG, key_id $KEY_ID)"
+fi
+
 # Render the manifest with python3 so JSON escaping of --notes is correct.
-# The field set is exactly design/ota-pull/DESIGN.md section 6.1/6.2.
+# The field set is exactly design/ota-pull/DESIGN.md section 6.1/6.2; the
+# signature fields (6.1 + SIGNING.md) are added only when --sign-key is set.
 python3 - "$STAGE/manifest.json" \
 	"$BOARD" "$VERSION" "$BINNAME" "$SHA256" "$SIZE" \
-	"$MIN_FROM" "$MANDATORY" "$RELEASED_AT" "$NOTES" <<'PY'
+	"$MIN_FROM" "$MANDATORY" "$RELEASED_AT" "$NOTES" \
+	"$SIGN_B64" "$SIG_ALG" "$KEY_ID" <<'PY'
 import json, sys
-out, board, version, url, sha, size, min_from, mandatory, released, notes = sys.argv[1:11]
+(out, board, version, url, sha, size, min_from, mandatory, released, notes,
+ sig, sig_alg, key_id) = sys.argv[1:14]
 manifest = {
     "schema_version": 1,
     "board": board,
@@ -175,6 +230,10 @@ if min_from:
     manifest["min_from"] = min_from
 if notes:
     manifest["notes"] = notes
+if sig:
+    manifest["sig"] = sig
+    manifest["sig_alg"] = sig_alg
+    manifest["key_id"] = key_id
 with open(out, "w", encoding="utf-8") as fh:
     json.dump(manifest, fh, indent=2, sort_keys=True)
     fh.write("\n")
@@ -237,5 +296,5 @@ REMOTE
 )"
 printf '%s\n' "$REMOTE_SCRIPT" | ssh "$HOST" bash -s
 
-info "published https://<VM_HOST>/firmware/$BOARD/manifest.json (version $VERSION)"
-info "flat alias https://<VM_HOST>/firmware/manifest.json -> $BOARD/manifest.json"
+info "published https://<IP>/firmware/$BOARD/manifest.json (version $VERSION)"
+info "flat alias https://<IP>/firmware/manifest.json -> $BOARD/manifest.json"
