@@ -31,7 +31,7 @@ Launch from the `firmware/` directory — the default scenario path
 | `b` (hold 300 ms) | PRIMARY — HID Space held down (voice-mode PTT) |
 | `n` (tap) | SECONDARY — next screen |
 | `n` (hold 300 ms) | SECONDARY — HID Shift+Tab held down (mode toggle) |
-| `p` | PWR button (short: next animation/scene or brightness; hold ~3s + release = pair gesture) |
+| `p` | PWR button (short: next animation/scene, brightness, or portfolio private mode; hold ~3s + release = pair gesture) |
 | `c` | toggle charging |
 | `-` / `=` | battery down / up 5% |
 | `s` | save screenshot BMP to the current directory |
@@ -74,12 +74,26 @@ consumption-only (no OpenCode Go key).
 SIM_SCENARIO=sim/scenario-opencode.jsonl .pio/build/sim/program
 ```
 
+### Portfolio scenario
+
+`firmware/sim/scenario-portfolio.jsonl` starts with one Claude and one OpenCode
+beat (so `SIM_START_SCREEN=portfolio` has every payload kind to wait for) and
+then walks the 17 states of the portfolio spec as `"k":"pf"` beats: open market,
+close, a holiday close, a stale quote, all-up and all-down days, a single
+gainer, no changes, a zero day change, a long symbol, one and two unpriced
+tickers, a config warning, and the three empty states (`nopos`, `nores`,
+`nonet`). The BLE-down state is reached at run time with `d`.
+
+```bash
+SIM_SCENARIO=sim/scenario-portfolio.jsonl SIM_START_SCREEN=portfolio .pio/build/sim/program
+```
+
 ## Environment variables
 
 | Variable | Effect |
 |---|---|
 | `SIM_SCENARIO` | scenario file to play (built-in state list if missing) |
-| `SIM_START_SCREEN` | `splash` \| `usage` \| `oc_splash` \| `oc_usage` — jump straight to a screen |
+| `SIM_START_SCREEN` | `splash` \| `usage` \| `oc_splash` \| `oc_usage` \| `portfolio` — jump straight to a screen |
 | `SIM_BUTTONS` | `1` emulates a board with no SECONDARY button |
 | `SIM_AUTOSHOT_MS` | headless: screenshot after N ms, then exit |
 | `SIM_AUTOSHOT_PATH` | headless: screenshot filename (default `sim-autoshot.bmp`) |
@@ -87,8 +101,8 @@ SIM_SCENARIO=sim/scenario-opencode.jsonl .pio/build/sim/program
 `SIM_START_SCREEN` exists because booting always lands on the Clawd splash and
 the page dots only show for 1.5 s, so an autoshot timed off the boot would never
 capture the screen under test. The jump is applied once, as soon as the scenario
-has delivered both payload kinds (an OpenCode screen with no payload is blank) or
-after 1.5 s, so it works with a Claude-only scenario too. `SIM_BUTTONS=1` is
+has delivered every payload kind (an OpenCode or portfolio screen with no payload
+is blank) or after 1.5 s, so it works with a Claude-only scenario too. `SIM_BUTTONS=1` is
 read at run time rather than baked in, so one binary can check both a
 two-button and a one-button board.
 

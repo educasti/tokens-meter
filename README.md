@@ -21,7 +21,7 @@ Shift+Tab over BLE HID for Claude Code's voice mode and mode-toggle shortcuts.
 
 ## Screens
 
-The device boots into the splash. Tap the screen anywhere to switch to the Usage view; tap again to flip back to the splash. With [OpenCode screens](#opencode-screens) enabled the cycle grows to four screens.
+The device boots into the splash. Tap the screen anywhere to switch to the Usage view; tap again to flip back to the splash. With the [OpenCode screens](#opencode-screens) and the [BVC portfolio screen](#bvc-portfolio-screen) enabled the cycle grows to five screens.
 
 |              Splash               |              Usage              |
 | :-------------------------------: | :-----------------------------: |
@@ -40,16 +40,19 @@ approaches and freezes when you reach one. The second is a usage screen with the
 5-hour, weekly and monthly bars, 7-day tokens, your top model and a live session
 line. The type is IBM Plex Mono, the alternative opencode.ai itself names.
 
-Navigation is the same four-screen cycle — Claude splash → Claude usage →
-OpenCode splash → OpenCode usage — with the side buttons: **tap** to move
-between screens, **hold** to send Space / Shift+Tab as before (see
+Navigation is the same cycle — Claude splash → Claude usage → OpenCode splash →
+OpenCode usage → portfolio — with the side buttons: **tap** to move between
+screens, **hold** to send Space / Shift+Tab as before (see
 [Physical buttons](#physical-buttons)). A row of dots at the bottom shows where
-you are for a second and a half after each change. Until the first OpenCode
-payload arrives, the cycle stays the two Claude screens and nothing else changes.
+you are for a second and a half after each change, growing from 2 to 4 to 5 as
+the payload kinds arrive. Until the first OpenCode payload arrives, the cycle
+stays the two Claude screens and nothing else changes; the [portfolio
+screen](#bvc-portfolio-screen) joins the same way.
 
 ### Enabling them
 
-Only the **macOS daemon** collects OpenCode data so far, and it is off by
+Only the **macOS daemon** collects OpenCode data so far — the Linux bash daemon
+and the Windows Python daemon do not send this payload yet — and it is off by
 default. Turn it on in the daemon config file:
 
 ```bash
@@ -78,6 +81,63 @@ countdowns. What reaches the screen depends on that key:
   place of percentages, with no bars. No network call is made at all.
 
 Neither file is written to, and the key is never logged.
+
+## BVC portfolio screen
+
+A fifth screen tracks your Bogotá stock exchange (BVC) portfolio. It shows the
+total market value in COP, the day's change in pesos and percent, and the four
+biggest movers — up to two gainers then two losers, never a filler row — each
+with its per-share price, percent and contribution. The header warns when a
+position has no price or the positions file has a problem, and the status line
+reports the session (`En vivo` / `Cierre`) and the last price's Colombia-time
+clock. The type is Styrene B, the same family the Claude screens use.
+
+### Enabling it
+
+As with OpenCode, only the **macOS daemon** collects portfolio data so far: the
+Linux bash daemon and the Windows Python daemon do not send this payload yet.
+It is also off by default. Turn it on in the daemon config file:
+
+```bash
+echo "portfolio = on" >> ~/.config/claude-usage-monitor/config
+```
+
+Positions live in their own file, `~/.config/claude-usage-monitor/portfolio`,
+one per line as `SYMBOL.CL cantidad`, and are re-read on **every poll** so an
+edit lands in ~60 s without a restart:
+
+```
+ALPHA.CL 150
+BETAGROUP.CL 300
+# blank lines and # comments are fine
+```
+
+Symbols go to Yahoo **verbatim** and are never suffixed for you. The collector
+prices the whole file with one request per poll to Yahoo's `spark` endpoint — no
+API key, no account, no cost. Two rules come straight from the data:
+
+- A mistyped ticker does not fail loudly: `EPM` without its suffix answers as a
+  US oil company at USD 3.50. Every quote must report
+  `exchangeName == "BVC"`; a quote from any other exchange is dropped with a log
+  line and shown as "sin precio" instead of showing you the wrong company.
+- The day-change numbers come from `regularMarketChangePercent` /
+  `regularMarketChange`, never from `chartPreviousClose`, which Yahoo reports
+  unadjusted and which disagrees with the broker.
+
+Quantities must be positive; a duplicated symbol keeps its first line. Anything
+the file gets wrong is written to the log. The collector runs on its own 60 s
+beat, so the screen keeps working even when Claude has no token.
+
+### Private mode
+
+Hold **PWR** on the portfolio screen to toggle private mode (`pf_privacy`). It
+hides what only you should see — the market value becomes the day's percent, and
+the share count and per-row contribution go away — while the public per-share
+prices stay. The flag is persisted in NVS, so it survives a screen change, the
+idle fade and a reboot, and a transient `Modo privado` / `Modo normal` line
+confirms the change. The payload is identical either way: hiding a number is a
+firmware concern, never a transport one. On every other screen PWR keeps its
+usual job — next animation/scene on a splash, brightness on a usage screen.
 
 ## Hardware
 
@@ -247,12 +307,12 @@ reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v Clawdmeter /f
 
 ## Physical buttons
 
-The board has three side buttons. The two side buttons are **tap or hold**: a short tap walks the screen cycle, a hold sends the HID key. The middle (PWR) button steps the animation or scene on a splash, cycles brightness on the usage screens, and, held for 3 seconds, triggers pairing mode.
+The board has three side buttons. The two side buttons are **tap or hold**: a short tap walks the screen cycle, a hold sends the HID key. The middle (PWR) button steps the animation or scene on a splash, cycles brightness on the usage screens, toggles the portfolio's private mode on the portfolio screen, and, held for 3 seconds, triggers pairing mode.
 
 | Button           | GPIO         | Tap                                                       | Hold                                                 |
 | ---------------- | ------------ | --------------------------------------------------------- | ---------------------------------------------------- |
 | **Left**         | GPIO 0       | Previous screen                                          | Space (Claude Code voice-mode push-to-talk)          |
-| **Middle** (PWR) | AXP2101 PKEY | On a splash: next animation or scene. On usage: brightness | 3 s + release: pairing mode                          |
+| **Middle** (PWR) | AXP2101 PKEY | On a splash: next animation or scene. On a usage screen: brightness. On the portfolio: private mode | 3 s + release: pairing mode                          |
 | **Right**        | GPIO 18      | Next screen                                              | Shift+Tab (Claude Code mode toggle)                  |
 
 Space and Shift+Tab go out as standard BLE HID keyboard reports, so they trigger in whatever window has focus on the paired host — not just Claude Code. Tapping the panel always moves to the next screen. Telling a tap from a hold means the HID keys now reach the host about 300 ms after you press rather than straight away.

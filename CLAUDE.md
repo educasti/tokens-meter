@@ -8,7 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ESP32-S3 firmware for a desk-side Claude Code usage monitor. The supported
 hardware is the Waveshare ESP32-S3-Touch-AMOLED-2.16 (480×480 AMOLED, 16 MB
-flash, dual OTA-ready app slots — no OTA feature implemented yet).
+flash, dual OTA app slots; hybrid OTA IS implemented — see
+`design/ota-hybrid/DESIGN.md`).
 
 Two build targets today:
 
@@ -47,6 +48,9 @@ firmware/src/
   ui_opencode.{h,cpp}       — OpenCode usage screen: own container, own palette, IBM Plex Mono
   oc_splash.{h,cpp}         — OpenCode splash scenes, composited into the shared splash canvas
   oc_data.{h,cpp}           — OcData struct + oc_is_payload()/oc_parse() for the "k":"oc" payload
+  ui_portfolio.{h,cpp}      — BVC portfolio usage screen: own container, own palette, Styrene
+  pf_data.{h,cpp}           — PfData struct + pf_is_payload()/pf_parse() for the "k":"pf" payload
+  pf_privacy.{h,cpp}        — portfolio private mode: "pf_priv" NVS flag + 1.5 s notice
   splash.{h,cpp}            — Clawd pixel-art engine on a 60×60 stage (cell = min(W,H)/60) + the shared-canvas API (splash_set_external / splash_render_external)
   ble.{h,cpp}               — NimBLE peripheral: custom data service + HID keyboard
   ota.{h,cpp}               — hybrid OTA: WiFi + ArduinoOTA, CTRL-char commands, NVS creds, app-level rollback
@@ -65,19 +69,21 @@ PlatformIO's `build_src_filter` includes shared code + one board's folder per en
 
 ## Screens and navigation
 
-One cycle of four screens (`screen_t` in `ui.h`): `SCREEN_SPLASH` (Clawd) →
-`SCREEN_USAGE` (Claude) → `SCREEN_OC_SPLASH` → `SCREEN_OC_USAGE` → back to the
-start. The two OpenCode screens only join the cycle once a valid OpenCode
-payload has landed (`oc_has_data()`), so a device that never receives one
-behaves exactly as before. There is **no** Bluetooth/controller screen. A row of
-6 px page dots — 2, or 4 once the OpenCode screens are in — is shown at the
-bottom for 1.5 s after every change.
+One cycle of five screens (`screen_t` in `ui.h`): `SCREEN_SPLASH` (Clawd) →
+`SCREEN_USAGE` (Claude) → `SCREEN_OC_SPLASH` → `SCREEN_OC_USAGE` →
+`SCREEN_PORTFOLIO` → back to the start. The two OpenCode screens only join the
+cycle once a valid OpenCode payload has landed (`oc_has_data()`), and the
+portfolio once a `"k":"pf"` payload has (`pf_has_data()`), so a device that
+never receives either behaves exactly as before. There is **no**
+Bluetooth/controller screen. A row of 6 px page dots — 2, 4 once the OpenCode
+screens are in, 5 once the portfolio is too — is shown at the bottom for 1.5 s
+after every change.
 
 | Input | Tap (< 300 ms) | Hold (≥ 300 ms) |
 |---|---|---|
 | PRIMARY / BOOT (left) | previous screen | HID Space held until release |
 | SECONDARY (right) | next screen | HID Shift+Tab held until release |
-| PWR (middle) | Clawd splash: next animation · OpenCode splash: next scene · usage screens: brightness | 3 s: pairing (unchanged) |
+| PWR (middle) | Clawd splash: next animation · OpenCode splash: next scene · portfolio: private-mode toggle · usage screens: brightness | 3 s: pairing (unchanged) |
 | Touch | next screen | — |
 
 `BUTTON_HOLD_MS` (300, in `main.cpp`) is the only threshold: the HID key goes
@@ -142,8 +148,8 @@ c/-/= = charging/battery · s = screenshot BMP · esc = quit.
 
 | Env var | Effect |
 |---|---|
-| `SIM_SCENARIO` | scenario file; `sim/scenario-opencode.jsonl` interleaves Claude beats with `{"k":"oc"}` ones (real / one session / two sessions / near the limit / limited / window reset / estimated / consumption-only) |
-| `SIM_START_SCREEN` | `splash` \| `usage` \| `oc_splash` \| `oc_usage` — jumps there once the scenario has delivered both payload kinds (or after 1.5 s), so a single autoshot lands on the screen under test |
+| `SIM_SCENARIO` | scenario file; `sim/scenario-opencode.jsonl` interleaves Claude beats with `{"k":"oc"}` ones (real / one session / two sessions / near the limit / limited / window reset / estimated / consumption-only); `sim/scenario-portfolio.jsonl` walks the 17 BVC portfolio states after a Claude and an OpenCode beat |
+| `SIM_START_SCREEN` | `splash` \| `usage` \| `oc_splash` \| `oc_usage` \| `portfolio` — jumps there once the scenario has delivered every payload kind (or after 1.5 s), so a single autoshot lands on the screen under test |
 | `SIM_BUTTONS` | `1` makes the sim behave like a one-button board, which flips which way a PRIMARY tap walks the cycle |
 
 ```bash
@@ -267,16 +273,18 @@ The notes below describe the Linux bash daemon. The unit file's `ExecStart` is t
 - `...0005` CTRL — OTA/config control (writes). Bonded + encrypted only; handled by `ota.cpp`, never the usage path.
 - `...0004` REQ — firmware fires `0x01` notify in `onSubscribe` if `has_received_data` is false. Daemon subscribes via `setsid bash -c "stdbuf -oL dbus-monitor … | awk …"`; awk drops a flag file the inner loop picks up. See the `feedback_dbus_monitor_pipe` memory for the three subtle gotchas (pipe buffering, busctl-exits race, `wait` blocking on pipeline jobs).
 
-**Payload routing (`main.cpp`):** both payload kinds share the RX characteristic and
-are told apart by the `"k":"oc"` tag. `oc_is_payload()` is a substring test run
-**before** `parse_json`, so an OpenCode beat never touches the Claude path — no
-`usage_rate_sample`, no chime, no `ui_update` — and a Claude beat never touches
-the OpenCode one. The ack/nack comes from whichever parser ran. Spec and field
-list: `design/opencode-screen/SPEC.md` §8.
+**Payload routing (`main.cpp`):** all three payload kinds share the RX
+characteristic and are told apart by their tag — `"k":"oc"` for OpenCode,
+`"k":"pf"` for the portfolio, no tag for Claude. `oc_is_payload()` /
+`pf_is_payload()` are substring tests run **before** `parse_json`, so each beat
+touches only its own path: an OpenCode or portfolio beat never samples the usage
+rate, chimes or calls `ui_update`, and a Claude beat never touches the other two.
+The ack/nack comes from whichever parser ran. Spec and field list:
+`design/opencode-screen/SPEC.md` §8 (OpenCode) and the portfolio spec §6.
 
-**RX is a 2-slot FIFO (`ble.cpp`),** because the daemon writes the Claude payload
-and the OpenCode one back to back and a single buffer silently dropped the
-unread first write. `onWrite()` pushes into the next free slot (dropping the
+**RX is a 2-slot FIFO (`ble.cpp`),** because the daemon writes the Claude,
+portfolio and OpenCode payloads back to back and a single buffer silently
+dropped the unread first write. `onWrite()` pushes into the next free slot (dropping the
 oldest if both are full) and `ble_get_data()` pops in order into a private
 `rx_out` buffer — returning a slot pointer would be a use-after-overwrite, since
 the next write targets the slot just freed while the loop is still parsing it.
@@ -293,8 +301,20 @@ in `~/.config/claude-usage-monitor/config` (see `daemon/config.example`; optiona
 `~/.local/share/opencode/opencode.db` read-only and WAL-aware for the activity
 numbers and the estimated fallback, and the OpenCode Go key from `auth.json` for
 the official usage endpoint. Tests live in `daemon/tests/test_opencode_collector.py`
-(temp SQLite + an injected fake fetch). Verified on a real AMOLED-2.16 (see `design/opencode-screen/research/hw1-test-216.md`); the daemon requires Python ≥ 3.10. The Linux and Windows daemons don't send
-the OpenCode payload yet.
+(temp SQLite + an injected fake fetch). Verified on a real AMOLED-2.16 (see `design/opencode-screen/research/hw1-test-216.md`); the daemon requires Python ≥ 3.10.
+
+**Portfolio collector (macOS daemon only).** `daemon/portfolio_collector.py`
+builds the `{"k":"pf", …}` payload on its own 60 s beat and sends it between the
+Claude and OpenCode ones (`PORTFOLIO_WRITE_DELAY`). Off unless `portfolio = on`
+in `~/.config/claude-usage-monitor/config` (optional `portfolio_path` override,
+see `daemon/config.example`). It reads `~/.config/claude-usage-monitor/portfolio`
+on every poll — one `SYMBOL.CL cantidad` per line, `#` comments, quantities
+positive, a duplicate keeping its first line — and prices the whole file in one
+no-key request to Yahoo's `spark` endpoint. Two data-driven rules: it never reads
+`chartPreviousClose`, and it drops any quote whose `exchangeName` is not `BVC`
+(a mistyped ticker answers with another company instead of an error). Tests live
+in `daemon/tests/test_portfolio_collector.py`. **The Linux bash daemon and the
+Windows Python daemon do not send the OpenCode or portfolio payloads yet.**
 
 **Hybrid OTA helper (macOS / Linux / Windows).** `daemon/ota_flash.py` is the host
 half of `design/ota-hybrid/DESIGN.md`: it stops the daemon (freeing the BLE link),
