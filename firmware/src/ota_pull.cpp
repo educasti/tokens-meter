@@ -17,9 +17,10 @@
 //
 // Anti-brick invariants (§7.2, §11):
 //   * never write the running slot — the target is asserted != running;
-//   * abort before activation on any hash / image failure;
+//   * abort before activation on any hash / image / signature failure;
 //   * activate (esp_ota_set_boot_partition) is the single commit step and runs
-//     only after the manifest SHA-256 and esp_ota_end() both pass.
+//     only after the manifest SHA-256, the detached signature (when a signing
+//     key is pinned; SIGNING.md §7) and esp_ota_end() all pass.
 
 #include "ota_pull.h"
 
@@ -47,10 +48,12 @@
 #include "ble.h"
 #include "ota_manifest.h"
 #include "ota_semver.h"
+#include "ota_sig.h"
 #include "ota_wifi.h"
 #include "hal/board_caps.h"
 #include "hal/power_hal.h"
 #include "certs/pinned_server_pem.h"
+#include "certs/signing_pubkey_pem.h"
 
 // ---- TLS trust model (DESIGN §8) -------------------------------------------
 // The update origin is a bare public IP, so there is no DNS name to chain to
@@ -342,6 +345,7 @@ static const char* pull_manifest_err_name(int e) {
     case OTA_MF_BAD_URL:     return "bad_url";
     case OTA_MF_BAD_SHA:     return "bad_schema";
     case OTA_MF_BAD_SIZE:    return "bad_schema";
+    case OTA_MF_BAD_SIG:     return "bad_signature";
     case OTA_MF_BAD_JSON:    return "bad_schema";
     default:                 return "bad_schema";
     }
@@ -648,9 +652,57 @@ static bool pull_download(dl_ctx* c, const OtaManifest& mf, bool bypass) {
     return false;
 }
 
-// Finish the digest, compare against the manifest, then validate the image.
-// The hash is checked before esp_ota_end() so a mismatch can esp_ota_abort()
-// the handle (DESIGN §7.1 / §11) — nothing is activated either way.
+// Detached-signature check (design/ota-pull/SIGNING.md section 7). Runs over
+// the SAME 32-byte SHA-256 digest the hash check just validated: the signature
+// authenticates the digest, the digest authenticates the bytes.
+//
+// Policy (SIGNING.md section 4 rule 2):
+//   * no key pinned (SIGNING_PUBKEY_PEM empty): pre-P4 hash-only build; the
+//     check is skipped and logged.
+//   * key pinned, manifest unsigned: rejected as `bad_signature` -- this is the
+//     post-P4 behavior once a build turns verification on.
+//   * key pinned, manifest signed: `ota_sig_verify_p256()` must accept it.
+// On any rejection the caller aborts the OTA handle and never activates.
+static bool pull_verify_signature(const OtaManifest& mf, const uint8_t* digest,
+                                  const char** err) {
+    const bool have_key = (SIGNING_PUBKEY_PEM[0] != '\0');
+
+    // Pure policy gate shared with the host test: no key -> always ok. Uses
+    // the parsed manifest only, so a "pinned key but no sig" manifest is
+    // rejected here even before any crypto runs.
+    if (!ota_manifest_sig_ok(&mf, have_key)) {
+        Serial.println("OTA: pull manifest unsigned but a signing key is pinned, rejecting");
+        *err = "bad_signature";
+        return false;
+    }
+    if (!have_key) {
+        Serial.println("OTA: pull signing not configured, hash-only verification");
+        return true;
+    }
+
+    // sig_alg and base64 syntax were enforced by the parser (OTA_MF_BAD_SIG);
+    // decode to DER here. A 128-byte buffer covers the largest P-256 DER sig.
+    uint8_t sig_der[OTA_SIG_B64_MAX];
+    int sig_len = ota_base64_decode(mf.sig, sig_der, sizeof(sig_der));
+    if (sig_len <= 0) {
+        Serial.println("OTA: pull manifest sig base64 decode failed");
+        *err = "bad_signature";
+        return false;
+    }
+
+    if (!ota_sig_verify_p256(digest, 32, sig_der, (size_t)sig_len, SIGNING_PUBKEY_PEM)) {
+        Serial.printf("OTA: pull signature verify failed (key_id=%s)\n", mf.key_id);
+        *err = "bad_signature";
+        return false;
+    }
+    Serial.printf("OTA: pull signature OK (alg=%s key_id=%s)\n", mf.sig_alg, mf.key_id);
+    return true;
+}
+
+// Finish the digest, compare against the manifest, verify the detached
+// signature (when pinned), then validate the image. The hash and signature are
+// checked before esp_ota_end() so a failure can esp_ota_abort() the handle
+// (DESIGN §7.1 / §11, SIGNING.md §7) — nothing is activated either way.
 static bool pull_verify(dl_ctx* c, const OtaManifest& mf, const char** err) {
     uint8_t digest[32];
     mbedtls_sha256_finish(&c->sha, digest);
@@ -670,6 +722,15 @@ static bool pull_verify(dl_ctx* c, const OtaManifest& mf, const char** err) {
         *err = "hash_mismatch";
         return false;
     }
+
+    // Signature check: after SHA-256, before esp_ota_end()/activation. A
+    // failure is terminal (`bad_signature`), same class as `hash_mismatch`.
+    if (!pull_verify_signature(mf, digest, err)) {
+        esp_ota_abort(c->handle);
+        c->ota_open = false;
+        return false;
+    }
+
     esp_err_t e = esp_ota_end(c->handle);
     c->ota_open = false;
     if (e != ESP_OK) {
@@ -799,7 +860,7 @@ static void pull_cycle_inner(const pull_req_t& req) {
     pull_send_verifying();
     const char* verr = "bad_image";
     if (!pull_verify(&dl, mf, &verr)) {
-        // hash_mismatch / bad_image are non-retryable (§7.3).
+        // hash_mismatch / bad_signature / bad_image are non-retryable (§7.3).
         pull_send_err(verr);
         pull_record_terminal();
         return;

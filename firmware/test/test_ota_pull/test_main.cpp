@@ -182,6 +182,58 @@ static void test_released_at(void) {
     CHECK(!ota_released_at_sane("26-10-02T12:00:00Z", now));    // short year
 }
 
+// ---- base64 + signature policy (always runs) -------------------------------
+
+static void test_base64(void) {
+    printf("ota_base64_is_valid / ota_base64_decode\n");
+    unsigned char out[8];
+
+    CHECK(ota_base64_is_valid("TWFu"));            // "Man"
+    CHECK(ota_base64_is_valid("TWE="));            // "Ma"
+    CHECK(ota_base64_is_valid("TQ=="));            // "M"
+    CHECK(ota_base64_is_valid("MTIzNDU2Nzg="));    // 8 opaque bytes
+
+    CHECK(!ota_base64_is_valid(""));
+    CHECK(!ota_base64_is_valid(NULL));
+    CHECK(!ota_base64_is_valid("TWF"));            // length not a multiple of 4
+    CHECK(!ota_base64_is_valid("TWFu "));          // trailing space
+    CHECK(!ota_base64_is_valid("TW Fu"));          // embedded space
+    CHECK(!ota_base64_is_valid("TWFu!"));          // bad alphabet
+    CHECK(!ota_base64_is_valid("===="));           // padding only
+    CHECK(!ota_base64_is_valid("T==="));           // too much padding
+    CHECK(!ota_base64_is_valid("TW=u"));           // '=' not at the end
+
+    CHECK(ota_base64_decode("TWFu", out, sizeof(out)) == 3);
+    CHECK(out[0] == 'M' && out[1] == 'a' && out[2] == 'n');
+    CHECK(ota_base64_decode("TQ==", out, sizeof(out)) == 1);
+    CHECK(out[0] == 'M');
+    CHECK(ota_base64_decode("TWE=", out, sizeof(out)) == 2);
+    CHECK(out[0] == 'M' && out[1] == 'a');
+    CHECK(ota_base64_decode("", out, sizeof(out)) == -1);
+    CHECK(ota_base64_decode(NULL, out, sizeof(out)) == -1);
+    CHECK(ota_base64_decode("TWFu", out, 2) == -1);   // output overflow
+}
+
+// The pure half of the SIGNING.md section 7 decision: with no pinned key the
+// hash-only path stands; with a pinned key an unsigned manifest is rejected.
+static void test_sig_policy(void) {
+    printf("ota_manifest_sig_ok (pinned-key policy)\n");
+    OtaManifest m;
+    memset(&m, 0, sizeof(m));
+
+    CHECK(!ota_manifest_is_signed(&m));
+    CHECK(ota_manifest_sig_ok(&m, false));   // no key + unsigned -> hash-only ok
+    CHECK(!ota_manifest_sig_ok(&m, true));   // pinned key + unsigned -> reject
+
+    strcpy(m.sig, "MTIzNDU2Nzg=");
+    CHECK(ota_manifest_is_signed(&m));
+    CHECK(ota_manifest_sig_ok(&m, true));    // pinned key + signed -> ok
+    CHECK(ota_manifest_sig_ok(&m, false));   // no key + signed -> still ok
+
+    CHECK(!ota_manifest_sig_ok(NULL, false));
+    CHECK(!ota_manifest_sig_ok(NULL, true));
+}
+
 // ---- manifest (needs ArduinoJson) ------------------------------------------
 
 #ifdef TEST_HAVE_ARDUINOJSON
@@ -321,6 +373,90 @@ static void test_manifest_failure_leaves_out(void) {
     CHECK(m.size == 4242);
 }
 
+// Signature fields (design/ota-pull/SIGNING.md section 4). The base64 blob is
+// opaque to the parser; it only checks the alphabet/shape.
+#define SIG_VALID "MTIzNDU2Nzg="
+#define SIG_BAD   "not base64!!"
+
+static void test_manifest_sig(void) {
+    printf("ota_manifest_parse: signature fields\n");
+    OtaManifest m;
+    memset(&m, 0, sizeof(m));
+
+    // Absent sig is the pre-P4 shape: parse succeeds and all three stay empty.
+    static const char* J_UNSIGNED =
+        "{\"schema_version\":1,\"board\":\"b\",\"version\":\"1.0.0\",\"url\":\"fw.bin\","
+        "\"sha256\":\"" SHA64 "\",\"size\":10}";
+    CHECK(ota_manifest_parse(J_UNSIGNED, &m) == OTA_MF_OK);
+    CHECK(!ota_manifest_is_signed(&m));
+    CHECK(m.sig[0] == '\0' && m.sig_alg[0] == '\0' && m.key_id[0] == '\0');
+
+    // A complete signed manifest parses and round-trips every field.
+    static const char* J_SIGNED =
+        "{\"schema_version\":1,\"board\":\"b\",\"version\":\"1.0.0\",\"url\":\"fw.bin\","
+        "\"sha256\":\"" SHA64 "\",\"size\":10,"
+        "\"sig\":\"" SIG_VALID "\",\"sig_alg\":\"ecdsa-p256-sha256\","
+        "\"key_id\":\"ef7cd0a16e487445\"}";
+    CHECK(ota_manifest_parse(J_SIGNED, &m) == OTA_MF_OK);
+    CHECK(ota_manifest_is_signed(&m));
+    CHECK(strcmp(m.sig, SIG_VALID) == 0);
+    CHECK(strcmp(m.sig_alg, OTA_SIG_ALG_ECDSA_P256_SHA256) == 0);
+    CHECK(strcmp(m.key_id, "ef7cd0a16e487445") == 0);
+
+    // All-or-nothing: some but not all of the three fields is malformed.
+    CHECK(parse("{\"schema_version\":1,\"board\":\"b\",\"version\":\"1.0.0\",\"url\":\"fw.bin\","
+                "\"sha256\":\"" SHA64 "\",\"size\":10,\"sig\":\"" SIG_VALID "\","
+                "\"sig_alg\":\"ecdsa-p256-sha256\"}") == OTA_MF_BAD_SIG);   // no key_id
+    CHECK(parse("{\"schema_version\":1,\"board\":\"b\",\"version\":\"1.0.0\",\"url\":\"fw.bin\","
+                "\"sha256\":\"" SHA64 "\",\"size\":10,\"sig\":\"" SIG_VALID "\","
+                "\"key_id\":\"k\"}") == OTA_MF_BAD_SIG);                    // no sig_alg
+    CHECK(parse("{\"schema_version\":1,\"board\":\"b\",\"version\":\"1.0.0\",\"url\":\"fw.bin\","
+                "\"sha256\":\"" SHA64 "\",\"size\":10,\"sig_alg\":\"ecdsa-p256-sha256\","
+                "\"key_id\":\"k\"}") == OTA_MF_BAD_SIG);                    // no sig
+
+    // Wrong algorithm (only ecdsa-p256-sha256 is accepted).
+    CHECK(parse("{\"schema_version\":1,\"board\":\"b\",\"version\":\"1.0.0\",\"url\":\"fw.bin\","
+                "\"sha256\":\"" SHA64 "\",\"size\":10,\"sig\":\"" SIG_VALID "\","
+                "\"sig_alg\":\"rsa-sha256\",\"key_id\":\"k\"}") == OTA_MF_BAD_SIG);
+    CHECK(parse("{\"schema_version\":1,\"board\":\"b\",\"version\":\"1.0.0\",\"url\":\"fw.bin\","
+                "\"sha256\":\"" SHA64 "\",\"size\":10,\"sig\":\"" SIG_VALID "\","
+                "\"sig_alg\":\"ecdsa-p256-sha256 \",\"key_id\":\"k\"}") == OTA_MF_BAD_SIG);
+
+    // Bad base64: bad alphabet, bad length, stray '=', empty.
+    CHECK(parse("{\"schema_version\":1,\"board\":\"b\",\"version\":\"1.0.0\",\"url\":\"fw.bin\","
+                "\"sha256\":\"" SHA64 "\",\"size\":10,\"sig\":\"" SIG_BAD "\","
+                "\"sig_alg\":\"ecdsa-p256-sha256\",\"key_id\":\"k\"}") == OTA_MF_BAD_SIG);
+    CHECK(parse("{\"schema_version\":1,\"board\":\"b\",\"version\":\"1.0.0\",\"url\":\"fw.bin\","
+                "\"sha256\":\"" SHA64 "\",\"size\":10,\"sig\":\"TWF\","
+                "\"sig_alg\":\"ecdsa-p256-sha256\",\"key_id\":\"k\"}") == OTA_MF_BAD_SIG);
+    CHECK(parse("{\"schema_version\":1,\"board\":\"b\",\"version\":\"1.0.0\",\"url\":\"fw.bin\","
+                "\"sha256\":\"" SHA64 "\",\"size\":10,\"sig\":\"====\","
+                "\"sig_alg\":\"ecdsa-p256-sha256\",\"key_id\":\"k\"}") == OTA_MF_BAD_SIG);
+    CHECK(parse("{\"schema_version\":1,\"board\":\"b\",\"version\":\"1.0.0\",\"url\":\"fw.bin\","
+                "\"sha256\":\"" SHA64 "\",\"size\":10,\"sig\":\"\","
+                "\"sig_alg\":\"ecdsa-p256-sha256\",\"key_id\":\"k\"}") == OTA_MF_BAD_SIG);
+
+    // Too long for the fixed buffer (132 'A' chars; base64-shaped but > 128).
+    {
+        char json[512];
+        char big[140];
+        memset(big, 'A', sizeof(big));
+        big[sizeof(big) - 1] = '\0';
+        snprintf(json, sizeof(json),
+                 "{\"schema_version\":1,\"board\":\"b\",\"version\":\"1.0.0\","
+                 "\"url\":\"fw.bin\",\"sha256\":\"" SHA64 "\",\"size\":10,"
+                 "\"sig\":\"%s\",\"sig_alg\":\"ecdsa-p256-sha256\",\"key_id\":\"k\"}",
+                 big);
+        CHECK(parse(json) == OTA_MF_BAD_SIG);
+    }
+
+    // A signed manifest whose required core fields are bad still fails on the
+    // core error first (signature parsing does not mask it).
+    CHECK(parse("{\"schema_version\":1,\"board\":\"b\",\"version\":\"1.2\",\"url\":\"fw.bin\","
+                "\"sha256\":\"" SHA64 "\",\"size\":10,\"sig\":\"" SIG_VALID "\","
+                "\"sig_alg\":\"ecdsa-p256-sha256\",\"key_id\":\"k\"}") == OTA_MF_BAD_VERSION);
+}
+
 static void test_manifest(void) {
     printf("manifest: running (ArduinoJson present)\n");
     test_manifest_valid();
@@ -328,6 +464,7 @@ static void test_manifest(void) {
     test_manifest_unknown_fields();
     test_manifest_required_errors();
     test_manifest_failure_leaves_out();
+    test_manifest_sig();
 }
 
 #else  // !TEST_HAVE_ARDUINOJSON
@@ -346,6 +483,8 @@ int main(void) {
     test_url_safe();
     test_sha_eq();
     test_released_at();
+    test_base64();
+    test_sig_policy();
     test_manifest();
 
     printf("\n%d check(s), %d failure(s)\n", checks, failures);

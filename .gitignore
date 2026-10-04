@@ -10,6 +10,11 @@ firmware/.vscode/
 # here.
 firmware/certs/pinned_server.pem
 firmware/src/certs/pinned_server_pem.h
+# Signed-update pin (design/ota-pull/SIGNING.md section 5): the public half of
+# the ECDSA P-256 signing key is local/untracked and generated into a header by
+# gen_pinned_cert.py. Absent -> an empty SIGNING_PUBKEY_PEM (hash-only build).
+firmware/certs/signing_pubkey.pem
+firmware/src/certs/signing_pubkey_pem.h
 *.key
 
 # Editor settings

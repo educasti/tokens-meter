@@ -111,6 +111,74 @@ static long iso_days_from_civil(int y, int m, int d) {
     return era * 146097L + (long)doe - 719468L;
 }
 
+// ---- base64 + signature policy (no ArduinoJson) ----------------------------
+
+static int b64_val(char c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1;
+}
+
+bool ota_base64_is_valid(const char* s) {
+    if (!s || s[0] == '\0') return false;
+    size_t n = strlen(s);
+    if (n % 4 != 0) return false;   // standard base64 is a whole number of quads
+
+    size_t pad = 0;
+    if (s[n - 1] == '=') pad++;
+    if (n >= 2 && s[n - 2] == '=') pad++;
+    if (pad > 2) return false;
+
+    // Every non-padding char must be in the alphabet; '=' is never in the
+    // alphabet, so a stray '=' before the tail also fails here.
+    for (size_t i = 0; i < n - pad; i++) {
+        if (b64_val(s[i]) < 0) return false;
+    }
+    return true;
+}
+
+int ota_base64_decode(const char* s, unsigned char* out, size_t out_cap) {
+    if (!s || !out) return -1;
+    if (!ota_base64_is_valid(s)) return -1;
+
+    size_t n = strlen(s);
+    size_t o = 0;
+    for (size_t i = 0; i < n; i += 4) {
+        int v0 = b64_val(s[i]);
+        int v1 = b64_val(s[i + 1]);
+        bool p2 = (s[i + 2] == '=');
+        bool p3 = (s[i + 3] == '=');
+        int v2 = p2 ? 0 : b64_val(s[i + 2]);
+        int v3 = p3 ? 0 : b64_val(s[i + 3]);
+        if (v0 < 0 || v1 < 0 || v2 < 0 || v3 < 0) return -1;
+
+        if (o >= out_cap) return -1;
+        out[o++] = (unsigned char)((v0 << 2) | (v1 >> 4));
+        if (!p2) {
+            if (o >= out_cap) return -1;
+            out[o++] = (unsigned char)(((v1 & 0x0f) << 4) | (v2 >> 2));
+        }
+        if (!p3) {
+            if (o >= out_cap) return -1;
+            out[o++] = (unsigned char)(((v2 & 0x03) << 6) | v3);
+        }
+    }
+    return (int)o;
+}
+
+bool ota_manifest_is_signed(const OtaManifest* mf) {
+    return mf != NULL && mf->sig[0] != '\0';
+}
+
+bool ota_manifest_sig_ok(const OtaManifest* mf, bool have_pinned_key) {
+    if (mf == NULL) return false;
+    if (!have_pinned_key) return true;   // hash-only build: unsigned is fine
+    return ota_manifest_is_signed(mf);
+}
+
 bool ota_released_at_sane(const char* iso, long now_epoch) {
     if (!iso) return false;
     if (iso[0] == '\0') return true;   // absent timestamp is sane
@@ -200,6 +268,23 @@ ota_manifest_err ota_manifest_parse(const char* json, OtaManifest* out) {
     const char* notes = doc["notes"] | "";
     bool mandatory = doc["mandatory"] | false;
 
+    // Optional detached signature (SIGNING.md section 4): the three fields are
+    // all-or-nothing, and a present sig must name the one supported algorithm
+    // with syntactically valid base64. An absent sig is allowed here -- whether
+    // it is *accepted* is the pinned-key policy in the verify step.
+    const char* sig = doc["sig"] | "";
+    const char* sig_alg = doc["sig_alg"] | "";
+    const char* key_id = doc["key_id"] | "";
+    const bool any_sig = sig[0] || sig_alg[0] || key_id[0];
+    if (any_sig) {
+        // All three, or the manifest is malformed.
+        if (!sig[0] || !sig_alg[0] || !key_id[0]) return OTA_MF_BAD_SIG;
+        if (strcmp(sig_alg, OTA_SIG_ALG_ECDSA_P256_SHA256) != 0) return OTA_MF_BAD_SIG;
+        if (strlen(sig) > OTA_SIG_B64_MAX || !ota_base64_is_valid(sig)) return OTA_MF_BAD_SIG;
+        if (strlen(sig_alg) >= OTA_SIG_ALG_MAX) return OTA_MF_BAD_SIG;
+        if (strlen(key_id) >= OTA_KEY_ID_MAX) return OTA_MF_BAD_SIG;
+    }
+
     // Validate everything before touching *out, so a failure never leaves a
     // half-populated manifest behind.
     OtaManifest m;
@@ -214,6 +299,11 @@ ota_manifest_err ota_manifest_parse(const char* json, OtaManifest* out) {
     m.mandatory = mandatory;
     if (released_at[0] != '\0') snprintf(m.released_at, sizeof(m.released_at), "%s", released_at);
     if (notes[0] != '\0') snprintf(m.notes, sizeof(m.notes), "%s", notes);
+    if (any_sig) {
+        snprintf(m.sig, sizeof(m.sig), "%s", sig);
+        snprintf(m.sig_alg, sizeof(m.sig_alg), "%s", sig_alg);
+        snprintf(m.key_id, sizeof(m.key_id), "%s", key_id);
+    }
 
     *out = m;
     return OTA_MF_OK;
