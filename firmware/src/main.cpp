@@ -3,6 +3,9 @@
 #include <lvgl.h>
 #include <ArduinoJson.h>
 #include <esp_heap_caps.h>
+#ifndef BOARD_SIM
+#include <WiFi.h>
+#endif
 
 #include "data.h"
 #include "ui.h"
@@ -133,7 +136,7 @@ static bool parse_json(const char* json, UsageData* out) {
 }
 
 // ---- Serial command buffer ----
-#define CMD_BUF_SIZE 64
+#define CMD_BUF_SIZE 256
 static char cmd_buf[CMD_BUF_SIZE];
 static int cmd_pos = 0;
 
@@ -182,6 +185,24 @@ static void check_serial_cmd() {
             cmd_buf[cmd_pos] = '\0';
             if (strcmp(cmd_buf, "screenshot") == 0) send_screenshot();
             else if (strcmp(cmd_buf, "buzz") == 0)  sound_hal_play_reset();
+            // A JSON line on the serial port speaks the same CTRL (…0005)
+            // protocol as BLE. Physical access is owner access, so it bypasses
+            // the bonded-link check — this is how WiFi is provisioned (and an
+            // update triggered) when the Bluetooth link is unavailable.
+            else if (cmd_buf[0] == '{') ota_handle_ctrl(cmd_buf);
+            else if (strcmp(cmd_buf, "heap") == 0) {
+                Serial.printf("HEAP free=%u max=%u psram_free=%u psram_max=%u\n",
+                    (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap(),
+                    (unsigned)ESP.getFreePsram(), (unsigned)ESP.getMaxAllocPsram());
+            }
+            else if (strcmp(cmd_buf, "lvmem") == 0) {
+                lv_mem_monitor_t mon;
+                lv_mem_monitor(&mon);
+                Serial.printf("LVMEM total=%u free=%u biggest=%u used=%u%% frag=%u%%\n",
+                    (unsigned)mon.total_size, (unsigned)mon.free_size,
+                    (unsigned)mon.free_biggest_size, (unsigned)mon.used_pct,
+                    (unsigned)mon.frag_pct);
+            }
             cmd_pos = 0;
         } else if (cmd_pos < CMD_BUF_SIZE - 1) {
             cmd_buf[cmd_pos++] = c;
@@ -206,6 +227,22 @@ void setup() {
     // counter as early as possible — a failed slot should reboot before any
     // heavy display/BLE bring-up.
     ota_init();
+
+    // Pre-initialize the WiFi driver while the heap is still fresh. The pull
+    // OTA path brings WiFi up later; allocating the driver's internal buffers
+    // here avoids ESP_ERR_WIFI_NOT_STARTED once BLE/LVGL have fragmented RAM
+    // (measured: only ~47 KB largest free block by the time the pull runs).
+    // WiFi.mode(WIFI_OFF) only stops the radio — arduino-esp32 keeps the driver
+    // memory, so the later WiFi.mode(WIFI_STA) is cheap (WiFiGeneric.cpp:
+    // wifiLowLevelInit() is idempotent; espWiFiStop() does not deinit).
+#ifndef BOARD_SIM
+    WiFi.persistent(false);
+    if (WiFi.mode(WIFI_STA)) {
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_OFF);
+    }
+#endif
+
     // Pull OTA shares the "otah" namespace and the WiFi owner; load its schedule
     // and start the worker right after the hybrid path is armed.
     ota_pull_init();

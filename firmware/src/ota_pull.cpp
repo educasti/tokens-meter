@@ -92,7 +92,7 @@
 #define PULL_TASK_CORE       0
 
 #define WIFI_JOIN_MS         20000u    // §7.1 WIFI_JOIN timeout
-#define SNTP_TIMEOUT_MS      10000u    // §7.1 SNTP_TIME_SYNC timeout
+#define SNTP_TIMEOUT_MS      15000u    // §7.1 SNTP_TIME_SYNC timeout
 #define MANIFEST_TIMEOUT_MS  15000u    // §7.1 FETCH_MANIFEST timeout
 #define DOWNLOAD_IDLE_MS     15000u    // §7.1 DOWNLOAD idle-read timeout
 #define DOWNLOAD_TOTAL_MS    300000u   // §7.1 DOWNLOAD total timeout
@@ -351,8 +351,14 @@ static const char* pull_manifest_err_name(int e) {
 
 static bool pull_wifi_join(const char* ssid, const char* pass) {
     for (int attempt = 0; attempt < 3; attempt++) {
+        Serial.printf("OTA: pull join attempt %d heap=%u max=%u\n",
+                      attempt + 1, (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
         WiFi.persistent(false);
-        WiFi.mode(WIFI_STA);
+        if (!WiFi.mode(WIFI_STA)) {
+            Serial.println("OTA: WiFi.mode(WIFI_STA) failed (radio/heap)");
+            vTaskDelay(pdMS_TO_TICKS(500));
+            continue;
+        }
         WiFi.begin(ssid, pass);
         uint32_t deadline = millis() + WIFI_JOIN_MS;
         while ((int32_t)(millis() - deadline) < 0) {
@@ -371,11 +377,22 @@ static bool pull_wifi_join(const char* ssid, const char* pass) {
 }
 
 static bool pull_sntp(void) {
-    for (int attempt = 0; attempt < 2; attempt++) {
-        configTime(0, 0, "pool.ntp.org", "time.cloudflare.com");
+    // Use NTP server IPs, not names: on some LANs DNS is slow or the first
+    // configTime() has nothing to resolve, so the sync times out. Three
+    // well-known anycast IPs (Google / Cloudflare) plus a named fallback.
+    static const char* const srv[] = {
+        "216.239.35.0",     // time.google.com
+        "162.159.200.1",    // time.cloudflare.com
+        "pool.ntp.org",
+    };
+    for (int attempt = 0; attempt < 4; attempt++) {
+        configTime(0, 0, srv[attempt % 3], srv[(attempt + 1) % 3], srv[(attempt + 2) % 3]);
         uint32_t deadline = millis() + SNTP_TIMEOUT_MS;
         while ((int32_t)(millis() - deadline) < 0) {
-            if ((long)time(nullptr) > MIN_VALID_EPOCH) return true;
+            if ((long)time(nullptr) > MIN_VALID_EPOCH) {
+                Serial.printf("OTA: pull clock synced (%ld)\n", (long)time(nullptr));
+                return true;
+            }
             vTaskDelay(pdMS_TO_TICKS(200));
         }
         Serial.printf("OTA: pull SNTP attempt %d timed out\n", attempt + 1);
@@ -844,6 +861,9 @@ void ota_pull_init(void) {
 
     s_run_sem = xSemaphoreCreateBinary();
     if (s_run_sem) {
+        // Stack MUST be in internal RAM: a PSRAM stack asserts in
+        // spi_flash_disable_interrupts_caches... as soon as the task touches
+        // NVS/flash (WiFi creds, OTA flash).
         xTaskCreatePinnedToCore(ota_pull_task, "ota_pull", PULL_TASK_STACK, nullptr,
                                 PULL_TASK_PRIO, nullptr, PULL_TASK_CORE);
     } else {
