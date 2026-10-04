@@ -23,6 +23,7 @@
 #include "hal/board_caps.h"
 #include "ota_pull.h"
 #include "ota_wifi.h"
+#include "portal.h"
 
 #ifndef FW_VERSION
 #define FW_VERSION "dev"   // set per env in platformio.ini (-DFW_VERSION="...")
@@ -311,11 +312,35 @@ void ota_handle_ctrl(const char* json) {
         return;
     }
 
+    if (strcmp(cmd, "portal") == 0) {
+        // Enqueue-only: portal_start()/portal_stop() set a flag and the SoftAP
+        // is brought up/down from portal_tick() on the loop task. WiFi is never
+        // touched from this (NimBLE host) task.
+        const char* mode = doc["mode"] | "";
+        if (strcmp(mode, "off") == 0) {
+            portal_stop();
+            send_status("{\"ok\":true,\"cmd\":\"portal\",\"state\":\"off\"}");
+        } else if (ota_pull_is_active() || ota_is_active()) {
+            send_status("{\"ok\":false,\"err\":\"busy\"}");
+        } else {
+            portal_start();
+            char buf[128];
+            snprintf(buf, sizeof(buf),
+                     "{\"ok\":true,\"cmd\":\"portal\",\"state\":\"on\",\"ssid\":\"%s\"}",
+                     portal_ssid());
+            send_status(buf);
+        }
+        return;
+    }
+
     if (strcmp(cmd, "ota") == 0) {
         const char* mode = doc["mode"] | "";
         if (strcmp(mode, "on") == 0) {
             if (!s_ssid[0]) {
                 send_status("{\"ok\":false,\"err\":\"no_wifi\"}");
+            } else if (portal_is_active()) {
+                // The provisioning AP owns the radio; a STA session would clobber it.
+                send_status("{\"ok\":false,\"err\":\"portal\"}");
             } else {
                 ota_start(doc["pass"] | "");   // ready/error reply comes from ota_tick()
             }

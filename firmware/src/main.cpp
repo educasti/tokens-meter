@@ -12,6 +12,7 @@
 #include "ble.h"
 #include "ota.h"
 #include "ota_pull.h"
+#include "portal.h"
 #include "splash.h"
 #include "oc_splash.h"
 #include "oc_data.h"
@@ -247,6 +248,11 @@ void setup() {
     // and start the worker right after the hybrid path is armed.
     ota_pull_init();
 
+    // SoftAP captive portal: registers its handlers and logs whether an SSID is
+    // already stored. It does not touch the radio until portal_start() is
+    // requested (auto-start below, or the {"cmd":"portal"} CTRL command).
+    portal_init();
+
     display_hal_init();
     display_hal_begin();
     idle_init();        // takes over panel brightness and starts the idle timer
@@ -350,7 +356,24 @@ void loop() {
     ui_tick_anim();
     ble_tick();
     ota_tick();
-    ota_pull_tick();
+    // The pull scheduler is autonomous; don't let it grab the radio while the
+    // provisioning AP is up (the portal refuses to start while a pull is active,
+    // and this closes the other direction).
+    if (!portal_is_active()) ota_pull_tick();
+
+    // Auto-start provisioning ~5 s after boot when no WiFi credentials are
+    // stored: the device raises its SoftAP so a phone can reach the portal.
+    static bool portal_autostart_done = false;
+    if (!portal_autostart_done && (uint32_t)millis() >= 5000u) {
+        portal_autostart_done = true;
+        if (!portal_has_creds()) {
+            Serial.println("PORTAL: no stored WiFi creds — starting SoftAP provisioning");
+            portal_start();
+        }
+    }
+    // Bring up / tear down the AP and service the captive portal. No-op while a
+    // pull or hybrid OTA owns the radio.
+    portal_tick();
     power_hal_tick();
     imu_hal_tick();
     sound_hal_tick();

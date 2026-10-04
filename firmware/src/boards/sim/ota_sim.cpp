@@ -4,6 +4,7 @@
 // Mirrors the boards/sim/ble_sim.cpp split.
 #include "../../ota.h"
 #include "../../ota_pull.h"
+#include "../../portal.h"
 #include <stdio.h>
 
 void ota_init(void) {}
@@ -27,3 +28,13 @@ void ota_pull_tick(void) {}
 void ota_pull_handle_ctrl(const char* json) { (void)json; }
 bool ota_pull_is_active(void) { return false; }
 const char* ota_pull_state_name(void) { return "idle"; }
+
+// SoftAP captive portal stubs: portal.cpp is hardware-only (excluded from the
+// sim build), so main.cpp links these no-ops instead.
+void portal_init(void) {}
+void portal_tick(void) {}
+bool portal_is_active(void) { return false; }
+void portal_start(void) {}
+void portal_stop(void) {}
+const char* portal_ssid(void) { return "Clawdmeter-SIM0"; }
+bool portal_has_creds(void) { return false; }
