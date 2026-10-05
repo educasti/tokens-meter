@@ -231,9 +231,11 @@ The publisher (`ota-publish.sh`, DESIGN §6.5) writes per-board directories unde
 
 ## 4. Configure the GitHub repo secrets for the publish workflow
 
-`.github/workflows/ota-publish.yml` stages an SSH key, a pinned `known_hosts`
-file, and the rsync target, then runs `ota-publish.sh` (IMPL §5.2). Never put
-secrets in the repo or the command line.
+`.github/workflows/ota-publish.yml` builds with the real pin and the update
+host, then **signs and publishes** the binary + manifest (IMPL §5.2;
+[SIGNING.md](../SIGNING.md)). It stages an SSH deploy key, the firmware-store
+target, the pinned TLS certificate and the ECDSA signing key. Never put secrets
+in the repo or the command line.
 
 1. Generate a dedicated deploy key **on the VM as `<user>`** and authorize it:
 
@@ -249,25 +251,56 @@ secrets in the repo or the command line.
    ssh -i ~/.ssh/ota_deploy <user>@<IP> 'ls -ld /srv/firmware'
    ```
 
-3. Create the three repository secrets. Copy the **private** key text to
+3. Generate the ECDSA P-256 signing key **outside the repo** if you do not
+   already have one (SIGNING.md §9). CI derives the public half and pins it in
+   the image; only the private half is a secret:
+
+   ```bash
+   openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 \
+     -out <secure>/ota-p256.pem
+   chmod 600 <secure>/ota-p256.pem
+   # the public key the firmware pins (also written in-repo for local builds)
+   python3 tools/sign_firmware.py --key <secure>/ota-p256.pem --pubkey \
+     > firmware/certs/signing_pubkey.pem
+   ```
+
+4. Create the **five** repository secrets. Copy the **private** SSH key text to
    `OTA_SSH_KEY`; pin the host key with `ssh-keyscan -H <IP>`; set the target
-   exactly as `<user>@<IP>:/srv/firmware`:
+   exactly as `<user>@<IP>:/srv/firmware`; upload the pinned **certificate**
+   from §2; upload the **signing key** from step 3:
 
    ```bash
    # from a machine with the GitHub CLI authenticated for this repo
-   gh secret set OTA_SSH_KEY       < ~/.ssh/ota_deploy
-   gh secret set OTA_KNOWN_HOSTS   < <(ssh-keyscan -H <IP> 2>/dev/null)
-   gh secret set OTA_DEST          --body '<user>@<IP>:/srv/firmware'
+   gh secret set OTA_SSH_KEY         < ~/.ssh/ota_deploy
+   gh secret set OTA_KNOWN_HOSTS     < <(ssh-keyscan -H <IP> 2>/dev/null)
+   gh secret set OTA_DEST            --body '<user>@<IP>:/srv/firmware'
+   gh secret set OTA_SERVER_CERT_PEM < /etc/caddy/ota.crt
+   gh secret set OTA_SIGNING_KEY     < <secure>/ota-p256.pem
    ```
 
    Or add them in *Settings → Secrets and variables → Actions → New repository
-   secret* with the same names and values. `OTA_DEST` is parsed by
-   `ota-publish.sh` as `user@host:/path`; the workflow also strips the user to
-   print the manifest URL.
+   secret* with the same names and values.
 
-4. Sanity-check the workflow's assumptions: `ssh-keyscan -H <IP>` must not have
+   - `OTA_DEST` is parsed as `user@host:/path`; the workflow strips the user and
+     derives the build's manifest base URL **from the host**:
+     `-DOTA_PULL_MANIFEST_URL="https://<host>/firmware"`. The host is never
+     committed.
+   - `OTA_SERVER_CERT_PEM` is written to `firmware/certs/pinned_server.pem`
+     before the build, so the image pins the real server instead of the
+     fail-closed placeholder.
+   - `OTA_SIGNING_KEY` is written to a `0600` temp file and never echoed; the
+     public half is derived into `firmware/certs/signing_pubkey.pem` and the
+     manifest is signed with `--sign-key … --key-id <pubkey SHA-256 prefix>`.
+
+5. Sanity-check the workflow's assumptions: `ssh-keyscan -H <IP>` must not have
    been pre-seeded with an old host key, and the deploy key must not be
    passphrase-protected (CI cannot type a passphrase).
+
+> **Commitment.** Once a device pins a signing key (SIGNING.md §4 rule 2), a
+> manifest with no `sig` is rejected as `bad_signature`. Every published manifest
+> must therefore be signed from then on: CI **fails** if `OTA_SIGNING_KEY` is
+> unset, and the manual `ota-publish.sh` path must pass `--sign-key` (§5.2).
+
 
 ---
 
@@ -278,13 +311,16 @@ manifest version must equal the image's `FW_VERSION` or the workflow aborts
 (IMPL §5.2 step 3).
 
 Both paths must build with the reserved IP **and** the pinned cert baked in
-(DESIGN §14.2). The publisher only ships the `.bin` it is given, so make sure the
-binary it receives came from a build with
-`-DOTA_PULL_MANIFEST_URL="https://<IP>/firmware"`; otherwise the image falls back
-to `https://ota.invalid/firmware` and every device check fails. Before tagging,
-confirm the CI build step injects the host (e.g. a repository variable/secret fed
-into `PLATFORMIO_BUILD_FLAGS`) and that `firmware/certs/pinned_server.pem` is
-present in the build workspace (CI has no untracked PEM unless you inject it).
+(DESIGN §14.2). The publisher only ships the `.bin` it is given, so the image
+must come from a build with `-DOTA_PULL_MANIFEST_URL="https://<IP>/firmware"`;
+otherwise it falls back to `https://ota.invalid/firmware` and every device check
+fails. On the **CI path the workflow now does this for you**: it derives the host
+from `OTA_DEST`, writes `OTA_SERVER_CERT_PEM` to
+`firmware/certs/pinned_server.pem`, patches `firmware/platformio.ini` with the
+flag (the reliable route — `PLATFORMIO_BUILD_FLAGS` quote handling is not) and
+**signs** the manifest with `OTA_SIGNING_KEY`. On the **manual path** you inject
+the pin and URL yourself (steps below) and must pass `--sign-key` so a
+key-pinned device accepts the result.
 
 1. Tag and push to trigger the publish (P2 path):
 
@@ -307,13 +343,16 @@ present in the build workspace (CI has no untracked PEM unless you inject it).
      --bin firmware/.pio/build/waveshare_amoled_216/firmware.bin \
      --version 0.2.0 \
      --board waveshare_amoled_216 \
+     --sign-key <secure>/ota-p256.pem \
      --min-from 0.1.0 \
      --notes "First pull-OTA release"
    ```
 
-   The script refuses a dirty git tree unless you pass `--allow-dirty`, writes
-   the binary then the manifest atomically, symlinks the flat alias, and keeps
-   the last `--keep` versions (DESIGN §6.5).
+   `--sign-key` adds `sig`/`sig_alg`/`key_id` (SIGNING.md §4/§6); without it the
+   manifest is hash-only and a key-pinned device refuses it. The script refuses a
+   dirty git tree unless you pass `--allow-dirty`, writes the binary then the
+   manifest atomically, symlinks the flat alias, and keeps the last `--keep`
+   versions (DESIGN §6.5).
 
 3. Verify the manifest is live and correct over the reserved IP. From the VM,
    trust the cert directly; from anywhere else use `--cacert` (preferred) or
@@ -339,6 +378,11 @@ present in the build workspace (CI has no untracked PEM unless you inject it).
    sha256sum /tmp/clawdmeter-$VER.bin
    stat -c '%s' /tmp/clawdmeter-$VER.bin
    ```
+
+   For a key-pinned fleet the manifest must also carry `sig`, `sig_alg`
+   (`ecdsa-p256-sha256`) and `key_id` (SIGNING.md §4); a manifest missing any of
+   them is `bad_signature` on the device. Confirm they are present:
+   `curl -fsS --cacert ./ota.crt …/manifest.json | python3 -c 'import json,sys; m=json.load(sys.stdin); print(m["sig_alg"], m["key_id"])'`.
 
 5. Check the header contract the device relies on (DESIGN §6.3): manifest is
    `Cache-Control: no-cache` with an `ETag`; binary is `immutable`. Also confirm

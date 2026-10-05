@@ -398,6 +398,35 @@ This is additive: the manual [hybrid path](#firmware-updates-hybrid-ota) stays
 as the fallback, and the two never run at once. See
 [`design/ota-pull/DESIGN.md`](design/ota-pull/DESIGN.md) for the full contract.
 
+### Automatic publish (CI)
+
+`.github/workflows/ota-publish.yml` builds, signs and publishes that manifest
+when a `vX.Y.Z` tag is pushed (or from the manual `workflow_dispatch` input).
+The pin, the update host and the signing key are assembled from repository
+secrets — never committed:
+
+| Secret | Purpose |
+| --- | --- |
+| `OTA_SSH_KEY` | private SSH deploy key allowed to write the firmware directory |
+| `OTA_KNOWN_HOSTS` | pinned `known_hosts` line(s) for the VM |
+| `OTA_DEST` | `user@host:/path` of the firmware directory; its host becomes the manifest URL |
+| `OTA_SERVER_CERT_PEM` | the pinned self-signed TLS server certificate (PEM) |
+| `OTA_SIGNING_KEY` | the ECDSA P-256 private key (PEM) used only to sign |
+
+The workflow writes `OTA_SERVER_CERT_PEM` to
+`firmware/certs/pinned_server.pem`, derives the public half of
+`OTA_SIGNING_KEY` into `firmware/certs/signing_pubkey.pem`, and injects
+`-DOTA_PULL_MANIFEST_URL="https://<host>/firmware"` (host taken from `OTA_DEST`)
+into the build. The same key then signs the manifest, so the published
+`sig`/`key_id` always match what the image pins. Once a device pins a signing
+key, a manifest without a valid signature is rejected (`bad_signature`), so a
+publish with no `OTA_SIGNING_KEY` fails rather than shipping an unsigned
+manifest.
+
+See
+[`design/ota-pull/deploy/RUNBOOK.md`](design/ota-pull/deploy/RUNBOOK.md) §4–§5
+for setting the secrets and verifying a release.
+
 ## Development
 
 <img src="assets/readme/crab.gif" width="120" align="right" alt="">

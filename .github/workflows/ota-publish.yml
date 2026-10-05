@@ -1,16 +1,34 @@
 # Publish a firmware binary + OTA manifest for pull-based automatic OTA.
 #
 # Contract: design/ota-pull/DESIGN.md sections 5 (versioning) and 6.5 (publish
-# guarantee); plan: design/ota-pull/IMPL.md section 5 (P2). The only writer of
-# the firmware directory is design/ota-pull/deploy/ota-publish.sh.
+# guarantee); signed updates: design/ota-pull/SIGNING.md; plan:
+# design/ota-pull/IMPL.md section 5 (P2). The only writer of the firmware
+# directory is design/ota-pull/deploy/ota-publish.sh.
 #
 # Maintainer setup — create these repository secrets (Settings -> Secrets and
 # variables -> Actions -> New repository secret). Never a password:
-#   OTA_SSH_KEY       private SSH deploy key (whole OpenSSH/PEM text) allowed to
-#                     write the firmware directory on the VM.
-#   OTA_KNOWN_HOSTS   pinned known_hosts lines for the VM, e.g. the output of
-#                     `ssh-keyscan -t ed25519 <vm>`.
-#   OTA_DEST          rsync/ssh target, `user@host:/path` of the firmware dir.
+#   OTA_SSH_KEY         private SSH deploy key (whole OpenSSH/PEM text) allowed
+#                       to write the firmware directory on the VM.
+#   OTA_KNOWN_HOSTS     pinned known_hosts lines for the VM, e.g. the output of
+#                       `ssh-keyscan -t ed25519 <vm>`.
+#   OTA_DEST            rsync/ssh target, `user@host:/path` of the firmware dir.
+#   OTA_SERVER_CERT_PEM the pinned self-signed TLS server certificate (PEM).
+#                       Written to firmware/certs/pinned_server.pem before the
+#                       build so the image trusts the real host instead of the
+#                       fail-closed placeholder CI would otherwise embed.
+#   OTA_SIGNING_KEY     the ECDSA P-256 private key (PEM) used only to sign.
+#                       Written to a 0600 temp file and never echoed; the public
+#                       half is derived in CI and pinned, and the manifest is
+#                       signed on every publish.
+#
+# The update host is never committed: it is derived from OTA_DEST and injected
+# as OTA_PULL_MANIFEST_URL at build time.
+#
+# Commitment (design/ota-pull/SIGNING.md section 4 rule 2): once a device pins a
+# signing key, a manifest without a valid ECDSA P-256/SHA-256 signature is
+# rejected as `bad_signature`. Every publish from this workflow is therefore
+# signed; a missing OTA_SIGNING_KEY fails the job rather than shipping a
+# manifest a pinned device would reject.
 #
 # The VM hostname lives only in those secrets and is never committed.
 
@@ -46,8 +64,89 @@ jobs:
       - name: Install PlatformIO
         run: pip install platformio
 
+      # The image must carry the real pinned cert and the host-specific manifest
+      # URL, and the publisher must sign with the key the firmware pins; none of
+      # that is in the repo, so it is assembled from secrets here.
+      - name: Prepare build pins (server cert, signing key, manifest URL)
+        id: prep
+        env:
+          OTA_DEST: ${{ secrets.OTA_DEST }}
+          OTA_SERVER_CERT_PEM: ${{ secrets.OTA_SERVER_CERT_PEM }}
+          OTA_SIGNING_KEY: ${{ secrets.OTA_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$OTA_SERVER_CERT_PEM" ]; then
+            echo "::error::OTA_SERVER_CERT_PEM must be set (pinned TLS cert PEM)"
+            exit 1
+          fi
+          if [ -z "$OTA_SIGNING_KEY" ]; then
+            echo "::error::OTA_SIGNING_KEY must be set (signing is mandatory once a key is pinned)"
+            exit 1
+          fi
+
+          # Bare host from user@host:/path — used only for the manifest base URL.
+          DEST_HOST="${OTA_DEST%%:*}"
+          DEST_HOST="${DEST_HOST##*@}"
+          if [ -z "$DEST_HOST" ]; then
+            echo "::error::could not derive the update host from OTA_DEST"
+            exit 1
+          fi
+
+          # 1. Pinned TLS trust anchor -> firmware/certs/pinned_server.pem; the
+          #    pre-build gen_pinned_cert.py bakes it into the image (instead of
+          #    the fail-closed placeholder CI would otherwise embed).
+          mkdir -p firmware/certs
+          printf '%s\n' "$OTA_SERVER_CERT_PEM" > firmware/certs/pinned_server.pem
+
+          # 2. Signing key -> a 0600 temp file (never echoed, never committed).
+          #    Derive the public half to pin and the key_id the firmware logs.
+          umask 077
+          KEY="$RUNNER_TEMP/ota-signing-key.pem"
+          printf '%s\n' "$OTA_SIGNING_KEY" > "$KEY"
+          chmod 600 "$KEY"
+          openssl pkey -in "$KEY" -pubout -out firmware/certs/signing_pubkey.pem
+          KEY_ID="$(openssl pkey -in "$KEY" -pubout | sha256sum | cut -c1-16)"
+          echo "key_id=$KEY_ID" >> "$GITHUB_OUTPUT"
+
+          # 3. Manifest base URL. PLATFORMIO_BUILD_FLAGS quote handling is
+          #    unreliable, so make a temporary edit to firmware/platformio.ini:
+          #    add the -D to the first build_flags block (the hardware env) and
+          #    restore the file after the build so the publisher's dirty-tree
+          #    guard still passes.
+          cp firmware/platformio.ini "$RUNNER_TEMP/platformio.ini.orig"
+          DEST_HOST="$DEST_HOST" python3 - <<'PY'
+          import os
+
+          path = "firmware/platformio.ini"
+          flag = '    -DOTA_PULL_MANIFEST_URL=\\"https://%s/firmware\\"\n' % os.environ["DEST_HOST"]
+          with open(path, encoding="utf-8") as fh:
+              lines = fh.readlines()
+          out, inserted = [], False
+          for line in lines:
+              out.append(line)
+              if not inserted and line.rstrip("\n") == "build_flags =":
+                  out.append(flag)
+                  inserted = True
+          if not inserted:
+              raise SystemExit("build_flags block not found in firmware/platformio.ini")
+          with open(path, "w", encoding="utf-8") as fh:
+              fh.writelines(out)
+          PY
+
+          echo "prepared pinned cert, signing key (key_id $KEY_ID) and manifest URL https://$DEST_HOST/firmware"
+
       - name: Build firmware
         run: pio run -d firmware -e waveshare_amoled_216
+
+      # Undo the temporary platformio.ini edit so the publisher sees a clean
+      # tree (it refuses a dirty one without --allow-dirty).
+      - name: Restore firmware/platformio.ini
+        if: ${{ always() }}
+        run: |
+          if [ -f "$RUNNER_TEMP/platformio.ini.orig" ]; then
+            cp "$RUNNER_TEMP/platformio.ini.orig" firmware/platformio.ini
+          fi
 
       # The tag/input version must equal what the pre-build script stamped into
       # FW_VERSION (firmware/scripts/version.py --print-version). A mismatch
@@ -84,10 +183,16 @@ jobs:
           printf '%s\n' "$OTA_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
+      # Signed publish: --sign-key signs the exact .bin with the ECDSA P-256 key
+      # the firmware pins, and --key-id is that key's public-key fingerprint.
+      # Without them the manifest is hash-only and a pinned device rejects it as
+      # `bad_signature`.
       - name: Publish
         env:
           VERSION: ${{ steps.version.outputs.version }}
           OTA_DEST: ${{ secrets.OTA_DEST }}
+          OTA_SIGNING_KEY_PATH: ${{ runner.temp }}/ota-signing-key.pem
+          KEY_ID: ${{ steps.prep.outputs.key_id }}
         run: |
           set -euo pipefail
           design/ota-pull/deploy/ota-publish.sh \
@@ -95,7 +200,13 @@ jobs:
             --version "$VERSION" \
             --board waveshare_amoled_216 \
             --keep 5 \
+            --sign-key "$OTA_SIGNING_KEY_PATH" \
+            --key-id "$KEY_ID" \
             --dest "$OTA_DEST"
+
+      - name: Remove the signing key
+        if: ${{ always() }}
+        run: rm -f "$RUNNER_TEMP/ota-signing-key.pem"
 
       - name: Summarize
         env:
