@@ -496,6 +496,18 @@ static compare_res_t pull_compare(const pull_req_t& req, const OtaManifest& mf,
         return CR_REJECT;
     }
 
+    // Early signature policy gate (SIGNING.md §4 rule 2), decided HERE in
+    // COMPARE rather than after the download: a pinned key with no `sig` in the
+    // manifest can never activate, so reject it before the ~3 MB transfer
+    // (CR_REJECT -> pull_send_err("bad_signature") + pull_record_terminal(),
+    // the same terminal class as `hash_mismatch`). A present-but-invalid `sig`
+    // is still caught by the cryptographic check in pull_verify(). With no key
+    // pinned (SIGNING_PUBKEY_PEM empty) this is skipped: hash-only, unchanged.
+    if (SIGNING_PUBKEY_PEM[0] != '\0' && mf.sig[0] == '\0') {
+        *err_out = "bad_signature";
+        return CR_REJECT;
+    }
+
     // A check is only reporting: it never needs the heavier apply floor.
     if (!req.apply) return CR_CHECK_ONLY;
 
@@ -659,17 +671,20 @@ static bool pull_download(dl_ctx* c, const OtaManifest& mf, bool bypass) {
 // Policy (SIGNING.md section 4 rule 2):
 //   * no key pinned (SIGNING_PUBKEY_PEM empty): pre-P4 hash-only build; the
 //     check is skipped and logged.
-//   * key pinned, manifest unsigned: rejected as `bad_signature` -- this is the
-//     post-P4 behavior once a build turns verification on.
+//   * key pinned, manifest unsigned: rejected as `bad_signature`. This case is
+//     normally decided earlier, at COMPARE (pull_compare), so no download is
+//     started; the check below stays as a defensive backstop for any future
+//     caller that reaches VERIFY without passing through COMPARE.
 //   * key pinned, manifest signed: `ota_sig_verify_p256()` must accept it.
 // On any rejection the caller aborts the OTA handle and never activates.
 static bool pull_verify_signature(const OtaManifest& mf, const uint8_t* digest,
                                   const char** err) {
     const bool have_key = (SIGNING_PUBKEY_PEM[0] != '\0');
 
-    // Pure policy gate shared with the host test: no key -> always ok. Uses
-    // the parsed manifest only, so a "pinned key but no sig" manifest is
-    // rejected here even before any crypto runs.
+    // Pure policy gate shared with the host test: no key -> always ok. The
+    // "pinned key but no sig" case is normally already rejected at COMPARE
+    // (before the download); reaching it here would mean a caller bypassed that
+    // gate, so it still hard-fails rather than falling through to crypto.
     if (!ota_manifest_sig_ok(&mf, have_key)) {
         Serial.println("OTA: pull manifest unsigned but a signing key is pinned, rejecting");
         *err = "bad_signature";
