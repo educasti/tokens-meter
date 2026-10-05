@@ -6,6 +6,7 @@
 #include "../../ota_pull.h"
 #include "../../portal.h"
 #include "../../usage_pull.h"
+#include "../../usage_pair.h"
 #include <stdio.h>
 
 void ota_init(void) {}
@@ -45,3 +46,13 @@ bool portal_has_creds(void) { return false; }
 void usage_pull_init(void) {}
 void usage_pull_tick(void) {}
 bool usage_pull_active(void) { return false; }
+
+// Runtime pairing stubs: usage_pair.cpp is hardware-only (excluded from the sim
+// build). The sim has no token and never pairs.
+void usage_pair_init(void) {}
+void usage_pair_tick(void) {}
+bool usage_pair_has_token(void) { return false; }
+const char* usage_pair_code(void) { return ""; }
+const char* usage_pair_state(void) { return "idle"; }
+void usage_pair_start(void) {}
+void usage_pair_clear(void) {}

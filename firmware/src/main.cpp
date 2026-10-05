@@ -13,6 +13,7 @@
 #include "ota.h"
 #include "ota_pull.h"
 #include "usage_pull.h"
+#include "usage_pair.h"
 #include "portal.h"
 #include "splash.h"
 #include "oc_splash.h"
@@ -249,8 +250,14 @@ void setup() {
     // and start the worker right after the hybrid path is armed.
     ota_pull_init();
 
-    // Backend-WiFi usage pull: a no-op unless USAGE_BACKEND_URL and
-    // USAGE_DEVICE_TOKEN were injected at build time (scripts/gen_usage_config.py).
+    // Backend-WiFi pairing: load any stored device token first (NVS) so the
+    // usage pull knows whether it may run. Unpaired -> the pairing poll owns
+    // the radio until the owner approves the code (phase 2 contract section 6).
+    usage_pair_init();
+
+    // Backend-WiFi usage pull: a no-op unless USAGE_BACKEND_BASE was injected
+    // at build time (scripts/gen_usage_config.py). While unpaired it skips the
+    // pull and the pairing poll runs instead.
     usage_pull_init();
 
     // SoftAP captive portal: registers its handlers and logs whether an SSID is
@@ -365,6 +372,10 @@ void loop() {
     // provisioning AP is up (the portal refuses to start while a pull is active,
     // and this closes the other direction).
     if (!portal_is_active()) ota_pull_tick();
+    // Pairing poll when no device token is stored; it stands down while an OTA
+    // or the portal owns the radio. Run it before the usage pull so an unpaired
+    // device pairs rather than pulling.
+    if (!portal_is_active()) usage_pair_tick();
     // Same radio rule for the backend usage pull; it also stands down by itself
     // while an OTA owns the radio.
     if (!portal_is_active()) usage_pull_tick();

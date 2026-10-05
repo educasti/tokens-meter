@@ -13,15 +13,16 @@
 //     executed here in portal_tick() on the Arduino loop task.
 //   * The device advertises "Clawdmeter-XXXX" (XXXX = last two MAC bytes), runs
 //     a wildcard DNSServer that points every name at the portal IP and a
-//     WebServer on :80 serving a self-contained form. POSTing it writes the
+//     WebServer on :80 serving a self-contained form (plus the backend pairing
+//     code while the device is unpaired). POSTing the form writes the
 //     credentials through ota_set_wifi() (the one NVS write path) and stops the
 //     AP after a short linger. A 5 min deadline stops an unattended portal.
 //   * The portal never runs while a pull OTA or the hybrid OTA owns the radio.
 //
-// Memory: internal RAM is tight. The HTML lives in flash (.rodata) and is
-// served with send_P() so there is no full-page String copy; only the two short
-// form fields become heap Strings, and they are copied straight into
-// ota_set_wifi()'s fixed buffers.
+// Memory: internal RAM is tight. The static HTML lives in flash (.rodata) and
+// is streamed with sendContent_P() in Content-Length'd chunks — only the small
+// pairing-code block (~120 B) and the two short form fields ever become heap
+// Strings, and they are copied straight into ota_set_wifi()'s fixed buffers.
 #include "portal.h"
 
 #include <Arduino.h>
@@ -35,6 +36,16 @@
 
 #include "ota.h"
 #include "ota_pull.h"
+#include "usage_pair.h"
+
+// Format the 8-char backend pairing code as "ABCD-2345" for the page. The
+// phase-2 alphabet (PHASE2-CONTRACT.md §2) has no HTML-special characters, so
+// the result is safe to interpolate into the markup unchanged.
+static void format_pair_code(const char* code, char* buf, size_t len) {
+    if (!code || !code[0]) { buf[0] = '\0'; return; }
+    if (strlen(code) == 8) snprintf(buf, len, "%.4s-%.4s", code, code + 4);
+    else                   snprintf(buf, len, "%s", code);
+}
 
 // NVS location frozen by the OTA contract (design/ota-hybrid/DESIGN.md §2/§4,
 // the same keys ota.cpp reads/writes). Read-only here — writes go through
@@ -49,7 +60,7 @@ enum portal_req_t : uint8_t { PORTAL_REQ_NONE = 0, PORTAL_REQ_START, PORTAL_REQ_
 
 // ---- Pages (flash-resident) ------------------------------------------------
 
-static const char PORTAL_HTML[] PROGMEM =
+static const char PORTAL_HTML_HEAD[] PROGMEM =
     "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
     "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
     "<title>Clawdmeter WiFi</title><style>"
@@ -62,8 +73,19 @@ static const char PORTAL_HTML[] PROGMEM =
     "button{width:100%;margin-top:1.1rem;padding:.7rem;border:0;border-radius:8px;"
     "background:#238636;color:#fff;font-size:1rem}"
     ".s{font-size:.75rem;color:#6e7681;margin-top:1rem;line-height:1.4}"
+    ".pc{margin:.2rem 0 1rem;padding:.75rem;background:#0d1117;border:1px dashed #d97757;"
+    "border-radius:8px;text-align:center}"
+    ".pc .k{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:#8b949e}"
+    ".pc .c{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:1.6rem;"
+    "font-weight:700;letter-spacing:.12em;color:#faf9f5;margin:.25rem 0}"
+    ".pc .e{font-size:.75rem;color:#8b949e;margin:.35rem 0 0}"
     "</style></head><body><main>"
-    "<h1>Clawdmeter setup</h1><p>Connect this device to your WiFi network.</p>"
+    "<h1>Clawdmeter setup</h1><p>Connect this device to your WiFi network.</p>";
+
+// The form + footer are static. The pairing-code block that belongs between the
+// two halves is runtime state, so handle_root() streams the page in three
+// Content-Length'd chunks rather than building a full-page String.
+static const char PORTAL_HTML_TAIL[] PROGMEM =
     "<form method=\"POST\" action=\"/save\">"
     "<label for=\"ssid\">Network name (SSID)</label>"
     "<input id=\"ssid\" name=\"ssid\" maxlength=\"63\" required autocapitalize=\"off\" "
@@ -110,7 +132,32 @@ static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 // ---- HTTP handlers (run on the loop task via portal_tick) -------------------
 
 static void handle_root(void) {
-    s_http.send_P(200, "text/html", PORTAL_HTML);
+    // The pairing code is runtime state, so stream the page as three
+    // Content-Length'd chunks: the flash-resident head, a small dynamic code
+    // block, and the flash-resident form/footer. Chunking the body (rather than
+    // building one full-page String) keeps the bulk in flash and stays
+    // compatible with HTTP/1.0 clients, unlike a chunked Transfer-Encoding.
+    const char* code = usage_pair_code();
+    char block[384];
+    size_t block_len = 0;
+    if (code && code[0]) {
+        char codebuf[16];
+        format_pair_code(code, codebuf, sizeof(codebuf));
+        int n = snprintf(block, sizeof(block),
+            "<div class=\"pc\"><div class=\"k\">Pairing code</div>"
+            "<div class=\"c\">%s</div>"
+            "<p class=\"e\">Enter this code with the owner tool to pair this device.</p>"
+            "</div>", codebuf);
+        if (n > 0) block_len = ((size_t)n < sizeof(block)) ? (size_t)n : sizeof(block) - 1;
+    }
+
+    size_t head_len = strlen_P(PORTAL_HTML_HEAD);
+    size_t tail_len = strlen_P(PORTAL_HTML_TAIL);
+    s_http.setContentLength(head_len + block_len + tail_len);
+    s_http.send(200, "text/html", "");
+    s_http.sendContent_P(PORTAL_HTML_HEAD);
+    if (block_len) s_http.sendContent(block, block_len);
+    s_http.sendContent_P(PORTAL_HTML_TAIL);
 }
 
 static void handle_save(void) {

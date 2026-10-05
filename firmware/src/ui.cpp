@@ -5,8 +5,10 @@
 #include "oc_splash.h"
 #include "ota.h"
 #include "ota_pull.h"
+#include "usage_pair.h"
 #include <lvgl.h>
 #include <time.h>
+#include <string.h>
 #include "logo.h"
 #include "clawd_still.h"
 #include "icons.h"
@@ -69,6 +71,11 @@ struct Layout {
     int16_t pair_y1, pair_y2, pair_y3;
     int16_t idle_px;                 // sleeping-creature size on the idle screen
 
+    // Backend pairing-code view (phase 2): heading / code / hint offsets from
+    // the top of the content area, plus the big code font.
+    int16_t paircode_y1, paircode_y2, paircode_y3;
+    const lv_font_t* paircode_code_font;
+
     // Page indicator (one dot per screen in the current cycle)
     int16_t dots_y;                  // centre row of the dots
 
@@ -117,6 +124,10 @@ static void compute_layout(const BoardCaps& c) {
     L.pair_y2 = 120;
     L.pair_y3 = 160;
     L.idle_px = 160;
+    L.paircode_y1 = 48;
+    L.paircode_y2 = 138;
+    L.paircode_y3 = 214;
+    L.paircode_code_font = &font_styrene_48;
 
     if (c.height >= 460) {
         // Large layout — tuned for 480x480 (AMOLED-2.16).
@@ -148,6 +159,10 @@ static void compute_layout(const BoardCaps& c) {
         L.bt_credit_1_font = &font_styrene_16;
         L.bt_credit_2_font = &font_styrene_14;
         L.dots_y = 440;
+        L.paircode_y1 = 40;
+        L.paircode_y2 = 116;
+        L.paircode_y3 = 182;
+        L.paircode_code_font = &font_styrene_28;
     } else {
         // Small layout — tuned for 240x240 (LCD-1.54 and similar square TFTs).
         // Everything shrinks: fonts two steps down, panels ~half height, and
@@ -191,6 +206,10 @@ static void compute_layout(const BoardCaps& c) {
         L.bt_credit_1_font = &font_styrene_12;
         L.bt_credit_2_font = &font_styrene_12;
         L.dots_y = 234;
+        L.paircode_y1 = 6;
+        L.paircode_y2 = 48;
+        L.paircode_y3 = 100;
+        L.paircode_code_font = &font_styrene_20;
     }
 
     L.content_w = L.scr_w - 2 * L.margin;
@@ -219,6 +238,7 @@ static int      clock_fmt = 24;   // 12 or 24, set from the daemon payload
 static int      clock_last_min = -1;   // last rendered minute; avoids redrawing the title every tick
 static lv_obj_t* usage_group;   // the two usage panels — shown when connected
 static lv_obj_t* pair_group;    // pairing hint — shown when disconnected
+static lv_obj_t* paircode_group; // backend pairing code — shown while unpaired
 static lv_obj_t* bar_session;
 static lv_obj_t* lbl_session_pct;
 static lv_obj_t* lbl_session_label;
@@ -234,6 +254,10 @@ static lv_obj_t* lbl_session_pct_sym = nullptr;  // "%" in smaller font
 static lv_obj_t* lbl_spending_desc = nullptr;     // "of your monthly budget"
 static lv_obj_t* lbl_spending_status = nullptr;   // "Under pace" / "On pace" / "Over pace"
 static lv_obj_t* lbl_anim;      // status line: connection state + whimsical idle
+
+// Backend pairing-code view (phase 2) — the big code + a one-line hint.
+static lv_obj_t* lbl_paircode_code;
+static lv_obj_t* lbl_paircode_hint;
 
 // ---- Battery indicator (shared, on top) ----
 static lv_obj_t* battery_img;
@@ -568,6 +592,80 @@ static void build_pair_group(lv_obj_t* parent) {
     lv_obj_add_flag(pair_group, LV_OBJ_FLAG_HIDDEN);  // ui_update_ble_status decides
 }
 
+// Format the 8-char pairing code as "ABCD-2345" for readability. The alphabet
+// (PHASE2-CONTRACT.md §2) has no HTML/LVGL-special characters, so the result is
+// safe to drop straight into a label or the portal page.
+static void format_pair_code(const char* code, char* buf, size_t len) {
+    if (!code || !code[0]) { buf[0] = '\0'; return; }
+    if (strlen(code) == 8) snprintf(buf, len, "%.4s-%.4s", code, code + 4);
+    else                   snprintf(buf, len, "%s", code);
+}
+
+// Backend pairing-code view (phase 2, PHASE2-CONTRACT.md §7). Shown while the
+// device has no device token but a code has been generated; once a token is
+// stored the normal usage view returns (see update_view_state()). Mirrors
+// build_pair_group()'s full-content-area layout so the code is readable at arm's
+// length, and deliberately shows a code — not the BLE hint — so onboarding has a
+// single, unambiguous next step.
+static void build_pair_code_group(lv_obj_t* parent) {
+    paircode_group = lv_obj_create(parent);
+    lv_obj_set_size(paircode_group, L.scr_w, L.scr_h - L.content_y);
+    lv_obj_set_pos(paircode_group, 0, L.content_y);
+    lv_obj_set_style_bg_opa(paircode_group, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(paircode_group, 0, 0);
+    lv_obj_set_style_pad_all(paircode_group, 0, 0);
+    lv_obj_clear_flag(paircode_group, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(paircode_group, LV_OBJ_FLAG_EVENT_BUBBLE);
+
+    lv_obj_t* l1 = lv_label_create(paircode_group);
+    lv_label_set_text(l1, "Pairing code");
+    lv_obj_set_style_text_font(l1, L.bt_status_font, 0);
+    lv_obj_set_style_text_color(l1, COL_TEXT, 0);
+    lv_obj_align(l1, LV_ALIGN_TOP_MID, 0, L.paircode_y1);
+
+    lbl_paircode_code = lv_label_create(paircode_group);
+    lv_label_set_text(lbl_paircode_code, "");
+    lv_obj_set_style_text_font(lbl_paircode_code, L.paircode_code_font, 0);
+    lv_obj_set_style_text_color(lbl_paircode_code, COL_ACCENT, 0);
+    lv_obj_align(lbl_paircode_code, LV_ALIGN_TOP_MID, 0, L.paircode_y2);
+
+    lbl_paircode_hint = lv_label_create(paircode_group);
+    lv_label_set_text(lbl_paircode_hint, "");
+    lv_obj_set_style_text_font(lbl_paircode_hint, L.bt_device_font, 0);
+    lv_obj_set_style_text_color(lbl_paircode_hint, COL_DIM, 0);
+    lv_obj_set_style_text_align(lbl_paircode_hint, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(lbl_paircode_hint, L.content_w);
+    lv_obj_align(lbl_paircode_hint, LV_ALIGN_TOP_MID, 0, L.paircode_y3);
+
+    lv_obj_add_flag(paircode_group, LV_OBJ_FLAG_HIDDEN);
+}
+
+// The pairing code is runtime state and may appear or change after the group is
+// built, so refresh the two labels from usage_pair_*() on every tick while the
+// view is visible. Only writes when a value actually changed.
+static void tick_pair_code(void) {
+    if (!paircode_group || !lbl_paircode_code || !lbl_paircode_hint) return;
+
+    char code[16];
+    format_pair_code(usage_pair_code(), code, sizeof(code));
+
+    const char* st = usage_pair_state();
+    const char* hint = (st && strcmp(st, "error") == 0)
+        ? "Can't reach the server - retrying"
+        : "Enter this code in the owner tool to pair";
+
+    static char last_code[16];
+    static char last_hint[48];
+    if (strcmp(code, last_code) != 0) {
+        lv_label_set_text(lbl_paircode_code, code);
+        snprintf(last_code, sizeof(last_code), "%s", code);
+    }
+    if (strcmp(hint, last_hint) != 0) {
+        lv_label_set_text(lbl_paircode_hint, hint);
+        snprintf(last_hint, sizeof(last_hint), "%s", hint);
+    }
+}
+
 // Idle "Zzz" screen — shown when the host is connected but no usage update has
 // landed recently (token expired, daemon down, host asleep…). Full-screen, like
 // the pairing hint, so we never render hours-old numbers as if they were live.
@@ -652,6 +750,7 @@ static void init_usage_screen(lv_obj_t* scr) {
 
     build_pair_group(usage_container);
     build_idle_group(usage_container);
+    build_pair_code_group(usage_container);
 
     // Status line — always visible on the usage view. Driven by ui_tick_anim().
     lbl_anim = lv_label_create(usage_container);
@@ -829,15 +928,22 @@ static void ui_update_impl(const UsageData* data, bool external) {
     }
 }
 
-// Pick the usage-view sub-screen: pairing hint (BLE down), the idle "Zzz" screen
-// (connected but data has gone stale), or the live usage panels. Only re-lays-out
-// on an actual change. The animated status line stays visible everywhere — it
-// reads "Listening…" on the idle screen, keeping it alive rather than frozen.
+// Pick the usage-view sub-screen: the backend pairing code (unpaired, phase 2),
+// the BLE pairing hint (BLE down), the idle "Zzz" screen (connected but data has
+// gone stale), or the live usage panels. Only re-lays-out on an actual change.
+// The animated status line stays visible everywhere — it reads "Listening…" on
+// the idle screen and "Pairing…" on the code screen, keeping it alive.
 static void update_view_state(void) {
-    if (!usage_group || !pair_group || !idle_group) return;
+    if (!usage_group || !pair_group || !idle_group || !paircode_group) return;
     int v;
     const uint32_t now = lv_tick_get();
-    if (ext_received && data_ok && (now - ext_data_ms) < EXT_FRESH_MS) {
+    const char* pcode = usage_pair_code();
+    if (!usage_pair_has_token() && pcode && pcode[0]) {
+        // Backend pairing (phase 2): no device token yet but a code has been
+        // generated — show the code until the owner approves it, whatever the
+        // BLE state. Clears itself the moment usage_pair_has_token() flips.
+        v = 3;
+    } else if (ext_received && data_ok && (now - ext_data_ms) < EXT_FRESH_MS) {
         v = 2;  // live usage from the WiFi pull — shown whatever the BLE state
     } else if (!s_ble_connected) {
         v = 0;  // pairing hint
@@ -851,7 +957,9 @@ static void update_view_state(void) {
     lv_obj_add_flag(pair_group, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(idle_group, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(usage_group, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(v == 0 ? pair_group : v == 1 ? idle_group : usage_group,
+    lv_obj_add_flag(paircode_group, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(v == 0 ? pair_group : v == 1 ? idle_group :
+                      v == 2 ? usage_group : paircode_group,
                       LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -865,6 +973,7 @@ void ui_tick_anim(void) {
     if (current_screen != SCREEN_USAGE) return;
     update_view_state();
     if (view_state == 1) splash_mini_tick();   // animate the sleeping creature on the idle screen
+    else if (view_state == 3) tick_pair_code();  // keep the pairing code/hint current
 
     uint32_t now = lv_tick_get();
 
@@ -938,7 +1047,9 @@ void ui_tick_anim(void) {
     }
 
     const char* text;
-    if (!s_ble_connected && view_state != 2) {
+    if (view_state == 3) {
+        text = "Pairing";              // backend pairing code on screen
+    } else if (!s_ble_connected && view_state != 2) {
         text = "Waiting";              // advertising / waiting for a host connection
     } else if (view_state == 1) {      // idle — alternate so it reads as alive AND data-less
         text = (anim_msg_idx & 1) ? "No data" : "Listening";

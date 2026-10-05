@@ -1,10 +1,15 @@
-// Backend-WiFi usage pull. Contract: design/backend-wifi/PHASE1-CONTRACT.md
-// section 7. Hardware-only: the native sim links boards/sim/ota_sim.cpp
-// instead (the sim env's build_src_filter excludes this file).
+// Backend-WiFi usage pull. Contracts: design/backend-wifi/PHASE1-CONTRACT.md
+// section 7 and PHASE2-CONTRACT.md section 6. Hardware-only: the native sim
+// links boards/sim/ota_sim.cpp instead (the sim env's build_src_filter excludes
+// this file).
 //
 // Config is injected at build time by scripts/gen_usage_config.py from the
-// untracked firmware/certs/usage_backend.json (or env vars). Both macros empty
-// -> every entry point below is a no-op and nothing touches the radio.
+// untracked firmware/certs/usage_backend.json (or env vars): USAGE_BACKEND_BASE
+// is the URL up to "/usage" (e.g. https://<vm-ip>/api). The device token is NOT
+// a build macro anymore -- it is read from NVS (namespace "otah", key
+// "dev_token"), written by usage_pair. With no base URL the whole module is a
+// no-op and nothing touches the radio; while unpaired it skips the pull and
+// lets usage_pair run the pairing poll.
 //
 // Threading:
 //   * usage_pull_tick() runs on the Arduino loop task, is non-blocking, owns
@@ -23,11 +28,8 @@
 
 #include "usage_pull.h"
 
-#ifndef USAGE_BACKEND_URL
-#define USAGE_BACKEND_URL ""
-#endif
-#ifndef USAGE_DEVICE_TOKEN
-#define USAGE_DEVICE_TOKEN ""
+#ifndef USAGE_BACKEND_BASE
+#define USAGE_BACKEND_BASE ""
 #endif
 #ifndef USAGE_POLL_S
 #define USAGE_POLL_S 300
@@ -52,11 +54,11 @@
 #include "ota.h"
 #include "ota_pull.h"
 #include "ota_wifi.h"
+#include "usage_pair.h"
 #include "certs/pinned_server_pem.h"
 
 // sizeof() of a string literal is 1 for "", so this is a compile-time test.
-static constexpr bool kEnabled =
-    sizeof(USAGE_BACKEND_URL) > 1 && sizeof(USAGE_DEVICE_TOKEN) > 1;
+static constexpr bool kEnabled = sizeof(USAGE_BACKEND_BASE) > 1;
 
 #define USAGE_TASK_STACK   12288
 #define USAGE_TASK_PRIO    1
@@ -73,12 +75,13 @@ static constexpr bool kEnabled =
 // Failed pulls retry sooner than the poll interval, then fall back to it.
 static const uint32_t kFailBackoffMs[] = { 60000, 120000, 240000 };
 
-// ---- NVS (WiFi creds live in the hybrid-OTA namespace) ----------------------
+// ---- NVS (WiFi creds + device token live in the hybrid-OTA namespace) -------
 #define NVS_NS   "otah"
 #define K_SSID   "ssid"
 #define K_PASS   "pass"
+#define K_TOKEN  "dev_token"
 
-enum pull_result_t { PR_OK, PR_BUSY, PR_NO_WIFI, PR_FAIL, PR_NO_DATA };
+enum pull_result_t { PR_OK, PR_BUSY, PR_NO_WIFI, PR_FAIL, PR_NO_DATA, PR_UNPAIRED };
 
 static SemaphoreHandle_t s_run_sem = nullptr;
 static volatile bool     s_active = false;    // a cycle is queued or running
@@ -103,6 +106,16 @@ static bool load_creds(char* ssid, size_t sn, char* pass, size_t pn) {
     strlcpy(ssid, s.c_str(), sn);
     strlcpy(pass, p.c_str(), pn);
     return ssid[0] != '\0';
+}
+
+static bool load_token(char* out, size_t n) {
+    out[0] = '\0';
+    Preferences prefs;
+    if (!prefs.begin(NVS_NS, true)) return false;
+    String t = prefs.getString(K_TOKEN, "");
+    prefs.end();
+    strlcpy(out, t.c_str(), n);
+    return out[0] != '\0';
 }
 
 static bool wifi_join(const char* ssid, const char* pass) {
@@ -164,16 +177,23 @@ static bool parse_body(const char* body, UsageData* out) {
 }
 
 static pull_result_t do_get(void) {
+    // The token lives in NVS (written by usage_pair), not in a build macro.
+    char token[128];
+    if (!load_token(token, sizeof(token))) return PR_UNPAIRED;
+
+    char url[192];
+    snprintf(url, sizeof(url), "%s/usage", USAGE_BACKEND_BASE);
+
     WiFiClientSecure client;
     client.setCACert(PINNED_SERVER_PEM);   // pinned self-signed cert; never insecure
     HTTPClient http;
     http.setTimeout(HTTP_TIMEOUT_MS);
-    if (!http.begin(client, USAGE_BACKEND_URL)) {
+    if (!http.begin(client, url)) {
         http.end();
         return PR_FAIL;
     }
-    char auth[320];
-    snprintf(auth, sizeof(auth), "Bearer %s", USAGE_DEVICE_TOKEN);
+    char auth[160];
+    snprintf(auth, sizeof(auth), "Bearer %s", token);
     http.addHeader("Authorization", auth);
     http.addHeader("Accept", "application/json");
 
@@ -185,8 +205,12 @@ static pull_result_t do_get(void) {
     }
     if (code != 200) {
         http.end();
-        if (code == 401) Serial.println("USAGE: unauthorized (device token revoked or wrong)");
-        else             Serial.printf("USAGE: GET failed (%d)\n", code);
+        if (code == 401) {                 // revoked server-side -> re-pair (phase 2)
+            Serial.println("USAGE: 401 - device token revoked, clearing and re-pairing");
+            usage_pair_clear();
+            return PR_UNPAIRED;
+        }
+        Serial.printf("USAGE: GET failed (%d)\n", code);
         return PR_FAIL;
     }
     int len = http.getSize();
@@ -212,6 +236,8 @@ static pull_result_t do_get(void) {
 }
 
 static pull_result_t run_cycle(void) {
+    // Unpaired: usage_pair owns the radio for the pairing poll (phase 2).
+    if (!usage_pair_has_token()) return PR_UNPAIRED;
     if (!ota_wifi_acquire(OTA_WIFI_PULL)) return PR_BUSY;   // OTA / hybrid owns the radio
     pull_result_t r;
     char ssid[64], pass[64];
@@ -281,6 +307,8 @@ void usage_pull_tick(void) {
             wait_ms = (uint32_t)USAGE_POLL_S * 1000u;
         } else if (r == PR_BUSY) {
             wait_ms = BUSY_RETRY_MS;
+        } else if (r == PR_UNPAIRED) {
+            wait_ms = BUSY_RETRY_MS;   // pairing owns the radio; look again shortly
         } else {
             // Failure: retry sooner, then fall back to the poll interval. With
             // no stored WiFi there is nothing to retry until it is provisioned.
@@ -290,6 +318,13 @@ void usage_pull_tick(void) {
             }
         }
         s_next_ms = millis() + wait_ms;
+        return;
+    }
+
+    // Unpaired: usage_pair drives the pairing poll and owns the radio; do not
+    // schedule a usage pull until a token is stored (phase 2 contract section 6).
+    if (!usage_pair_has_token()) {
+        s_next_ms = millis() + BUSY_RETRY_MS;
         return;
     }
 
