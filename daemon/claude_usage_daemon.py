@@ -15,6 +15,7 @@ import os
 import re
 import shutil
 import signal
+import ssl
 import subprocess
 import sys
 import time
@@ -51,6 +52,9 @@ PORTFOLIO_INTERVAL = 60
 OPENCODE_WRITE_DELAY = 0.25
 # Same spacing for the portfolio payload, which lands between the two.
 PORTFOLIO_WRITE_DELAY = 0.25
+# Backend publish (design/backend-wifi/PHASE1-CONTRACT.md §6): hard cap on the
+# whole POST so a dead VM can never hold the daemon.
+BACKEND_TIMEOUT = 5.0
 
 # macOS: token lives in Keychain (service "Claude Code-credentials").
 # Linux: token lives in ~/.claude/.credentials.json.
@@ -471,6 +475,89 @@ def read_portfolio_path() -> Path | None:
     return None
 
 
+def read_backend_config() -> tuple[str, str, str] | None:
+    """Read `backend_url` / `backend_user_key` / `backend_ca` from the config.
+
+    Returns ``(url, user_key, ca_path)`` — ``ca_path`` is "" when unset — or
+    None when `backend_url` is not set, which keeps the publish OFF by default:
+    no `backend_url`, no network call. Values are NOT lowercased (a key is
+    case-sensitive).
+    """
+    vals = {"backend_url": "", "backend_user_key": "", "backend_ca": ""}
+    try:
+        if CONFIG_FILE.exists():
+            for line in CONFIG_FILE.read_text().splitlines():
+                line = line.split("#", 1)[0].strip()
+                if "=" not in line:
+                    continue
+                key, val = line.split("=", 1)
+                key = key.strip().lower()
+                if key in vals:
+                    vals[key] = val.strip()
+    except OSError:
+        pass
+    if not vals["backend_url"]:
+        return None
+    return vals["backend_url"], vals["backend_user_key"], vals["backend_ca"]
+
+
+def publish_backend(payload: dict) -> bool:
+    """POST the usage numbers to the owner's backend. Blocking — call it via
+    ``asyncio.to_thread``. Never raises; any failure is one generic log line.
+
+    Only the numbers leave this machine (s, sr, w, wr, st, t=now). The user key
+    goes in the Authorization header and is never logged, nor is the header.
+    TLS is verified against `backend_ca` when set (a pinned self-signed PEM,
+    trusted exclusively), else against the system CAs.
+    """
+    cfg = read_backend_config()
+    if cfg is None:
+        return False
+    url, user_key, ca_path = cfg
+    if not user_key:
+        log("Backend publish skipped: backend_user_key not set")
+        return False
+    body = {
+        "s": payload.get("s", 0),
+        "sr": payload.get("sr", 0),
+        "w": payload.get("w", 0),
+        "wr": payload.get("wr", 0),
+        "st": payload.get("st", "unknown"),
+        # Real epoch seconds — payload["t"] is a local-time value for the clock.
+        "t": int(time.time()),
+    }
+    try:
+        verify = (ssl.create_default_context(cafile=str(Path(ca_path).expanduser()))
+                  if ca_path else True)
+        resp = httpx.post(
+            url,
+            json=body,
+            headers={"Authorization": f"Bearer {user_key}"},
+            timeout=BACKEND_TIMEOUT,
+            verify=verify,
+        )
+        ok = resp.status_code == 200
+    except Exception:  # noqa: BLE001 — any error text could echo request details
+        ok = False
+    if not ok:
+        log("Backend publish failed")
+    return ok
+
+
+_backend_tasks: set[asyncio.Task] = set()
+
+
+def publish_backend_background(payload: dict) -> asyncio.Task | None:
+    """Fire the publish on a worker thread without awaiting it, so a slow or
+    dead backend never delays the BLE loop. No-op (no thread) when off."""
+    if read_backend_config() is None:
+        return None
+    task = asyncio.ensure_future(asyncio.to_thread(publish_backend, dict(payload)))
+    _backend_tasks.add(task)
+    task.add_done_callback(_backend_tasks.discard)
+    return task
+
+
 def add_chime_field(payload: dict) -> None:
     """Add "c":1 to the payload when the config opts in, so the firmware may
     sound the session-reset chime. Omitted entirely when chime is off."""
@@ -885,6 +972,9 @@ async def connect_and_run(target, stop_event: asyncio.Event) -> bool:
                 # numbers until the CLI re-seeds it.
                 payload, dead = await poll_active()
                 if payload is not None:
+                    # Optional mirror to the owner's backend (off unless
+                    # backend_url is set); off the BLE path, never awaited.
+                    publish_backend_background(payload)
                     if await session.write_payload(payload):
                         last_poll = time.time()
                         used_successfully = True

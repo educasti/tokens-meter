@@ -80,6 +80,23 @@ portfolio = off
 # ~/.config/claude-usage-monitor/portfolio; ~ is expanded.
 # portfolio_path = ~/.config/claude-usage-monitor/portfolio
 
+# --- Backend publish (optional, off by default) ----------------------------
+# Mirror each successful Claude poll (only s, sr, w, wr, st and a timestamp —
+# never a credential) to your always-on backend so the device can pull it over
+# WiFi. Nothing is sent unless backend_url is set.
+#
+# backend_url      = Full URL of the usage endpoint, e.g. https://<vm-ip>/api/usage
+# backend_user_key = Owner API key, sent as `Authorization: Bearer <key>`.
+#                    Keep this file private; the key is never logged.
+# backend_ca       = Optional path to the pinned PEM the backend's TLS
+#                    certificate is verified against (a self-signed server).
+#                    Unset = the system CAs.
+#
+# Example:
+# backend_url = https://203.0.113.10/api/usage
+# backend_user_key = <the owner key you registered with backend/manage.py set-user-key>
+# backend_ca = ~/.config/claude-usage-monitor/backend-ca.pem
+
 # --- Hybrid OTA (daemon/ota_flash.py) ---------------------------------------
 # These keys are ONLY read by the OTA helper, never by the running daemon. They
 # supply defaults for its CLI flags; any flag given on the command line wins.
