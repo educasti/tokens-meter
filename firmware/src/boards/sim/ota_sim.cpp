@@ -5,6 +5,7 @@
 #include "../../ota.h"
 #include "../../ota_pull.h"
 #include "../../portal.h"
+#include "../../usage_pull.h"
 #include <stdio.h>
 
 void ota_init(void) {}
@@ -38,3 +39,9 @@ void portal_start(void) {}
 void portal_stop(void) {}
 const char* portal_ssid(void) { return "Clawdmeter-SIM0"; }
 bool portal_has_creds(void) { return false; }
+
+// Backend usage-pull stubs: usage_pull.cpp is hardware-only (excluded from the
+// sim build), so main.cpp links these no-ops instead.
+void usage_pull_init(void) {}
+void usage_pull_tick(void) {}
+bool usage_pull_active(void) { return false; }

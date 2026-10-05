@@ -20,6 +20,11 @@ enum screen_t {
 
 void ui_init(void);
 void ui_update(const UsageData* data);
+// Same as ui_update(), but marks the data as coming from the WiFi backend pull
+// rather than the BLE daemon, so it uses the longer external freshness window
+// even while BLE is connected. (ui_update() already treats an update that lands
+// with BLE disconnected as external.)
+void ui_update_external(const UsageData* data);
 void ui_update_opencode(const OcData* data);
 void ui_update_portfolio(const PfData* data);
 void ui_tick_anim(void);

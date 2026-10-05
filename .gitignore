@@ -15,6 +15,10 @@ firmware/src/certs/pinned_server_pem.h
 # gen_pinned_cert.py. Absent -> an empty SIGNING_PUBKEY_PEM (hash-only build).
 firmware/certs/signing_pubkey.pem
 firmware/src/certs/signing_pubkey_pem.h
+# Backend-WiFi usage pull config (design/backend-wifi/PHASE1-CONTRACT.md section 7):
+# the backend URL and the per-device bearer token are injected as build macros by
+# scripts/gen_usage_config.py. The token is a credential — never commit it.
+firmware/certs/usage_backend.json
 *.key
 
 # Editor settings

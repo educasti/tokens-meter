@@ -12,6 +12,7 @@
 #include "ble.h"
 #include "ota.h"
 #include "ota_pull.h"
+#include "usage_pull.h"
 #include "portal.h"
 #include "splash.h"
 #include "oc_splash.h"
@@ -248,6 +249,10 @@ void setup() {
     // and start the worker right after the hybrid path is armed.
     ota_pull_init();
 
+    // Backend-WiFi usage pull: a no-op unless USAGE_BACKEND_URL and
+    // USAGE_DEVICE_TOKEN were injected at build time (scripts/gen_usage_config.py).
+    usage_pull_init();
+
     // SoftAP captive portal: registers its handlers and logs whether an SSID is
     // already stored. It does not touch the radio until portal_start() is
     // requested (auto-start below, or the {"cmd":"portal"} CTRL command).
@@ -360,6 +365,9 @@ void loop() {
     // provisioning AP is up (the portal refuses to start while a pull is active,
     // and this closes the other direction).
     if (!portal_is_active()) ota_pull_tick();
+    // Same radio rule for the backend usage pull; it also stands down by itself
+    // while an OTA owns the radio.
+    if (!portal_is_active()) usage_pull_tick();
 
     // Auto-start provisioning ~5 s after boot when no WiFi credentials are
     // stored: the device raises its SoftAP so a phone can reach the portal.

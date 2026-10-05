@@ -263,6 +263,14 @@ static lv_obj_t* idle_group;            // the "Zzz" idle screen
 static uint32_t  last_data_ms = 0;      // lv_tick when the last valid usage update landed
 static bool      data_received = false; // any valid update since boot
 static bool      data_ok = true;        // last payload's ok flag; a {"ok":false} beat = "no fresh data"
+// Usage that did NOT arrive over the BLE daemon link (the WiFi backend pull,
+// usage_pull.cpp). It refreshes every USAGE_POLL_S (300 s by default), far
+// slower than the 90 s BLE window, and it exists precisely when BLE is down or
+// idle — so it gets its own, longer freshness window: three default poll
+// intervals, enough to ride out a couple of failed pulls.
+static uint32_t  ext_data_ms = 0;       // lv_tick when the last external update landed
+static bool      ext_received = false;  // any external update since boot
+static const uint32_t EXT_FRESH_MS = 900000;   // 15 min
 static int       view_state = -1;       // -1 unknown / 0 pair / 1 idle / 2 usage
 static const uint32_t DATA_FRESH_MS = 90000;  // usage counts as "live" within this window (daemon sends ~60s)
 
@@ -717,12 +725,31 @@ void ui_init(void) {
     lv_obj_move_foreground(dots_root);
 }
 
+static void ui_update_impl(const UsageData* data, bool external);
+
+// BLE path (main.cpp) and, today, the WiFi pull too. With no BLE link the only
+// possible source is the WiFi pull, so an update that lands while disconnected
+// is classified external automatically.
 void ui_update(const UsageData* data) {
+    ui_update_impl(data, !s_ble_connected);
+}
+
+// Explicit WiFi-pull entry point: counts as external even while BLE is
+// connected (e.g. only the OS HID link is up and no daemon is feeding us).
+void ui_update_external(const UsageData* data) {
+    ui_update_impl(data, true);
+}
+
+static void ui_update_impl(const UsageData* data, bool external) {
     if (!data->valid) return;
     data_ok = data->ok;
     if (!data->ok) return;          // a {"ok":false} "no data" beat → fall through to idle, keep last numbers
     last_data_ms = lv_tick_get();   // a real usage update just landed
     data_received = true;
+    if (external) {
+        ext_data_ms = last_data_ms;
+        ext_received = true;
+    }
 
     if (data->clock_epoch > 0) {    // daemon supplied wall-clock time → drive the title clock
         clock_base_epoch = data->clock_epoch;
@@ -809,10 +836,13 @@ void ui_update(const UsageData* data) {
 static void update_view_state(void) {
     if (!usage_group || !pair_group || !idle_group) return;
     int v;
-    if (!s_ble_connected) {
+    const uint32_t now = lv_tick_get();
+    if (ext_received && data_ok && (now - ext_data_ms) < EXT_FRESH_MS) {
+        v = 2;  // live usage from the WiFi pull — shown whatever the BLE state
+    } else if (!s_ble_connected) {
         v = 0;  // pairing hint
-    } else if (data_received && data_ok && (lv_tick_get() - last_data_ms) < DATA_FRESH_MS) {
-        v = 2;  // live usage
+    } else if (data_received && data_ok && (now - last_data_ms) < DATA_FRESH_MS) {
+        v = 2;  // live usage (BLE daemon, 90 s window — unchanged)
     } else {
         v = 1;  // idle / Zzz
     }
@@ -908,11 +938,11 @@ void ui_tick_anim(void) {
     }
 
     const char* text;
-    if (!s_ble_connected) {
+    if (!s_ble_connected && view_state != 2) {
         text = "Waiting";              // advertising / waiting for a host connection
     } else if (view_state == 1) {      // idle — alternate so it reads as alive AND data-less
         text = (anim_msg_idx & 1) ? "No data" : "Listening";
-    } else if (now - connected_at_ms < 5000) {
+    } else if (s_ble_connected && now - connected_at_ms < 5000) {
         text = "Connected";
     } else {
         text = anim_messages[anim_msg_idx];
