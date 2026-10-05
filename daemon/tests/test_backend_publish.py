@@ -157,3 +157,81 @@ def test_background_runs_off_the_event_loop(cfg, monkeypatch):
 
     assert asyncio.run(run()) < 0.1
     assert seen["thread"] is not threading.main_thread()
+
+
+# --- no-device beat: the standalone pipe must run without BLE ---------------
+
+LIVE = {"s": 10, "sr": 60, "w": 20, "wr": 600, "st": "allowed", "ok": True}
+
+
+def test_backend_only_beat_polls_and_posts(cfg, posts, monkeypatch, capsys):
+    cfg(f"backend_url = {URL}\nbackend_user_key = {KEY}\n")
+
+    async def fake_poll(selector=None):
+        return dict(LIVE), False
+
+    monkeypatch.setattr(d, "poll_active", fake_poll)
+
+    async def run():
+        task = await d.backend_only_beat()
+        assert task is not None
+        return await task
+
+    assert asyncio.run(run()) is True
+    (url, kw), = posts
+    assert url == URL and kw["json"]["s"] == 10 and kw["json"]["w"] == 20
+    out = capsys.readouterr()
+    assert KEY not in out.out + out.err
+
+
+def test_backend_only_beat_dead_token_posts_nothing(cfg, posts, monkeypatch):
+    cfg(f"backend_url = {URL}\nbackend_user_key = {KEY}\n")
+
+    async def fake_poll(selector=None):
+        return None, True
+
+    monkeypatch.setattr(d, "poll_active", fake_poll)
+    assert asyncio.run(d.backend_only_beat()) is None
+    assert posts == []
+
+
+def _run_main_without_device(monkeypatch, polls):
+    """Run main() with discovery finding nothing until a poll happened."""
+    async def fake_poll(selector=None):
+        polls.append(1)
+        return dict(LIVE), False
+
+    async def no_device(skip_addr=None):
+        return None
+
+    monkeypatch.setattr(d, "poll_active", fake_poll)
+    monkeypatch.setattr(d, "discover_target", no_device)
+
+    async def run(until):
+        task = asyncio.ensure_future(d.main())
+        for _ in range(200):
+            await asyncio.sleep(0.01)
+            if until():
+                break
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    return run
+
+
+def test_main_publishes_when_no_device_found(cfg, posts, monkeypatch):
+    cfg(f"backend_url = {URL}\nbackend_user_key = {KEY}\n")
+    polls = []
+    run = _run_main_without_device(monkeypatch, polls)
+    asyncio.run(run(lambda: posts))
+    assert len(polls) == 1 and len(posts) == 1
+    assert posts[0][0] == URL
+
+
+def test_main_without_backend_url_does_not_poll_when_no_device(cfg, posts, monkeypatch):
+    cfg("")
+    polls = []
+    run = _run_main_without_device(monkeypatch, polls)
+    asyncio.run(run(lambda: False))
+    assert polls == [] and posts == []

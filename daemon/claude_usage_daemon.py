@@ -1072,6 +1072,24 @@ async def connect_and_run(target, stop_event: asyncio.Event) -> bool:
     return used_successfully
 
 
+async def backend_only_beat() -> asyncio.Task | None:
+    """One Claude poll + backend publish with no BLE device in the picture.
+
+    Keeps the standalone pipe (daemon -> backend -> WiFi device) alive while
+    discovery finds nothing. Caller gates it on `read_backend_config()`; the
+    publish itself stays fire-and-forget. Returns the publish task (None when
+    nothing was published). One log line per beat; never the key.
+    """
+    payload, dead = await poll_active()
+    if payload is None:
+        log("Backend-only: no token; nothing to publish" if dead
+            else "Backend-only: no usable config dir this cycle")
+        return None
+    log(f"Backend-only: publishing s={payload.get('s', 0)}% w={payload.get('w', 0)}% "
+        "(device not connected)")
+    return publish_backend_background(payload)
+
+
 async def main() -> None:
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -1091,12 +1109,20 @@ async def main() -> None:
 
     backoff = 1
     skip_addr: str | None = None  # macOS: a peripheral to skip for one cycle
+    last_backend_beat = 0.0  # backend-only cadence, independent of the BLE backoff
     while not stop_event.is_set():
         # Apply any pending skip exactly once, then clear it so the next
         # cycle re-tries retrieveConnected (the device may have recovered).
         target = await discover_target(skip_addr=skip_addr)
         skip_addr = None
         if not target:
+            # No device: still poll Claude and mirror to the backend on the
+            # POLL_INTERVAL cadence (config re-read each pass; off when no
+            # backend_url). Not tied to `backoff`, which only paces discovery.
+            if (read_backend_config() is not None
+                    and time.time() - last_backend_beat >= POLL_INTERVAL):
+                last_backend_beat = time.time()
+                await backend_only_beat()
             log(f"Device not found, retrying in {backoff}s...")
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=backoff)
