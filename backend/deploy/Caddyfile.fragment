@@ -1,0 +1,6 @@
+# Add inside the existing site block, BEFORE the catch-all `handle { ... }`.
+# TLS (the self-signed cert pinned in the firmware) is already configured for
+# the site; this only routes /api/* to the local backend service.
+handle /api/* {
+    reverse_proxy 127.0.0.1:8080
+}
