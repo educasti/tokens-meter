@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Firma de firmware — explicación interactiva</title>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b22; --panel2:#1c232d; --border:#2a3340;
+    --text:#e6edf3; --muted:#9aa7b4; --accent:#4f9cf9; --good:#3fb950;
+    --bad:#f85149; --warn:#d29922; --key:#bc8cff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  header{padding:28px 22px 10px;max-width:1080px;margin:0 auto}
+  h1{font-size:26px;margin:0 0 6px}
+  h2{font-size:18px;margin:26px 0 10px}
+  p{color:var(--muted);margin:8px 0}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 22px 60px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px;margin:14px 0}
+  .controls{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:6px 0 18px}
+  .toggle{display:flex;align-items:center;gap:8px;background:var(--panel2);border:1px solid var(--border);
+    border-radius:999px;padding:8px 14px;cursor:pointer;user-select:none}
+  .toggle .dot{width:12px;height:12px;border-radius:50%;background:#555}
+  .toggle.on .dot{background:var(--good);box-shadow:0 0 8px var(--good)}
+  .toggle.danger.on .dot{background:var(--bad);box-shadow:0 0 8px var(--bad)}
+  button.go{background:var(--accent);color:#04121f;border:0;border-radius:8px;padding:10px 18px;
+    font-weight:700;cursor:pointer;font-size:15px}
+  button.go:disabled{opacity:.5;cursor:default}
+  button.ghost{background:transparent;color:var(--text);border:1px solid var(--border);
+    border-radius:8px;padding:9px 14px;cursor:pointer}
+  .flow{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;align-items:stretch}
+  .node{background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:14px;position:relative;
+    transition:.25s;min-height:150px}
+  .node.active{border-color:var(--accent);box-shadow:0 0 0 2px rgba(79,156,249,.25)}
+  .node h3{margin:0 0 6px;font-size:15px}
+  .node .tag{font-size:12px;color:var(--muted)}
+  .badge{display:inline-block;font-size:12px;padding:2px 8px;border-radius:999px;margin-top:6px;border:1px solid var(--border)}
+  .badge.key{color:var(--key);border-color:var(--key)}
+  .badge.pub{color:var(--accent);border-color:var(--accent)}
+  .arrow{align-self:center;text-align:center;color:var(--muted);font-size:22px}
+  .manifest{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;
+    background:#0b0f14;border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:8px;white-space:pre-wrap}
+  .sig{color:var(--key)}
+  .attacker{margin-top:8px;border:1px dashed var(--bad);border-radius:8px;padding:8px;
+    color:var(--bad);font-size:13px;display:none}
+  .attacker.show{display:block}
+  .log{background:#0b0f14;border:1px solid var(--border);border-radius:10px;padding:12px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;min-height:120px}
+  .log .line{margin:3px 0;opacity:0;transform:translateY(4px);animation:in .25s forwards}
+  @keyframes in{to{opacity:1;transform:none}}
+  .ok{color:var(--good)} .no{color:var(--bad)} .wa{color:var(--warn)} .mu{color:var(--muted)} .ky{color:var(--key)}
+  .verdict{margin-top:12px;font-size:16px;font-weight:700;padding:12px;border-radius:10px;border:1px solid var(--border)}
+  .verdict.good{border-color:var(--good);color:var(--good)}
+  .verdict.bad{border-color:var(--bad);color:var(--bad)}
+  table{width:100%;border-collapse:collapse;margin-top:8px}
+  th,td{border:1px solid var(--border);padding:8px 10px;text-align:left;font-size:14px;vertical-align:top}
+  th{color:var(--muted);font-weight:600}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:820px){.flow{grid-template-columns:1fr}.arrow{display:none}.two{grid-template-columns:1fr}}
+  code{background:#0b0f14;border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-size:13px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Firmar el firmware: cómo el device sabe que la actualización es <em>tuya</em></h1>
+  <p>Explicación interactiva del modelo de seguridad del OTA por pull. Probalo abajo.</p>
+</header>
+
+<div class="wrap">
+
+  <div class="card">
+    <h2 style="margin-top:0">La idea en una frase</h2>
+    <p>
+      <b>HTTPS</b> cifra el transporte y <b>SHA-256</b> detecta corrupción, pero ninguno prueba
+      <b>quién</b> publicó el firmware. Si alguien controla tu servidor (o el TLS), puede publicar un
+      binario malicioso con un hash que coincida. <b>La firma</b> agrega esa prueba: el device solo
+      instala firmware firmado por tu <b>clave privada</b>, que nunca sale de tu control.
+    </p>
+  </div>
+
+  <h2>1) El flujo, paso a paso</h2>
+  <div class="controls">
+    <div class="toggle" id="tSign">
+      <span class="dot"></span><span>Firma activada en el device</span>
+    </div>
+    <div class="toggle danger" id="tAttack">
+      <span class="dot"></span><span>El atacante controla el servidor</span>
+    </div>
+    <button class="go" id="btnRun">Actualizar device ▸</button>
+    <button class="ghost" id="btnReset">Reiniciar</button>
+  </div>
+
+  <div class="flow">
+    <div class="node" id="nPub">
+      <h3>Editor / tu Mac</h3>
+      <div class="tag">Firma el firmware</div>
+      <div class="badge key">🔑 clave privada (nunca sale)</div>
+      <div class="manifest">version: 0.2.2
+sha256: 9f3a…
+<span class="sig" id="pubSig">sig: &lt;se agrega al firmar&gt;</span></div>
+    </div>
+    <div class="node" id="nSrv">
+      <h3>Servidor (VM)</h3>
+      <div class="tag">Solo publica archivos</div>
+      <div class="manifest" id="srvManifest">manifest.json
+clawdmeter-0.2.2.bin</div>
+      <div class="attacker" id="atk">⚠️ Atacante: reemplaza el binario y el hash por los suyos</div>
+    </div>
+    <div class="node" id="nDev">
+      <h3>Device</h3>
+      <div class="tag">Antes de instalar</div>
+      <div class="badge pub">🔓 clave pública fijada</div>
+      <div class="manifest">1. HTTPS + SHA-256
+2. <span id="devSigStep" class="mu">verificar firma (si está activada)</span>
+3. flashear slot inactivo</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="log" id="log"><div class="line mu">Pulsá «Actualizar device» para ver la secuencia…</div></div>
+    <div class="verdict" id="verdict" style="display:none"></div>
+  </div>
+
+  <h2>2) Sin firma vs con firma</h2>
+  <div class="two">
+    <div class="card">
+      <h3 style="margin-top:0;color:var(--warn)">Sin firma (hoy)</h3>
+      <table>
+        <tr><th>Protege</th><td>Transporte (HTTPS) e integridad del archivo (SHA-256)</td></tr>
+        <tr><th>No protege</th><td>Un servidor comprometido o un TLS con certificado robado</td></tr>
+        <tr><th>Resultado</th><td>El atacante publica binario+hash nuevos y el device los instala</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0;color:var(--good)">Con firma (P4)</h3>
+      <table>
+        <tr><th>Agrega</th><td>Autoría: firma ECDSA P-256 con tu clave privada</td></tr>
+        <tr><th>Clave</th><td>La privada nunca sale del publisher; el device fija la pública</td></tr>
+        <tr><th>Resultado</th><td>Aunque comprometan la VM, no pueden falsificar la firma → el device <b>aborta</b></td></tr>
+      </table>
+    </div>
+  </div>
+
+  <h2>3) Quién tiene qué</h2>
+  <div class="flow" style="grid-template-columns:1fr 1fr">
+    <div class="node">
+      <h3 style="color:var(--key)">🔑 Clave privada</h3>
+      <div class="tag">Solo en el publisher (tu Mac / CI)</div>
+      <p style="margin:6px 0 0">Sirve para <b>firmar</b>. Si se filtra, cualquiera puede firmar como vos.
+      Por eso vive fuera del repo y, idealmente, con permisos restringidos.</p>
+    </div>
+    <div class="node">
+      <h3 style="color:var(--accent)">🔓 Clave pública</h3>
+      <div class="tag">Fijada en el firmware del device</div>
+      <p style="margin:6px 0 0">Sirve para <b>verificar</b>. Es pública: puede ir en el repo/binario sin riesgo.
+      Se inyecta en build desde <code>firmware/certs/signing_pubkey.pem</code> (no versionado).</p>
+    </div>
+  </div>
+
+  <h2>4) Lo importante a tener en cuenta</h2>
+  <div class="card">
+    <table>
+      <tr><th>Es un compromiso</th><td>Si el device exige firma, <b>todo</b> manifiesto publicado debe ir firmado, o el update se rechaza.</td></tr>
+      <tr><th>Rotación</th><td>Cambiar de clave exige un firmware nuevo que lleve la pública nueva (igual que el cert TLS).</td></tr>
+      <tr><th>Qué NO arregla</th><td>Un device con la clave privada comprometida, o físico en tus manos sin Secure Boot.</td></tr>
+      <tr><th>Estado actual</th><td>Cableado y en modo <b>hash-only</b>: se activa al poner una pública en <code>signing_pubkey.pem</code>.</td></tr>
+    </table>
+  </div>
+
+</div>
+
+<script>
+(function(){
+  const $ = id => document.getElementById(id);
+  const state = { sign:false, attack:false, running:false };
+
+  function setToggle(el, on){ el.classList.toggle('on', on); }
+
+  function updateToggles(){
+    setToggle($('tSign'), state.sign);
+    setToggle($('tAttack'), state.attack);
+    $('pubSig').innerHTML = state.sign
+      ? 'sig: <span class="sig">MEQD…(firma ECDSA)</span>'
+      : 'sig: (ausente)';
+    $('atk').classList.toggle('show', state.attack);
+    $('devSigStep').className = state.sign ? 'ok' : 'mu';
+    $('devSigStep').textContent = state.sign
+      ? 'verificar firma con la pública  ← P4'
+      : 'sin firma: no se verifica autoría';
+    $('srvManifest').innerHTML = state.attack
+      ? 'manifest.json  <span class="no">(falso)</span>\nclawdmeter-0.2.2.bin <span class="no">(malware)</span>'
+      : 'manifest.json\nclawdmeter-0.2.2.bin';
+  }
+
+  $('tSign').onclick = () => { if(state.running) return; state.sign = !state.sign; updateToggles(); };
+  $('tAttack').onclick = () => { if(state.running) return; state.attack = !state.attack; updateToggles(); };
+
+  const sleep = ms => new Promise(r=>setTimeout(r,ms));
+  function log(text, cls){ const d=document.createElement('div'); d.className='line '+(cls||''); d.innerHTML=text; $('log').appendChild(d); $('log').scrollTop=$('log').scrollHeight; }
+
+  function clearLog(){ $('log').innerHTML=''; $('verdict').style.display='none'; ['nPub','nSrv','nDev'].forEach(i=>$(i).classList.remove('active')); }
+  function active(id){ ['nPub','nSrv','nDev'].forEach(i=>$(i).classList.toggle('active', i===id)); }
+
+  async function run(){
+    state.running = true; $('btnRun').disabled = true; clearLog();
+    log('Publicando versión 0.2.2…','mu'); active('nPub'); await sleep(500);
+    if(state.sign){
+      log('🔑 El editor firma el firmware con la <b>clave privada</b>.','ky');
+      log('   → manifiesto: { version, sha256, <span class="ky">sig</span> }','mu');
+    } else {
+      log('(Sin firma) El manifiesto solo lleva { version, sha256 }.','wa');
+    }
+    await sleep(700);
+    active('nSrv');
+    if(state.attack){
+      log('⚠️ El atacante <b>controla el servidor</b>:','no');
+      log('   reemplaza binario y manifiesto por malware + hash propio.','no');
+    } else {
+      log('El servidor publica el binario y el manifiesto.','mu');
+    }
+    await sleep(800);
+    active('nDev');
+    log('📡 El device descarga el manifiesto y el binario.','mu');
+    await sleep(600);
+    log('🔒 HTTPS válido  +  SHA-256 coincide  ✔','ok');
+    await sleep(500);
+
+    let verdict;
+    if(state.sign){
+      log('🔓 Verificando <span class="ky">firma ECDSA P-256</span> con la clave pública fijada…','mu');
+      await sleep(900);
+      if(state.attack){
+        log('✖ La firma NO corresponde: el atacante no tiene la clave privada.','no');
+        log('→ <b>bad_signature</b>: el device ABORTA y no activa nada.','no');
+        verdict = {c:'bad', t:'RESULTADO: actualización rechazada. El malware no entra.'};
+      } else {
+        log('✔ Firma válida: la publicó tu clave privada.','ok');
+        verdict = {c:'good', t:'RESULTADO: firmware legítimo instalado (slot inactivo → reboot).'};
+      }
+    } else {
+      await sleep(700);
+      if(state.attack){
+        log('✖ No hay firma que verificar: el hash coincide (el atacante lo puso).','no');
+        log('→ El device <b>instala el malware</b> como si fuera legítimo.','no');
+        verdict = {c:'bad', t:'RESULTADO: el device instala firmware MALICIOSO. (Sin firma, el servidor es la raíz de confianza.)'};
+      } else {
+        log('✔ Todo coincide; se instala el firmware legítimo.','ok');
+        verdict = {c:'good', t:'RESULTADO: firmware legítimo instalado.'};
+      }
+    }
+    const v=$('verdict'); v.className='verdict '+verdict.c; v.textContent=verdict.t; v.style.display='block';
+    active(null); state.running=false; $('btnRun').disabled=false;
+  }
+
+  $('btnRun').onclick = run;
+  $('btnReset').onclick = () => { if(state.running) return; clearLog(); log('Pulsá «Actualizar device» para ver la secuencia…','mu'); };
+  updateToggles();
+})();
+</script>
+</body>
+</html>
