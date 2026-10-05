@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
-"""Tokens-meter backend (phase 1): latest Claude usage per owner, over HTTP.
+"""Tokens-meter backend (phases 1-2): latest Claude usage per owner, over HTTP.
 
 Python 3 stdlib only. Binds a local port; Caddy terminates TLS in front of it.
-Contract: design/backend-wifi/PHASE1-CONTRACT.md sections 3-5.
+Contracts: design/backend-wifi/PHASE1-CONTRACT.md and PHASE2-CONTRACT.md §3-5.
 
-    POST /api/usage    Bearer <user api key>      -> store the latest reading
-    GET  /api/usage    Bearer <device token>      -> return it
-    GET  /api/health   (no auth)
+    POST /api/usage        Bearer <user api key>   -> store the latest reading
+    GET  /api/usage        Bearer <device token>   -> return it
+    GET  /api/health       (no auth)
+    POST /api/pair/start   (no auth, rate-limited) -> open/refresh a pairing code
+    GET  /api/pair/status  (no auth, rate-limited) -> pending|paired(token once)|claimed
 
-Secrets are only ever stored as SHA-256 hashes and are never logged.
+Secrets are only ever stored as SHA-256 hashes and are never logged. The one
+exception is the device token minted by `manage.py pair`: it must travel to the
+device through the status poll, so the `pairing` row holds it in the clear only
+between approval and the first fetch, and it is wiped the moment it is claimed.
 """
 
 import argparse
@@ -20,9 +25,10 @@ import math
 import os
 import sqlite3
 import sys
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 API_VERSION = "1"
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -31,6 +37,14 @@ DEFAULT_CONFIG = {"bind": "127.0.0.1:8080", "db": "data/backend.db"}
 MAX_BODY = 4096       # a usage reading is ~100 bytes
 MAX_TOKEN_LEN = 512   # longest Authorization credential we bother hashing
 REQUEST_TIMEOUT = 10  # seconds a client may stall on a socket read
+
+PAIR_TTL = 900        # a pairing code expires 15 min after pair/start
+PAIR_RATE_LIMIT = 30  # pairing requests allowed per IP per minute
+MAX_BOARD_LEN = 64    # board name carried by pair/start
+
+# Unambiguous pairing alphabet: no 0/O/1/I/L (PHASE2-CONTRACT §2).
+PAIR_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
+PAIR_CODE_LEN = 8
 
 log = logging.getLogger("backend")
 
@@ -46,6 +60,14 @@ CREATE TABLE IF NOT EXISTS usage (
     owner_id INTEGER PRIMARY KEY REFERENCES owner(id),
     s REAL, sr INTEGER, w REAL, wr INTEGER, st TEXT,
     updated_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS pairing (
+    code       TEXT PRIMARY KEY,
+    board      TEXT,
+    created_at INTEGER NOT NULL,
+    paired_at  INTEGER,
+    claimed_at INTEGER,
+    device_id  INTEGER REFERENCES device(id),
+    token      TEXT);
 """
 
 
@@ -140,6 +162,39 @@ def validate_reading(obj):
     return float(s), sr, float(w), wr, st
 
 
+def valid_pair_code(code):
+    """True for exactly 8 chars from the unambiguous pairing alphabet."""
+    return (isinstance(code, str) and len(code) == PAIR_CODE_LEN
+            and all(c in PAIR_ALPHABET for c in code))
+
+
+def pair_expired(created_at, now=None):
+    """A pending code is dead once PAIR_TTL seconds have elapsed."""
+    now = int(time.time()) if now is None else now
+    return now - created_at > PAIR_TTL
+
+
+class RateLimiter:
+    """Simple fixed-window, per-key in-memory counter (PHASE2-CONTRACT §3)."""
+
+    def __init__(self, limit, window=60):
+        self.limit = limit
+        self.window = window
+        self._lock = threading.Lock()
+        self._buckets = {}  # key -> (window_start, count)
+
+    def allow(self, key):
+        now = int(time.time())
+        start = now - (now % self.window)
+        with self._lock:
+            bucket_start, count = self._buckets.get(key, (start, 0))
+            if bucket_start != start:
+                count = 0
+            count += 1
+            self._buckets[key] = (start, count)
+            return count <= self.limit
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "tokens-meter-backend"
     sys_version = ""
@@ -199,11 +254,97 @@ class Handler(BaseHTTPRequestHandler):
             return None
         return self.rfile.read(length)
 
+    def _json_body(self):
+        """Parsed JSON object, or None if absent/malformed/not an object."""
+        body = self._read_body()
+        if body is None:
+            return None
+        try:
+            obj = json.loads(body.decode("utf-8"), parse_constant=_no_constants)
+        except (ValueError, UnicodeDecodeError):
+            return None
+        return obj if isinstance(obj, dict) else None
+
+    # --- pairing (unauthenticated, rate-limited)
+    def _client_ip(self):
+        """Real client IP: Caddy sets X-Forwarded-For; else the socket peer."""
+        forwarded = self.headers.get("X-Forwarded-For", "")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+        return self.client_address[0]
+
+    def _pair_rate_ok(self):
+        """Reply 429 and return False when this IP is over the limit."""
+        if not self.server.rate_limiter.allow(self._client_ip()):
+            self._err(429, "rate_limited")
+            return False
+        return True
+
+    def _pair_start(self):
+        if not self._pair_rate_ok():
+            return
+        obj = self._json_body()
+        if obj is None:
+            return self._err(400, "bad_json")
+        code = obj.get("code")
+        if not valid_pair_code(code):
+            return self._err(400, "bad_code")
+        board = obj.get("board")
+        if board is not None and not (isinstance(board, str)
+                                      and len(board) <= MAX_BOARD_LEN):
+            return self._err(400, "bad_json")
+        now = int(time.time())
+        conn = connect(self.server.db_path)
+        try:
+            with conn:  # re-start refreshes created_at (idempotent)
+                conn.execute(
+                    "INSERT INTO pairing (code, board, created_at) VALUES (?, ?, ?) "
+                    "ON CONFLICT(code) DO UPDATE SET board=excluded.board, "
+                    "created_at=excluded.created_at",
+                    (code, board, now))
+        finally:
+            conn.close()
+        self._send(200, {"ok": True, "state": "pending", "expires_in": PAIR_TTL})
+
+    def _pair_status(self):
+        if not self._pair_rate_ok():
+            return
+        code = parse_qs(urlsplit(self.path).query).get("code", [""])[0]
+        if not valid_pair_code(code):
+            return self._err(400, "bad_code")
+        conn = connect(self.server.db_path)
+        try:
+            row = conn.execute(
+                "SELECT created_at, paired_at, token FROM pairing WHERE code=?",
+                (code,)).fetchone()
+            if row is None:
+                return self._err(404, "unknown_code")
+            if row["paired_at"] is None:
+                if pair_expired(row["created_at"]):
+                    return self._err(410, "expired")
+                return self._send(200, {"ok": True, "state": "pending"})
+            # Approved: the token is handed out exactly once. The guarded UPDATE
+            # makes concurrent polls race-safe (only the winner sees rowcount 1).
+            with conn:
+                cur = conn.execute(
+                    "UPDATE pairing SET claimed_at=?, token=NULL "
+                    "WHERE code=? AND claimed_at IS NULL", (int(time.time()), code))
+            if cur.rowcount == 1 and row["token"] is not None:
+                return self._send(200, {"ok": True, "state": "paired",
+                                        "token": row["token"]})
+            return self._send(200, {"ok": True, "state": "claimed"})
+        finally:
+            conn.close()
+
     # --- routes
     def do_GET(self):
         path = urlsplit(self.path).path
         if path == "/api/health":
             return self._send(200, {"ok": True, "version": API_VERSION})
+        if path == "/api/pair/status":
+            return self._pair_status()
+        if path == "/api/pair/start":
+            return self._method_not_allowed()
         if path != "/api/usage":
             return self._err(404, "not_found")
         conn = connect(self.server.db_path)
@@ -224,6 +365,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = urlsplit(self.path).path
         if path == "/api/health":
+            return self._method_not_allowed()
+        if path == "/api/pair/start":
+            return self._pair_start()
+        if path == "/api/pair/status":
             return self._method_not_allowed()
         if path != "/api/usage":
             return self._err(404, "not_found")
@@ -264,14 +409,15 @@ class Handler(BaseHTTPRequestHandler):
 class Server(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, addr, db_path):
+    def __init__(self, addr, db_path, rate_limit=PAIR_RATE_LIMIT):
         self.db_path = db_path
+        self.rate_limiter = RateLimiter(rate_limit)
         super().__init__(addr, Handler)
 
 
-def make_server(db_path, host="127.0.0.1", port=8080):
+def make_server(db_path, host="127.0.0.1", port=8080, rate_limit=PAIR_RATE_LIMIT):
     init_db(db_path)
-    return Server((host, port), db_path)
+    return Server((host, port), db_path, rate_limit)
 
 
 def main(argv=None):

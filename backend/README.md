@@ -1,15 +1,18 @@
-# tokens-meter backend (phase 1)
+# tokens-meter backend (phases 1-2)
 
 A tiny Python 3 **stdlib-only** service that stores the latest Claude usage
 reading and hands it to the device. The Mac publishes, the device pulls. Only
-numbers are stored — never a Claude/OpenCode credential.
+numbers are stored — never a Claude/OpenCode credential. Phase 2 adds runtime
+pairing: the device shows a short code, the owner approves it, and the device
+fetches its token once (so no secret is baked into the firmware).
 
 ```
 Mac (collector)  --POST /api/usage-->  backend (SQLite)  <--GET /api/usage--  device
-                 user API key                              device token
+                 user API key                              device token (paired)
 ```
 
-Contract: `design/backend-wifi/PHASE1-CONTRACT.md` (sections 3-5).
+Contracts: `design/backend-wifi/PHASE1-CONTRACT.md` and
+`PHASE2-CONTRACT.md` (sections 3-5).
 
 ## API
 
@@ -20,6 +23,23 @@ All errors are `{"ok":false,"err":"<code>"}`.
 | `POST /api/usage` body `{"s","sr","w","wr","st"[,"t"]}` | `Bearer <user key>` | `200 {"ok":true,"updated_at":N}` · `401 unauthorized` · `400 bad_json` |
 | `GET /api/usage` | `Bearer <device token>` | `200 {"ok":true,"s","sr","w","wr","st","updated_at"}` · `401 unauthorized` · `404 no_data` |
 | `GET /api/health` | none | `200 {"ok":true,"version":"1"}` |
+| `POST /api/pair/start` body `{"code":"ABCD2345","board":"..."}` | none (rate-limited) | `200 {"ok":true,"state":"pending","expires_in":N}` · `400 bad_code` · `400 bad_json` · `429 rate_limited` |
+| `GET /api/pair/status?code=ABCD2345` | none (rate-limited) | `200 {"ok":true,"state":"pending"}` · `200 {"ok":true,"state":"paired","token":"<base64url 32B>"}` (once) · `200 {"ok":true,"state":"claimed"}` · `404 unknown_code` · `410 expired` · `400 bad_code` · `429 rate_limited` |
+
+## Pairing (phase 2)
+
+A code is **8 chars** from the unambiguous alphabet
+`23456789ABCDEFGHJKMNPQRSTUVWXYZ` (no `0/O/1/I/L`) and expires **15 min** after
+`pair/start` (re-starting the same code refreshes its clock, idempotently).
+Both pairing endpoints are **unauthenticated** but rate-limited per client IP
+(default 30 requests/minute, shared across the two paths; `X-Forwarded-For` is
+honoured because Caddy sits in front).
+
+The device polls `GET /api/pair/status`; once the owner runs `manage.py pair`,
+the next poll returns the token **exactly once** and later polls say `claimed`.
+The token is never printed by the CLI and is only stored as a SHA-256 hash in
+`device`; the `pairing` row holds the plaintext token solely between approval
+and that first fetch, and wipes it the moment it is claimed.
 
 `s`/`w` are percent (numbers), `sr`/`wr` integer minutes to reset (`-1` =
 unknown), `st` a non-empty status string (≤ 32 chars). `t` is validated if
@@ -48,8 +68,10 @@ cwd. The database is created with mode `0600`. Every `manage.py` command takes
 |---|---|
 | `set-user-key` | Set/replace the user API key. Read from stdin (hidden prompt on a tty), never argv; ≥ 32 chars. Stored hashed. |
 | `mint-device --label TEXT` | New device token (32 random bytes, base64url). Token goes to **stdout once**, the id to stderr; only its SHA-256 is stored. |
+| `pair --code CODE [--label TEXT]` | Approve a pending code: mint a device token bound to it and mark it `paired`. Prints the device id + label, **never the token** (the device fetches it once from `pair/status`). Fails on an unknown/expired/already-approved code. |
 | `revoke-device ID` | `GET /api/usage` with that token returns 401 from then on. |
 | `list-devices` | id / label / created / active-or-revoked. No tokens. |
+| `list-pending` | Pending pairing codes with board, age and `pending`/`expired`. No tokens. |
 
 Secrets are SHA-256 hashed at rest (both are 256-bit random, so no salt is
 needed). The request log is one line per request (`METHOD /path STATUS`); the
@@ -77,6 +99,31 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/api/usage -H "Aut
 # 401
 ```
 
+## Pairing round-trip (phase 2)
+
+```bash
+# device side: open a code, then poll it
+curl -s -X POST http://127.0.0.1:8080/api/pair/start \
+  -H 'Content-Type: application/json' \
+  -d '{"code":"ABCD2345","board":"waveshare_amoled_216"}'
+# {"ok":true,"state":"pending","expires_in":900}
+curl -s 'http://127.0.0.1:8080/api/pair/status?code=ABCD2345'
+# {"ok":true,"state":"pending"}
+
+# owner side: approve it (prints the device id, never the token)
+python3 manage.py pair --code ABCD2345 --label desk
+python3 manage.py list-pending          # codes still waiting, with age
+
+# device side: fetch the token once, then it is claimed
+curl -s 'http://127.0.0.1:8080/api/pair/status?code=ABCD2345'
+# {"ok":true,"state":"paired","token":"..."}
+curl -s 'http://127.0.0.1:8080/api/pair/status?code=ABCD2345'
+# {"ok":true,"state":"claimed"}
+```
+
+A fully scripted version of this (real server + real `manage.py` subprocess)
+lives in `backend/tests/roundtrip_phase2.py`.
+
 ## Deploy on the VM
 
 1. Copy `backend/` to `/opt/tokens-meter/backend` (a dedicated `tokens-meter`
@@ -93,5 +140,6 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/api/usage -H "Aut
 ## Tests
 
 ```bash
-python3 -m pytest backend/tests -q     # from the repo root; spins the server on an ephemeral port
+python3 -m pytest backend/tests -q                 # from the repo root; ephemeral port
+python3 backend/tests/roundtrip_phase2.py          # scripted pairing round-trip (acceptance §9.1)
 ```
