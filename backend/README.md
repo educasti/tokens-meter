@@ -126,16 +126,63 @@ lives in `backend/tests/roundtrip_phase2.py`.
 
 ## Deploy on the VM
 
-1. Copy `backend/` to `/opt/tokens-meter/backend` (a dedicated `tokens-meter`
-   user owns `data/`), create `config.json`, set the user key and mint a
+1. Keep `backend/` at `/home/educasti/Projects/tokens-meter/backend` (the
+   unit pins that path), create `config.json`, set the user key and mint a
    device token as above.
-2. `deploy/backend.service` is a systemd unit template (hardened, loopback
-   only): copy to `/etc/systemd/system/tokens-meter-backend.service`, then
-   `systemctl enable --now tokens-meter-backend`.
+2. Install the backend as a systemd service with
+   `sudo backend/deploy/install.sh` — see [Run as a
+   service](#run-as-a-service).
 3. `deploy/Caddyfile.fragment` goes inside the existing site block **before**
    the catch-all `handle {}`. Caddy keeps terminating TLS with the
    self-signed certificate already pinned in the firmware; the backend itself
    speaks plain HTTP on loopback and must not be exposed on a public address.
+
+## Run as a service
+
+`deploy/backend.service` is a hardened **system** unit (`User=educasti`,
+loopback only, `Restart=on-failure`, started after `network-online.target`),
+so the backend survives a VM reboot instead of being a loose user process.
+Install or update it with:
+
+```bash
+sudo backend/deploy/install.sh
+```
+
+The script is idempotent and does everything required:
+
+- writes the unit to `/etc/systemd/system/backend.service`,
+- ensures `backend/data/` exists and is owned by `educasti`,
+- stops a leftover manually-started `backend.py` (e.g. an old `setsid nohup`
+  process) so it cannot hold the port,
+- runs `systemctl daemon-reload` and `systemctl enable --now backend`
+  (restarting only when the unit changed while it was already running), and
+- prints `systemctl status` plus a best-effort `/api/health` probe.
+
+Manage it with `systemctl`:
+
+```bash
+sudo systemctl status  backend      # is it up?
+sudo systemctl stop    backend      # stop it
+sudo systemctl start   backend      # start it
+sudo systemctl restart backend      # stop + start
+sudo systemctl enable  backend      # start on boot (no immediate start)
+sudo systemctl disable backend      # do not start on boot
+```
+
+Logs go to the journal under the unit name `backend`:
+
+```bash
+journalctl -u backend               # everything so far
+journalctl -u backend -e            # jump to the end
+journalctl -u backend -f            # follow live
+journalctl -u backend --since today
+journalctl -u backend --since '10 min ago' -p warning
+```
+
+The unit only needs to write its own data directory; `ProtectSystem=strict`
+with `ReadWritePaths=…/backend/data` keeps the rest of the checkout read-only.
+A relative `db` path in `config.json` resolves against `config.json`'s
+directory, so the service and a manual run share the same database.
 
 ## Tests
 

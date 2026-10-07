@@ -1,26 +1,36 @@
-# systemd unit template. Adjust User/Group and the /opt/tokens-meter paths, then:
-#   sudo cp backend.service /etc/systemd/system/tokens-meter-backend.service
-#   sudo systemctl daemon-reload && sudo systemctl enable --now tokens-meter-backend
+# System systemd unit for the tokens-meter usage backend.
+#
+# Install / update it with:   sudo backend/deploy/install.sh
+# Or manually:
+#   sudo install -m 0644 backend/deploy/backend.service \
+#        /etc/systemd/system/backend.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now backend
+#
+# The backend binds loopback only; Caddy terminates TLS in front of it.
 [Unit]
 Description=tokens-meter usage backend
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-User=tokens-meter
-Group=tokens-meter
-WorkingDirectory=/opt/tokens-meter/backend
-ExecStart=/usr/bin/python3 /opt/tokens-meter/backend/backend.py --config /opt/tokens-meter/backend/config.json
+User=educasti
+Group=educasti
+WorkingDirectory=/home/educasti/Projects/tokens-meter/backend
+ExecStart=/usr/bin/python3 backend.py --config config.json
 Restart=on-failure
 RestartSec=3
 
-# Hardening: the service only needs to write its own data directory.
+# Hardening: the service runs as an unprivileged user and only needs to write
+# its own data directory. The checkout lives under /home, so ProtectHome must
+# stay read-only (not "yes") and data/ is carved out read-write.
 NoNewPrivileges=true
 ProtectSystem=strict
-ProtectHome=true
+ProtectHome=read-only
 PrivateTmp=true
 PrivateDevices=true
-ReadWritePaths=/opt/tokens-meter/backend/data
+ReadWritePaths=/home/educasti/Projects/tokens-meter/backend/data
 UMask=0077
 
 [Install]
