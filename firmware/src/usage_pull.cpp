@@ -32,8 +32,20 @@
 #ifndef USAGE_BACKEND_BASE
 #define USAGE_BACKEND_BASE ""
 #endif
+// Poll cadence (ROADMAP section 8, phase 4: battery-adaptive). The device is on
+// external power far more often than it is battery-critical, so it polls fast
+// there; on battery it stretches the interval to keep the radio (the dominant
+// drain) asleep. USAGE_POLL_S stays the *battery* interval so the existing
+// build-time "poll_s" knob (gen_usage_config.py) keeps controlling the
+// on-battery cadence; USAGE_POLL_CHARGING_S is the faster external-power one.
 #ifndef USAGE_POLL_S
 #define USAGE_POLL_S 300
+#endif
+#ifndef USAGE_POLL_BATTERY_S
+#define USAGE_POLL_BATTERY_S USAGE_POLL_S
+#endif
+#ifndef USAGE_POLL_CHARGING_S
+#define USAGE_POLL_CHARGING_S 60
 #endif
 
 #include <Arduino.h>
@@ -56,6 +68,7 @@
 #include "ota_wifi.h"
 #include "usage_pair.h"
 #include "net_worker.h"
+#include "hal/power_hal.h"
 #include "certs/pinned_server_pem.h"
 
 // sizeof() of a string literal is 1 for "", so this is a compile-time test.
@@ -71,6 +84,17 @@ static constexpr bool kEnabled = sizeof(USAGE_BACKEND_BASE) > 1;
 
 // Failed pulls retry sooner than the poll interval, then fall back to it.
 static const uint32_t kFailBackoffMs[] = { 60000, 120000, 240000 };
+
+// Adaptive interval (ROADMAP section 8). Evaluated whenever the next pull is
+// scheduled, so plugging in or unplugging the USB cable is picked up from the
+// following cycle on: no radio wakeups are needed just to re-check the source.
+// power_hal_is_vbus_in() covers a board with no battery reading but a cable in.
+static uint32_t poll_interval_ms(void) {
+    bool on_power = power_hal_is_charging() || power_hal_is_vbus_in();
+    uint32_t secs = on_power ? (uint32_t)USAGE_POLL_CHARGING_S
+                             : (uint32_t)USAGE_POLL_BATTERY_S;
+    return secs * 1000u;
+}
 
 // ---- NVS (WiFi creds + device token live in the hybrid-OTA namespace) -------
 #define NVS_NS   "otah"
@@ -267,7 +291,8 @@ void usage_pull_init(void) {
     s_next_ms = millis() + FIRST_PULL_MS;
     // No per-module task: the blocking cycle runs on the shared net_worker task
     // (one 12 KB internal-RAM stack), created once in setup().
-    Serial.printf("USAGE: pull enabled, every %us\n", (unsigned)USAGE_POLL_S);
+    Serial.printf("USAGE: pull enabled, %us on battery / %us on external power\n",
+        (unsigned)USAGE_POLL_BATTERY_S, (unsigned)USAGE_POLL_CHARGING_S);
 }
 
 void usage_pull_tick(void) {
@@ -292,17 +317,20 @@ void usage_pull_tick(void) {
         uint32_t wait_ms;
         if (r == PR_OK || r == PR_NO_DATA) {
             s_fail_n = 0;
-            wait_ms = (uint32_t)USAGE_POLL_S * 1000u;
+            wait_ms = poll_interval_ms();
         } else if (r == PR_BUSY) {
             wait_ms = BUSY_RETRY_MS;
         } else if (r == PR_UNPAIRED) {
             wait_ms = BUSY_RETRY_MS;   // pairing owns the radio; look again shortly
         } else {
-            // Failure: retry sooner, then fall back to the poll interval. With
+            // Failure: retry sooner than the interval, then fall back to it. With
             // no stored WiFi there is nothing to retry until it is provisioned.
-            wait_ms = (uint32_t)USAGE_POLL_S * 1000u;
+            // The backoff is capped at the adaptive interval so a fast charging
+            // cadence is never slowed down by the battery-sized retry table.
+            wait_ms = poll_interval_ms();
             if (r == PR_FAIL && s_fail_n < sizeof(kFailBackoffMs) / sizeof(kFailBackoffMs[0])) {
-                wait_ms = kFailBackoffMs[s_fail_n++];
+                uint32_t backoff = kFailBackoffMs[s_fail_n++];
+                if (backoff < wait_ms) wait_ms = backoff;
             }
         }
         s_next_ms = millis() + wait_ms;
