@@ -14,6 +14,7 @@
 #include "ota_pull.h"
 #include "usage_pull.h"
 #include "usage_pair.h"
+#include "net_worker.h"
 #include "portal.h"
 #include "splash.h"
 #include "oc_splash.h"
@@ -246,8 +247,19 @@ void setup() {
     }
 #endif
 
+    // One shared network worker for every blocking WiFi/TLS/flash job (pull
+    // OTA, backend usage pull, pairing). It replaces the three per-module 12 KB
+    // internal-RAM stacks that used to be resident at boot: only one job can run
+    // at a time (single WiFi owner), so one stack suffices and the ~24 KB of
+    // freed contiguous internal RAM lets the manifest TLS handshake allocate
+    // again (it failed with MBEDTLS_ERR_SSL_ALLOC_FAILED before). Hardware-only:
+    // the sim has no worker and its module stubs need none.
+#ifndef BOARD_SIM
+    net_worker_init();
+#endif
+
     // Pull OTA shares the "otah" namespace and the WiFi owner; load its schedule
-    // and start the worker right after the hybrid path is armed.
+    // and prepare its worker right after the hybrid path is armed.
     ota_pull_init();
 
     // Backend-WiFi pairing: load any stored device token first (NVS) so the

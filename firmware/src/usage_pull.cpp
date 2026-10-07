@@ -14,9 +14,10 @@
 // Threading:
 //   * usage_pull_tick() runs on the Arduino loop task, is non-blocking, owns
 //     the schedule, and is the only place ui_update() is called.
-//   * usage_pull_task (12 KB internal stack, core 0) does the blocking
-//     JOIN -> SNTP -> GET sequence, like ota_pull's worker, and stages the
-//     parsed UsageData for the loop task under a spinlock.
+//   * the blocking JOIN -> SNTP -> GET sequence runs on the shared network
+//     worker (net_worker.cpp: one 12 KB internal-RAM stack, core 0), like
+//     ota_pull's worker, and stages the parsed UsageData for the loop task
+//     under a spinlock.
 //
 // Trust: same pinned self-signed certificate as pull-OTA
 // (certs/pinned_server_pem.h). Verification is always ON: setInsecure() is
@@ -46,7 +47,6 @@
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
-#include <freertos/semphr.h>
 #include <freertos/portmacro.h>
 
 #include "data.h"
@@ -55,14 +55,11 @@
 #include "ota_pull.h"
 #include "ota_wifi.h"
 #include "usage_pair.h"
+#include "net_worker.h"
 #include "certs/pinned_server_pem.h"
 
 // sizeof() of a string literal is 1 for "", so this is a compile-time test.
 static constexpr bool kEnabled = sizeof(USAGE_BACKEND_BASE) > 1;
-
-#define USAGE_TASK_STACK   12288
-#define USAGE_TASK_PRIO    1
-#define USAGE_TASK_CORE    0
 
 #define FIRST_PULL_MS      10000u    // first pull this long after boot
 #define BUSY_RETRY_MS      30000u    // radio owned by OTA / portal: look again
@@ -83,7 +80,6 @@ static const uint32_t kFailBackoffMs[] = { 60000, 120000, 240000 };
 
 enum pull_result_t { PR_OK, PR_BUSY, PR_NO_WIFI, PR_FAIL, PR_NO_DATA, PR_UNPAIRED };
 
-static SemaphoreHandle_t s_run_sem = nullptr;
 static volatile bool     s_active = false;    // a cycle is queued or running
 static volatile int      s_result = -1;       // pull_result_t of the last cycle, -1 = none yet
 static portMUX_TYPE      s_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -256,14 +252,12 @@ static pull_result_t run_cycle(void) {
     return r;
 }
 
-static void usage_pull_task(void* arg) {
+// Job body for the shared network worker. One full blocking cycle; clears
+// s_active when it returns so usage_pull_tick() may schedule the next one.
+static void usage_pull_job(void* arg) {
     (void)arg;
-    for (;;) {
-        if (xSemaphoreTake(s_run_sem, portMAX_DELAY) == pdTRUE) {
-            s_result = (int)run_cycle();
-            s_active = false;
-        }
-    }
+    s_result = (int)run_cycle();
+    s_active = false;
 }
 
 // ---- Public API -------------------------------------------------------------
@@ -271,19 +265,13 @@ static void usage_pull_task(void* arg) {
 void usage_pull_init(void) {
     if (!kEnabled) return;                 // feature off: no task, no radio
     s_next_ms = millis() + FIRST_PULL_MS;
-    s_run_sem = xSemaphoreCreateBinary();
-    if (!s_run_sem) {
-        Serial.println("USAGE: semaphore alloc failed");
-        return;
-    }
-    // Stack MUST be in internal RAM (NVS/flash access from a PSRAM stack asserts).
-    xTaskCreatePinnedToCore(usage_pull_task, "usage_pull", USAGE_TASK_STACK, nullptr,
-                            USAGE_TASK_PRIO, nullptr, USAGE_TASK_CORE);
+    // No per-module task: the blocking cycle runs on the shared net_worker task
+    // (one 12 KB internal-RAM stack), created once in setup().
     Serial.printf("USAGE: pull enabled, every %us\n", (unsigned)USAGE_POLL_S);
 }
 
 void usage_pull_tick(void) {
-    if (!kEnabled || !s_run_sem) return;
+    if (!kEnabled) return;
 
     // Apply a finished result on the loop task (LVGL is single-threaded).
     if (s_staged_ready) {
@@ -331,12 +319,12 @@ void usage_pull_tick(void) {
     if ((int32_t)(millis() - s_next_ms) < 0) return;
 
     // Never contend for the radio: leave it to OTA, and look again shortly.
-    if (ota_is_active() || ota_pull_is_active() || ota_wifi_is_held()) {
+    if (ota_is_active() || ota_pull_is_active() || ota_wifi_is_held() || net_worker_busy()) {
         s_next_ms = millis() + BUSY_RETRY_MS;
         return;
     }
     s_active = true;
-    xSemaphoreGive(s_run_sem);
+    if (!net_worker_submit(usage_pull_job, nullptr)) s_active = false;
 }
 
 bool usage_pull_active(void) {

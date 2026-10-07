@@ -11,9 +11,12 @@
 //   * ota_pull_tick() runs on the Arduino loop task and is non-blocking: it
 //     applies the boot / 24 h schedule, arbitrates the radio with the hybrid
 //     path, and wakes the worker.
-//   * ota_pull_task (12 KB, core 0, D9) performs the blocking JOIN → … → REBOOT
-//     sequence. It owns the only long stack in the pull path so the loop task
-//     is never inflated by a TLS handshake.
+//   * the blocking JOIN → … → REBOOT sequence runs on the shared network worker
+//     (net_worker.cpp: one 12 KB internal-RAM stack, core 0). It owns the only
+//     long stack in the pull path so the loop task is never inflated by a TLS
+//     handshake, and the stack is shared with the usage pull / pairing workers
+//     instead of each module keeping its own resident 12 KB stack (which had
+//     starved the internal heap and broken the manifest TLS handshake).
 //
 // Anti-brick invariants (§7.2, §11):
 //   * never write the running slot — the target is asserted != running;
@@ -40,7 +43,6 @@
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
-#include <freertos/semphr.h>
 #include <freertos/portmacro.h>
 
 #include "ota.h"
@@ -50,6 +52,7 @@
 #include "ota_semver.h"
 #include "ota_sig.h"
 #include "ota_wifi.h"
+#include "net_worker.h"
 #include "hal/board_caps.h"
 #include "hal/power_hal.h"
 #include "certs/pinned_server_pem.h"
@@ -90,10 +93,8 @@
 #endif
 
 // ---- Tuning (DESIGN §7.1, §7.3, §10) ---------------------------------------
-#define PULL_TASK_STACK      12288
-#define PULL_TASK_PRIO       1
-#define PULL_TASK_CORE       0
-
+// The blocking worker is the shared net_worker task (one 12 KB internal-RAM
+// stack, core 0, created once in setup); this module only submits jobs to it.
 #define WIFI_JOIN_MS         20000u    // §7.1 WIFI_JOIN timeout
 #define SNTP_TIMEOUT_MS      15000u    // §7.1 SNTP_TIME_SYNC timeout
 #define MANIFEST_TIMEOUT_MS  15000u    // §7.1 FETCH_MANIFEST timeout
@@ -155,9 +156,8 @@ static volatile bool s_ctrl_pending = false;
 static portMUX_TYPE  s_ctrl_mux = portMUX_INITIALIZER_UNLOCKED;
 
 // One-slot handoff, loop task → worker task. The loop only fills this while the
-// worker is idle, so the binary semaphore is the synchronisation point.
+// worker is idle; net_worker_submit() failing is the synchronisation backstop.
 static pull_req_t       s_run_req;
-static SemaphoreHandle_t s_run_sem = nullptr;
 
 // Scheduling state (DESIGN §10.1).
 static bool     s_auto = true;
@@ -910,13 +910,11 @@ static void pull_run_cycle(void) {
     s_state = PS_IDLE;
 }
 
-static void ota_pull_task(void* arg) {
+// Job body for the shared network worker (net_worker.cpp). Runs with the one
+// shared 12 KB internal-RAM stack; s_state returns to PS_IDLE when it returns.
+static void ota_pull_job(void* arg) {
     (void)arg;
-    for (;;) {
-        if (xSemaphoreTake(s_run_sem, portMAX_DELAY) == pdTRUE) {
-            pull_run_cycle();
-        }
-    }
+    pull_run_cycle();
 }
 
 // ---- Public API ------------------------------------------------------------
@@ -935,16 +933,9 @@ void ota_pull_init(void) {
         prefs.end();
     }
 
-    s_run_sem = xSemaphoreCreateBinary();
-    if (s_run_sem) {
-        // Stack MUST be in internal RAM: a PSRAM stack asserts in
-        // spi_flash_disable_interrupts_caches... as soon as the task touches
-        // NVS/flash (WiFi creds, OTA flash).
-        xTaskCreatePinnedToCore(ota_pull_task, "ota_pull", PULL_TASK_STACK, nullptr,
-                                PULL_TASK_PRIO, nullptr, PULL_TASK_CORE);
-    } else {
-        Serial.println("OTA: pull task semaphore alloc failed");
-    }
+    // No per-module task: the blocking worker is the shared net_worker task,
+    // created once in setup(). This keeps only ONE 12 KB internal-RAM stack
+    // resident for all three pull paths.
 
     Serial.printf("OTA: pull init auto=%d last_chk=%lu defer=%lu chk_fail=%u etag=%s\n",
                   (int)s_auto, (unsigned long)s_last_chk, (unsigned long)s_defer,
@@ -953,6 +944,9 @@ void ota_pull_init(void) {
 
 void ota_pull_tick(void) {
     if (s_state != PS_IDLE || ota_is_active()) return;   // busy or hybrid owns the radio
+    // Do not consume a one-shot BLE request while the shared worker is still
+    // busy with another pull; the request stays queued in s_ctrl_pending.
+    if (net_worker_busy()) return;
 
     pull_req_t req = {};
     bool have = false;
@@ -1017,10 +1011,17 @@ void ota_pull_tick(void) {
         return;
     }
 
+    bool had_boot_check = s_boot_checked;
     s_run_req = req;
     s_boot_checked = true;
     s_state = PS_JOIN;   // expose "active" to the UI before the worker runs
-    if (s_run_sem) xSemaphoreGive(s_run_sem);
+    if (!net_worker_submit(ota_pull_job, nullptr)) {
+        // Slot occupied (defensive: net_worker_busy() gated above). Revert so
+        // the next tick retries rather than dropping the check.
+        s_boot_checked = had_boot_check;
+        s_state = PS_IDLE;
+        s_next_sched_ms = millis() + 1000;
+    }
 }
 
 void ota_pull_handle_ctrl(const char* json) {

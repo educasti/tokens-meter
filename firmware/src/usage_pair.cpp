@@ -44,21 +44,17 @@
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
-#include <freertos/semphr.h>
 #include <freertos/portmacro.h>
 
 #include "ota.h"
 #include "ota_pull.h"
 #include "ota_wifi.h"
+#include "net_worker.h"
 #include "hal/board_caps.h"
 #include "certs/pinned_server_pem.h"
 
 // sizeof() of a string literal is 1 for "", so this is a compile-time test.
 static constexpr bool kEnabled = sizeof(USAGE_BACKEND_BASE) > 1;
-
-#define PAIR_TASK_STACK   12288
-#define PAIR_TASK_PRIO    1
-#define PAIR_TASK_CORE    0
 
 #define FIRST_PAIR_MS     5000u     // first pairing attempt this long after boot
 #define BUSY_RETRY_MS     15000u    // radio owned by OTA: look again shortly
@@ -97,7 +93,6 @@ enum pair_result_t {
 
 enum pair_state_t { ST_IDLE, ST_PAIRING, ST_PAIRED, ST_ERROR };
 
-static SemaphoreHandle_t s_run_sem = nullptr;
 static volatile bool     s_active = false;   // a cycle is queued or running
 static volatile int      s_result = -1;      // pair_result_t of the last cycle
 static portMUX_TYPE      s_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -373,14 +368,12 @@ static pair_result_t run_cycle(void) {
     return r;
 }
 
-static void pair_task(void* arg) {
+// Job body for the shared network worker. One blocking pairing cycle; clears
+// s_active when it returns so usage_pair_tick() may schedule the next one.
+static void usage_pair_job(void* arg) {
     (void)arg;
-    for (;;) {
-        if (xSemaphoreTake(s_run_sem, portMAX_DELAY) == pdTRUE) {
-            s_result = (int)run_cycle();
-            s_active = false;
-        }
-    }
+    s_result = (int)run_cycle();
+    s_active = false;
 }
 
 // ---- Public API -------------------------------------------------------------
@@ -401,19 +394,13 @@ void usage_pair_init(void) {
     }
 
     s_next_ms = millis() + FIRST_PAIR_MS;
-    s_run_sem = xSemaphoreCreateBinary();
-    if (!s_run_sem) {
-        Serial.println("PAIR: task semaphore alloc failed");
-        return;
-    }
-    // Stack MUST be in internal RAM (NVS/flash access from a PSRAM stack asserts).
-    xTaskCreatePinnedToCore(pair_task, "usage_pair", PAIR_TASK_STACK, nullptr,
-                            PAIR_TASK_PRIO, nullptr, PAIR_TASK_CORE);
+    // No per-module task: the blocking cycle runs on the shared net_worker task
+    // (one 12 KB internal-RAM stack), created once in setup().
     Serial.printf("PAIR: %s\n", s_has_token ? "token loaded" : "unpaired, will pair");
 }
 
 void usage_pair_tick(void) {
-    if (!kEnabled || !s_run_sem) return;
+    if (!kEnabled) return;
     if (s_has_token) return;              // paired: the usage pull owns the radio
     if (s_active) return;
 
@@ -446,12 +433,12 @@ void usage_pair_tick(void) {
     if ((int32_t)(millis() - s_next_ms) < 0) return;
 
     // Never contend for the radio: leave it to OTA, and look again shortly.
-    if (ota_is_active() || ota_pull_is_active() || ota_wifi_is_held()) {
+    if (ota_is_active() || ota_pull_is_active() || ota_wifi_is_held() || net_worker_busy()) {
         s_next_ms = millis() + BUSY_RETRY_MS;
         return;
     }
     s_active = true;
-    xSemaphoreGive(s_run_sem);
+    if (!net_worker_submit(usage_pair_job, nullptr)) s_active = false;
 }
 
 bool usage_pair_has_token(void) {
