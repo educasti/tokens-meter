@@ -23,6 +23,11 @@ Shift+Tab over BLE HID for Claude Code's voice mode and mode-toggle shortcuts.
 
 The device boots into the splash. Tap the screen anywhere to switch to the Usage view; tap again to flip back to the splash. With the [OpenCode screens](#opencode-screens) and the [BVC portfolio screen](#bvc-portfolio-screen) enabled the cycle grows to five screens.
 
+El Command Center es un overlay fuera del ciclo (máx 5 dots): se abre con
+drag-down desde el borde superior y se cierra con drag-up o toque. Con el
+overlay abierto, PWR corto comprueba o aplica la actualización (doble PWR
+confirma) y sin WiFi abre el portal.
+
 |              Splash               |              Usage              |
 | :-------------------------------: | :-----------------------------: |
 | ![Splash](screenshots/splash.gif) | ![Usage](screenshots/usage.png) |

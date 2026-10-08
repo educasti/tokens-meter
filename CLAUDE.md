@@ -79,6 +79,12 @@ Bluetooth/controller screen. A row of 6 px page dots — 2, 4 once the OpenCode
 screens are in, 5 once the portfolio is too — is shown at the bottom for 1.5 s
 after every change.
 
+El Command Center es un overlay fuera del ciclo (los dots siguen con máx 5):
+se abre con drag-down desde el borde superior y se cierra con drag-up o toque;
+BOOT/SEC con el overlay abierto solo lo cierran. Con el overlay abierto, PWR
+corto comprueba o aplica (doble PWR confirma), sin WiFi abre el portal y el
+hold de 3 s sigue siendo emparejar.
+
 | Input | Tap (< 300 ms) | Hold (≥ 300 ms) |
 |---|---|---|
 | PRIMARY / BOOT (left) | previous screen | HID Space held until release |
