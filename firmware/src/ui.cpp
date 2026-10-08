@@ -425,6 +425,8 @@ static void build_page_dots(lv_obj_t* parent) {
     lv_obj_set_style_pad_all(dots_root, 0, 0);
     lv_obj_clear_flag(dots_root, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(dots_root, global_click_cb, LV_EVENT_CLICKED, NULL);
+    // Como usage_container: el PRESSED también sube desde esta franja.
+    lv_obj_add_flag(dots_root, LV_OBJ_FLAG_EVENT_BUBBLE);
 
     for (int i = 0; i < PAGE_DOT_MAX; i++) {
         lv_obj_t* d = lv_obj_create(dots_root);
@@ -716,6 +718,9 @@ static void init_usage_screen(lv_obj_t* scr) {
     lv_obj_set_style_pad_all(usage_container, 0, 0);
     lv_obj_clear_flag(usage_container, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(usage_container, global_click_cb, LV_EVENT_CLICKED, NULL);
+    // El PRESSED del swipe tiene que subir hasta scr (sys_gesture_cb): sin esta
+    // burbuja la y de origen nunca llega y el gesto no abre.
+    lv_obj_add_flag(usage_container, LV_OBJ_FLAG_EVENT_BUBBLE);
 
     lbl_title = lv_label_create(usage_container);
     lv_label_set_text(lbl_title, "Consumo");
@@ -814,6 +819,9 @@ void ui_init(void) {
 
     if (splash_get_root()) {
         lv_obj_add_event_cb(splash_get_root(), global_click_cb, LV_EVENT_CLICKED, NULL);
+        // El swipe-down abre desde cualquier pantalla, incluidos los splashes
+        // (SPEC §3.1): la raíz del splash también burbujea el PRESSED a scr.
+        lv_obj_add_flag(splash_get_root(), LV_OBJ_FLAG_EVENT_BUBBLE);
     }
 
     // Mascota de la esquina en la vieja ranura del logo. El Clawd quieto es más
@@ -830,6 +838,9 @@ void ui_init(void) {
         logo_img = lv_image_create(scr);
         lv_image_set_src(logo_img, &logo_dsc);
         lv_obj_set_pos(logo_img, L.margin, top);
+        // Las imágenes no son clicables por defecto, pero si algún porte lo
+        // cambia, el PRESSED sigue subiendo a scr igual que la batería.
+        lv_obj_add_flag(logo_img, LV_OBJ_FLAG_EVENT_BUBBLE);
 #endif
     }
 
@@ -1163,11 +1174,14 @@ static void apply_battery_visibility(void) {
 // Overlay fuera del ciclo: no entra a screen_t, no llama show_page_dots() y no
 // cambia la navegación. Un solo handler a nivel de ciclo (no uno por pantalla):
 // en PRESSED guarda la y, en GESTURE abre (borde superior hacia abajo) o cierra
-// (hacia arriba en cualquier y). Los gestos suben hasta la pantalla por el
-// gesture_bubble que LVGL activa por defecto en cada hijo, así que basta con
-// escuchar en lv_screen_active().
+// (hacia arriba en cualquier y). El GESTURE sube por el gesture_bubble que LVGL
+// activa por defecto en cada hijo, pero el PRESSED solo llega si cada raíz
+// burbujea eventos: todas las raíces llevan LV_OBJ_FLAG_EVENT_BUBBLE para que
+// la y de origen sea fiable en cualquier pantalla (ver flags abajo).
 #define SYS_EDGE_Y 60   // el gesto de apertura empieza en el borde superior
-static int16_t sys_press_y = -1;   // y del último PRESSED, -1 = ninguno aún
+static int16_t sys_press_y = -1;        // y del último PRESSED, -1 = ninguno aún
+static bool    sys_press_open = false;  // overlay abierto al apoyar el dedo
+static bool    sys_press_seen = false;  // PRESSED visto en este toque (llegó a scr)
 
 static void sys_gesture_cb(lv_event_t* e) {
     lv_event_code_t code = lv_event_get_code(e);
@@ -1177,25 +1191,44 @@ static void sys_gesture_cb(lv_event_t* e) {
         lv_point_t p;
         lv_indev_get_point(indev, &p);
         sys_press_y = p.y;
+        sys_press_open = sys_is_open();   // origen del gesto: decide el CLICKED
+        sys_press_seen = true;
     } else if (code == LV_EVENT_GESTURE) {
         lv_dir_t dir = lv_indev_get_gesture_dir(indev);
-        if (!sys_is_open() && dir == LV_DIR_BOTTOM &&
+        // El GESTURE sube por gesture_bubble (activo por defecto) pero el
+        // PRESSED solo llega si cada raíz burbujea eventos: se exige PRESSED
+        // visto para no abrir con una y rancia de otro toque.
+        if (!sys_is_open() && dir == LV_DIR_BOTTOM && sys_press_seen &&
             sys_press_y >= 0 && sys_press_y < SYS_EDGE_Y) {
             sys_show();   // abre sobre la pantalla activa, la de abajo intacta
         } else if (sys_is_open() && dir == LV_DIR_TOP) {
             sys_hide();
         }
     } else if (code == LV_EVENT_CLICKED) {
-        // El tap sobre el overlay solo cierra, sin burbuja a global_click_cb.
-        if (sys_is_open()) sys_hide();
+        // Guardia de origen: LVGL manda CLICKED al soltar cualquier swipe,
+        // así que el CLICKED que suelta el swipe de apertura (el dedo apoyó
+        // con el overlay cerrado) se traga; solo el tap que empezó con el
+        // overlay abierto cierra. Sin PRESSED visto se usa el estado actual
+        // (comportamiento anterior: sin regresiones en widgets que no
+        // burbujean). El tap sobre el overlay no llega a global_click_cb
+        // (subárbol distinto), así que no hay doble cierre.
+        bool was_open = sys_press_seen ? sys_press_open : sys_is_open();
+        sys_press_seen = false;
+        if (was_open && sys_is_open()) sys_hide();
     }
 }
 
 // SPEC.md §6: un toque en cualquier lugar avanza un paso en el ciclo.
 static void global_click_cb(lv_event_t* e) {
     (void)e;
-    // Con el overlay abierto el tap solo cierra, no navega (§3.2).
-    if (sys_is_open()) { sys_hide(); return; }
+    // Guardia de origen (§3.2): si el dedo apoyó con el overlay abierto, el
+    // CLICKED pertenece al overlay (tap que cierra o suelta del swipe-up que
+    // ya cerró) y nunca navega; si el overlay se abrió con este mismo gesto
+    // (suelta del swipe-down), tampoco. Solo el tap que empezó y sigue con el
+    // overlay cerrado avanza el ciclo. Sin PRESSED visto se usa el estado
+    // actual (igual que sys_gesture_cb de abajo, que es quien cierra).
+    bool was_open = sys_press_seen ? sys_press_open : sys_is_open();
+    if (was_open || sys_is_open()) return;
     ui_next_screen();
 }
 
@@ -1293,6 +1326,7 @@ void ui_show_screen(screen_t screen) {
             oc_usage_init(lv_screen_active());
             if (oc_usage_get_root()) {
                 lv_obj_add_event_cb(oc_usage_get_root(), global_click_cb, LV_EVENT_CLICKED, NULL);
+                lv_obj_add_flag(oc_usage_get_root(), LV_OBJ_FLAG_EVENT_BUBBLE);
             }
         }
         oc_usage_show();
@@ -1305,6 +1339,7 @@ void ui_show_screen(screen_t screen) {
             pf_usage_init(lv_screen_active());
             if (pf_usage_get_root()) {
                 lv_obj_add_event_cb(pf_usage_get_root(), global_click_cb, LV_EVENT_CLICKED, NULL);
+                lv_obj_add_flag(pf_usage_get_root(), LV_OBJ_FLAG_EVENT_BUBBLE);
             }
         }
         pf_usage_show();

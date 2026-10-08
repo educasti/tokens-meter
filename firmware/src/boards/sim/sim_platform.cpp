@@ -1,7 +1,10 @@
 #include "sim_platform.h"
+#include "../../ui_sys.h"
 #include <SDL.h>
 #include <Arduino.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static bool quit = false;
 
@@ -62,6 +65,9 @@ void sim_pump(void) {
     }
 
     // Headless CI hook: SIM_AUTOSHOT_MS=<ms> → screenshot + exit.
+    // Con SIM_SWIPE_CHECK=open|closed además se comprueba el Command Center
+    // (prueba del gesto swipe): open espera el overlay visible, closed espera
+    // que esté cerrado. Imprime PASS/FAIL y sale con código acorde.
     static long autoshot_ms = -2;
     if (autoshot_ms == -2) {
         const char* v = getenv("SIM_AUTOSHOT_MS");
@@ -70,6 +76,15 @@ void sim_pump(void) {
     if (autoshot_ms >= 0 && millis() >= (uint32_t)autoshot_ms) {
         const char* p = getenv("SIM_AUTOSHOT_PATH");
         sim_display_screenshot(p ? p : "sim-autoshot.bmp");
+        const char* want = getenv("SIM_SWIPE_CHECK");
+        if (want && (strcmp(want, "open") == 0 || strcmp(want, "closed") == 0)) {
+            bool open = sys_is_open();
+            bool ok = (strcmp(want, "open") == 0) ? open : !open;
+            printf("[swipe-check] want=%s got=%s → %s\n",
+                   want, open ? "open" : "closed", ok ? "PASS" : "FAIL");
+            fflush(stdout);
+            exit(ok ? 0 : 1);
+        }
         quit = true;
         autoshot_ms = -1;
     }
