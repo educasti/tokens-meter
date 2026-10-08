@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tokens-meter — arquitectura interactiva</title>
+<style>
+  :root{
+    --bg:#0b0f14; --panel:#141b24; --panel2:#1b2430; --border:#2a3644;
+    --text:#e6edf3; --muted:#93a1b1; --mac:#4f9cf9; --vm:#f5a742; --dev:#3fb950;
+    --caddy:#d29922; --backend:#bc8cff; --sql:#7fd88f; --fw:#e06c75; --ok:#3fb950; --no:#f85149;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  header{padding:26px 22px 6px;max-width:1180px;margin:0 auto}
+  h1{font-size:25px;margin:0 0 4px}
+  h2{font-size:17px;margin:24px 0 10px}
+  p{color:var(--muted);margin:6px 0}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 22px 70px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;margin:14px 0}
+  .controls{display:flex;flex-wrap:wrap;gap:10px;margin:8px 0 16px}
+  button.flow{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:999px;
+    padding:9px 16px;cursor:pointer;font-weight:600;font-size:14px;transition:.15s}
+  button.flow:hover{border-color:var(--mac)}
+  button.flow.active{background:var(--mac);color:#04121f;border-color:var(--mac)}
+  .topo{display:grid;grid-template-columns:1fr 1.35fr 1fr;gap:16px;align-items:stretch}
+  .actor{background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:14px;transition:.25s;position:relative}
+  .actor.hot{border-color:var(--mac);box-shadow:0 0 0 2px rgba(79,156,249,.25)}
+  .actor h3{margin:0 0 2px;font-size:15px}
+  .actor .sub{font-size:12px;color:var(--muted);margin-bottom:8px}
+  .comp{border:1px solid var(--border);border-radius:8px;padding:7px 9px;margin:6px 0;font-size:13px;transition:.25s;background:#0f151d}
+  .comp .t{font-weight:600}
+  .comp .d{font-size:11.5px;color:var(--muted)}
+  .comp.hot{border-color:var(--vm);box-shadow:0 0 0 2px rgba(245,167,66,.22)}
+  .link{position:relative;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px;min-height:26px}
+  .link .dot{position:absolute;width:10px;height:10px;border-radius:50%;background:var(--mac);opacity:0;
+    box-shadow:0 0 10px var(--mac)}
+  .link.run .dot{animation:fly 1.1s linear infinite;opacity:1}
+  @keyframes fly{0%{left:6%}100%{left:94%}}
+  .log{background:#080c11;border:1px solid var(--border);border-radius:10px;padding:12px;min-height:150px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
+  .log .line{margin:4px 0;opacity:0;transform:translateY(4px);animation:in .25s forwards}
+  @keyframes in{to{opacity:1;transform:none}}
+  .mu{color:var(--muted)} .ok{color:var(--ok)} .no{color:var(--no)} .mac{color:var(--mac)} .vm{color:var(--vm)} .dev{color:var(--dev)}
+  .tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid var(--border);color:var(--muted)}
+  table{width:100%;border-collapse:collapse;margin-top:8px}
+  th,td{border:1px solid var(--border);padding:8px 10px;text-align:left;font-size:13.5px;vertical-align:top}
+  th{color:var(--muted);font-weight:600}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;color:var(--muted);font-size:12.5px;margin-top:6px}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:middle}
+  code{background:#080c11;border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-size:12.5px}
+  @media(max-width:860px){.topo{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>tokens-meter — cómo funciona, de punta a punta</h1>
+  <p>Elegí un flujo y mirá la secuencia. Es la arquitectura real del sistema (fases 1–4 + OTA firmada).</p>
+</header>
+
+<div class="wrap">
+
+  <div class="card">
+    <div class="controls">
+      <button class="flow active" data-flow="usage">📊 Uso (el tubo)</button>
+      <button class="flow" data-flow="pair">🔗 Emparejamiento</button>
+      <button class="flow" data-flow="ota">⬆️ OTA firmada (CI)</button>
+      <button class="flow" data-flow="portal">📶 Portal cautivo (WiFi)</button>
+      <button class="flow" id="replay">↻ Repetir</button>
+    </div>
+
+    <div class="topo">
+      <!-- MAC -->
+      <div class="actor" id="mac">
+        <h3 style="color:var(--mac)">💻 Tu Mac</h3>
+        <div class="sub">Colector (nunca sueltas tus credenciales)</div>
+        <div class="comp" id="c-daemon"><div class="t">daemon</div><div class="d">lee el uso de Claude y lo publica</div></div>
+        <div class="comp" id="c-owner"><div class="t">owner tool (VM)</div><div class="d">aprueba el emparejamiento</div></div>
+        <div class="comp" id="c-git"><div class="t">git tag + push</div><div class="d">dispara el CI</div></div>
+      </div>
+
+      <!-- VM -->
+      <div class="actor" id="vm">
+        <h3 style="color:var(--vm)">☁️ VM Oracle 24/7 (IP pública)</h3>
+        <div class="sub">Solo guarda números; nunca credenciales de Claude</div>
+        <div class="comp" id="c-caddy"><div class="t">Caddy :443</div><div class="d">TLS con cert autofirmado (fijado en el device) · reverse proxy</div></div>
+        <div class="comp" id="c-backend"><div class="t">backend.service (systemd)</div><div class="d">/api/usage · /api/pair/* · bearer auth</div></div>
+        <div class="comp" id="c-sql"><div class="t">SQLite</div><div class="d">último valor por dueño · tokens hasheados</div></div>
+        <div class="comp" id="c-fw"><div class="t">/firmware (estático)</div><div class="d">manifiesto + binarios firmados</div></div>
+        <div class="comp" id="c-ci"><div class="t">GitHub Actions</div><div class="d">compila · fija · firma · publica</div></div>
+      </div>
+
+      <!-- DEVICE -->
+      <div class="actor" id="dev">
+        <h3 style="color:var(--dev)">📟 Device (ESP32)</h3>
+        <div class="sub">Sin secretos compilados · 0.2.9</div>
+        <div class="comp" id="c-screen"><div class="t">Pantalla + uso</div><div class="d">splash, uso Claude/OpenCode/portfolio</div></div>
+        <div class="comp" id="c-token"><div class="t">token en NVS</div><div class="d">obtenido en runtime por pairing</div></div>
+        <div class="comp" id="c-pull"><div class="t">pull por WiFi</div><div class="d">60 s cargando · 300 s batería</div></div>
+        <div class="comp" id="c-ota"><div class="t">OTA</div><div class="d">verifica SHA-256 + firma → slot inactivo</div></div>
+        <div class="comp" id="c-portal"><div class="t">portal SoftAP</div><div class="d">Clawdmeter-XXXX para configurar WiFi</div></div>
+      </div>
+    </div>
+
+    <div class="legend">
+      <span><i style="background:var(--mac)"></i>Mac</span>
+      <span><i style="background:var(--vm)"></i>VM</span>
+      <span><i style="background:var(--dev)"></i>Device</span>
+    </div>
+
+    <h2>Secuencia</h2>
+    <div class="log" id="log"><div class="line mu">Elegí un flujo arriba…</div></div>
+  </div>
+
+  <h2>Las cuatro rutas</h2>
+  <div class="card">
+    <table>
+      <tr><th>Ruta</th><th>Quién → Quién</th><th>Credencial</th><th>Protección</th></tr>
+      <tr><td>Uso</td><td>Mac → VM → Device</td><td>user key (Mac) · device token (device)</td><td>HTTPS + bearer; solo números</td></tr>
+      <tr><td>Emparejamiento</td><td>Device ↔ VM ↔ owner</td><td>código de 8 chars → device token</td><td>aprobación manual; token una vez; hasheado</td></tr>
+      <tr><td>OTA</td><td>CI → VM → Device</td><td>—</td><td>HTTPS + SHA-256 + <b>firma ECDSA P-256</b></td></tr>
+      <tr><td>Portal</td><td>Teléfono → Device</td><td>—</td><td>SoftAP local; creds a NVS</td></tr>
+    </table>
+  </div>
+
+  <h2>Por qué es seguro</h2>
+  <div class="card">
+    <table>
+      <tr><th>Riesgo</th><th>Mitigación</th></tr>
+      <tr><td>Alguien falsea el firmware</td><td>El device solo instala lo <b>firmado</b> con tu clave privada (que nunca sale del publisher).</td></tr>
+      <tr><td>Roban un binario</td><td>No lleva secretos: el token vive solo en NVS, obtenido por emparejamiento.</td></tr>
+      <tr><td>Roban la VM / SQLite</td><td>Los tokens están <b>hasheados</b>; la VM solo guarda números de uso.</td></tr>
+      <tr><td>Roban el device</td><td>Solo ve tus últimos números en pantalla; se <b>revoca</b> el token server-side (401 → re-empareja).</td></tr>
+      <tr><td>MITM en la red</td><td>TLS con <b>certificado fijado</b> en el firmware (no acepta otro).</td></tr>
+    </table>
+  </div>
+
+</div>
+
+<script>
+(function(){
+  const $ = id => document.getElementById(id);
+  const NODES = ["mac","vm","dev"];
+  const COMPS = ["c-daemon","c-owner","c-git","c-caddy","c-backend","c-sql","c-fw","c-ci",
+                 "c-screen","c-token","c-pull","c-ota","c-portal"];
+
+  const FLOWS = {
+    usage: {
+      title: "Uso: Mac → VM → Device",
+      steps: [
+        {n:"mac", c:"c-daemon", cls:"mac", t:"Mac · el daemon lee tu uso de Claude y hace POST /api/usage con la <b>user key</b>."},
+        {n:"vm",  c:"c-caddy",  cls:"vm",  t:"Caddy termina el TLS y hace reverse_proxy a 127.0.0.1:8080."},
+        {n:"vm",  c:"c-backend",cls:"vm",  t:"backend valida la user key (hash) y guarda los números."},
+        {n:"vm",  c:"c-sql",    cls:"vm",  t:"SQLite: último valor por dueño. Nunca se guarda una credencial de Claude."},
+        {n:"dev", c:"c-pull",   cls:"dev", t:"Device · cada 60 s cargando / 300 s en batería hace GET /api/usage con su <b>device token</b>."},
+        {n:"dev", c:"c-screen", cls:"ok",  t:"El device actualiza la pantalla (sin BLE, desde cualquier WiFi)."}
+      ]
+    },
+    pair: {
+      title: "Emparejamiento: código → token en NVS",
+      steps: [
+        {n:"dev", c:"c-token",  cls:"dev", t:"Device sin token: genera un <b>código de 8 caracteres</b> y lo muestra (pantalla + portal)."},
+        {n:"dev", c:"c-pull",   cls:"dev", t:"Device · POST /api/pair/start {code} y luego poll GET /api/pair/status."},
+        {n:"mac", c:"c-owner",  cls:"mac", t:"Vos · <code>manage.py pair --code XXXX</code> aprueba el código."},
+        {n:"vm",  c:"c-backend",cls:"vm",  t:"backend crea un <b>device token</b> (se guarda hasheado) ligado al código."},
+        {n:"dev", c:"c-token",  cls:"ok",  t:"El siguiente poll recibe el token <b>una sola vez</b>."},
+        {n:"dev", c:"c-token",  cls:"ok",  t:"Device lo guarda en <b>NVS</b> y ya baja uso. (Revocar → 401 → re-empareja.)"}
+      ]
+    },
+    ota: {
+      title: "OTA firmada: tag → CI → device",
+      steps: [
+        {n:"mac", c:"c-git",    cls:"mac", t:"Vos · <code>git tag vX.Y.Z &amp;&amp; git push origin vX.Y.Z</code>."},
+        {n:"vm",  c:"c-ci",     cls:"vm",  t:"GitHub Actions compila e inyecta IP + cert fijado + pública de firma (secretos)."},
+        {n:"vm",  c:"c-ci",     cls:"vm",  t:"Firma el binario con la <b>clave privada ECDSA P-256</b>."},
+        {n:"vm",  c:"c-fw",     cls:"vm",  t:"Publica binario + manifiesto en <code>/firmware</code> de la VM."},
+        {n:"dev", c:"c-ota",    cls:"dev", t:"Device · GET manifiesto → compara versión → GET binario."},
+        {n:"dev", c:"c-ota",    cls:"dev", t:"Verifica <b>SHA-256</b> y la <b>firma</b> (sin firma válida → <span class='no'>bad_signature</span>, no instala)."},
+        {n:"dev", c:"c-ota",    cls:"ok",  t:"Flashea el <b>slot inactivo</b> y reinicia; si no arranca 3 veces → <b>rollback</b>."}
+      ]
+    },
+    portal: {
+      title: "Portal cautivo: configurar WiFi sin app",
+      steps: [
+        {n:"dev", c:"c-portal", cls:"dev", t:"Device sin WiFi: levanta el SoftAP <b>Clawdmeter-XXXX</b> + DNS."},
+        {n:"mac", c:"c-portal", cls:"mac", t:"Tu teléfono se conecta al AP y se abre el portal (o http://192.168.4.1)."},
+        {n:"mac", c:"c-portal", cls:"mac", t:"Elegís la red + la clave en la página."},
+        {n:"dev", c:"c-portal", cls:"ok",  t:"El device guarda las creds en NVS, cierra el AP y se une a la red."}
+      ]
+    }
+  };
+
+  let timers = [];
+
+  function clearAll(){
+    timers.forEach(clearTimeout); timers = [];
+    NODES.forEach(n => $(n).classList.remove("hot"));
+    COMPS.forEach(c => $(c).classList.remove("hot"));
+    $("log").innerHTML = "";
+  }
+  function log(html, cls){
+    const d = document.createElement("div");
+    d.className = "line " + (cls||"");
+    d.innerHTML = html;
+    $("log").appendChild(d);
+    $("log").scrollTop = $("log").scrollHeight;
+  }
+  function run(name){
+    const f = FLOWS[name];
+    if (!f) return;
+    clearAll();
+    log("▶ " + f.title, "mu");
+    f.steps.forEach((s, i) => {
+      timers.push(setTimeout(() => {
+        NODES.forEach(n => $(n).classList.toggle("hot", n === s.n));
+        COMPS.forEach(c => $(c).classList.toggle("hot", c === s.c));
+        log("&nbsp;" + (i+1) + ". " + s.t, s.cls || "mu");
+      }, 450 * (i + 1)));
+    });
+  }
+
+  document.querySelectorAll("button.flow[data-flow]").forEach(b => {
+    b.addEventListener("click", () => {
+      document.querySelectorAll("button.flow[data-flow]").forEach(x => x.classList.remove("active"));
+      b.classList.add("active");
+      run(b.dataset.flow);
+    });
+  });
+  $("replay").addEventListener("click", () => {
+    const active = document.querySelector("button.flow.active");
+    if (active) run(active.dataset.flow);
+  });
+
+  run("usage");
+})();
+</script>
+</body>
+</html>
