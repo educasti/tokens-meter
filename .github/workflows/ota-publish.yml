@@ -22,7 +22,9 @@
 #                       signed on every publish.
 #
 # The update host is never committed: it is derived from OTA_DEST and injected
-# as OTA_PULL_MANIFEST_URL at build time.
+# as OTA_PULL_MANIFEST_URL at build time. The same host is also injected as the
+# backend usage-pull base (USAGE_BACKEND_BASE, via firmware/certs/usage_backend.json),
+# so an OTA image keeps the WiFi usage screen working after it installs.
 #
 # Commitment (design/ota-pull/SIGNING.md section 4 rule 2): once a device pins a
 # signing key, a manifest without a valid ECDSA P-256/SHA-256 signature is
@@ -64,10 +66,11 @@ jobs:
       - name: Install PlatformIO
         run: pip install platformio
 
-      # The image must carry the real pinned cert and the host-specific manifest
-      # URL, and the publisher must sign with the key the firmware pins; none of
-      # that is in the repo, so it is assembled from secrets here.
-      - name: Prepare build pins (server cert, signing key, manifest URL)
+      # The image must carry the real pinned cert, the host-specific manifest
+      # URL and the backend usage-pull base, and the publisher must sign with
+      # the key the firmware pins; none of that is in the repo, so it is
+      # assembled here (cert/key from secrets, both URLs derived from OTA_DEST).
+      - name: Prepare build pins (server cert, signing key, manifest + usage URLs)
         id: prep
         env:
           OTA_DEST: ${{ secrets.OTA_DEST }}
@@ -99,6 +102,16 @@ jobs:
           mkdir -p firmware/certs
           printf '%s\n' "$OTA_SERVER_CERT_PEM" > firmware/certs/pinned_server.pem
 
+          # 1b. Backend usage-pull base -> firmware/certs/usage_backend.json
+          #     (gitignored, so it never trips the publisher's dirty-tree guard).
+          #     The backend is the same host as the manifest URL (Caddy proxies
+          #     /api/* to it); gen_usage_config.py bakes it in as
+          #     USAGE_BACKEND_BASE. Without this the published image compiles the
+          #     WiFi usage pull OFF and a device loses the Claude usage screen
+          #     the moment it auto-updates (v0.2.9 shipped exactly like that).
+          printf '{"base":"https://%s/api"}\n' "$DEST_HOST" \
+            > firmware/certs/usage_backend.json
+
           # 2. Signing key -> a 0600 temp file (never echoed, never committed).
           #    Derive the public half to pin and the key_id the firmware logs.
           umask 077
@@ -108,6 +121,7 @@ jobs:
           openssl pkey -in "$KEY" -pubout -out firmware/certs/signing_pubkey.pem
           KEY_ID="$(openssl pkey -in "$KEY" -pubout | sha256sum | cut -c1-16)"
           echo "key_id=$KEY_ID" >> "$GITHUB_OUTPUT"
+          echo "dest_host=$DEST_HOST" >> "$GITHUB_OUTPUT"
 
           # 3. Manifest base URL. PLATFORMIO_BUILD_FLAGS quote handling is
           #    unreliable, so make a temporary edit to firmware/platformio.ini:
@@ -134,10 +148,25 @@ jobs:
               fh.writelines(out)
           PY
 
-          echo "prepared pinned cert, signing key (key_id $KEY_ID) and manifest URL https://$DEST_HOST/firmware"
+          echo "prepared pinned cert, signing key (key_id $KEY_ID), manifest URL https://$DEST_HOST/firmware and usage base https://$DEST_HOST/api"
 
       - name: Build firmware
         run: pio run -d firmware -e waveshare_amoled_216
+
+      # Fail closed if the backend usage-pull base is missing from the image: a
+      # device that auto-updates to a build without it silently drops the Claude
+      # usage screen (v0.2.9 shipped that way). The base is a .rodata literal.
+      - name: Verify the WiFi usage pull is compiled in
+        env:
+          DEST_HOST: ${{ steps.prep.outputs.dest_host }}
+        run: |
+          set -euo pipefail
+          BIN="firmware/.pio/build/waveshare_amoled_216/firmware.bin"
+          if ! grep -a -q -F "https://${DEST_HOST}/api" "$BIN"; then
+            echo "::error::USAGE_BACKEND_BASE missing from the image — the WiFi usage pull compiled OFF"
+            exit 1
+          fi
+          echo "usage-pull base present in $BIN"
 
       # Undo the temporary platformio.ini edit so the publisher sees a clean
       # tree (it refuses a dirty one without --allow-dirty).

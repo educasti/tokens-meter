@@ -417,7 +417,10 @@ The workflow writes `OTA_SERVER_CERT_PEM` to
 `firmware/certs/pinned_server.pem`, derives the public half of
 `OTA_SIGNING_KEY` into `firmware/certs/signing_pubkey.pem`, and injects
 `-DOTA_PULL_MANIFEST_URL="https://<host>/firmware"` (host taken from `OTA_DEST`)
-into the build. The same key then signs the manifest, so the published
+plus the backend usage-pull base `https://<host>/api` (via the gitignored
+`firmware/certs/usage_backend.json`) into the build. The base keeps the WiFi
+usage screen working after an OTA install; the build fails if it is missing from
+the image. The same key then signs the manifest, so the published
 `sig`/`key_id` always match what the image pins. Once a device pins a signing
 key, a manifest without a valid signature is rejected (`bad_signature`), so a
 publish with no `OTA_SIGNING_KEY` fails rather than shipping an unsigned
