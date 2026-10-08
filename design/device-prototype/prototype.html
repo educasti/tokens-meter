@@ -440,7 +440,7 @@
 <body>
 
 <h1>Clawdmeter — prototipo completo del dispositivo</h1>
-<p class="subtitle">v0.1 · 5 pantallas (clawd, claude, ocsplash, ocusage, portfolio) + Flujos (portal cautivo, emparejamiento, OTA híbrido, enlace BLE) · navegación con botones físicos</p>
+<p class="subtitle">v0.2-propuesta · 6 pantallas (clawd, claude, ocsplash, ocusage, portfolio, <strong>dispositivo — propuesta</strong>) + Flujos (portal cautivo, emparejamiento, OTA híbrido, enlace BLE) · navegación con botones físicos</p>
 
 <div class="notice">
   <strong>Cifras ficticias.</strong> Todos los números de la pantalla de portafolio y los
@@ -513,8 +513,8 @@
     <h3>Sistema Claude — Tiempos + mono</h3>
     <div class="typography-section">
       <div class="type-specimen tiempos"><span class="type-48">05:00</span></div>
-      <div class="type-specimen tiempos"><span class="type-24">Resets in 4h 55m</span></div>
-      <div class="type-specimen"><span class="type-20">Connected…</span></div>
+      <div class="type-specimen tiempos"><span class="type-24">Se renueva en 4 h 55 min</span></div>
+      <div class="type-specimen"><span class="type-20">Conectado…</span></div>
       <p class="type-note">
         Las pantallas de Claude (splash y uso) usan el sistema del firmware:
         <strong>Tiempos</strong> (56/34, serif comercial, no cargable) para las cifras
@@ -559,7 +559,7 @@ const claudeScenarios = {
   desconectado: { s: 12,  sr: 250, w: 8,  wr: 9430, st: 'allowed', offline: true }
 };
 const claudeLabels = {
-  real: 'Hoy real (default)', activa: 'Sesión activa', varias: 'Varias sesiones',
+  real: 'Hoy real (por defecto)', activa: 'Sesión activa', varias: 'Varias sesiones',
   cerca: 'Cerca del límite', limite: 'Límite alcanzado', viejo: 'Datos viejos',
   desconectado: 'BLE desconectado'
 };
@@ -576,7 +576,7 @@ const scenarios = {
   viejo:  { k:'oc', ok:true, src:'api', p5:0, r5:-1, pw:0, rw:9430, pm:3, rm:20354, st:'ok', t7:106969, m:'ds-v4.1-flash', ms:93, a:0, ag:'build', la:1260 }
 };
 const ocLabels = {
-  real: 'Hoy real (default)', activa: 'Sesión activa', varias: 'Varias sesiones',
+  real: 'Hoy real (por defecto)', activa: 'Sesión activa', varias: 'Varias sesiones',
   cerca: 'Cerca del límite', limite: 'Límite alcanzado', est: 'Estimado (sin red)',
   consumo: 'Solo consumo', viejo: 'Datos viejos'
 };
@@ -618,10 +618,33 @@ const pfScenarios = {
 const pfLabels = {
   real:'Mercado abierto', cerrado:'Cierre 29 sep', feriado:'Cierre 9 oct (feriado)',
   sinActualizar:'Sin actualizar', todosSuben:'Todos suben', todosBajan:'Todos bajan',
-  unaGanadora:'Una sola ganadora', sinVariaciones:'Sin variaciones', cero:'Day change 0',
+  unaGanadora:'Una sola ganadora', sinVariaciones:'Sin variaciones', cero:'Variación 0',
   largo:'Símbolo largo', tickerSinPrecio:'EPMX sin precio', dosSinPrecio:'2 sin precio',
   nopos:'Sin posiciones', nores:'Ningún ticker resolvió', nonet:'Yahoo no responde',
   duplicado:'1 aviso · ver log', bleCaido:'BLE desconectado'
+};
+
+// === Dispositivo / dashboard (PROPUESTA, no implementado en firmware) ===
+// Fuente de cada campo en el firmware real:
+// ver/board: ota_version() + board_caps().id · ble: ble_get_state() + nombre
+// wifi: ota_wifi_is_held() + SSID en NVS (portal.cpp) · batt: power_hal_battery_pct()
+// ota: ota_pull_state_name() + ui_ota_status pct (idle/checking/downloading/verifying,
+//   rebooting; available/up_to_date/error son el resultado del último check).
+// Sin WiFi no hay check: el estado es "sin_wifi" y no "error".
+const sysScenarios = {
+  alDia:        { ver:'v0.2.11', board:'waveshare_amoled_216', ble:'connected', bleName:'Clawdmeter', wifi:'connected', ssid:'Casa-2.4G', rssi:-52, batt:78, charging:false, ota:'up_to_date', latest:'v0.2.11', checked:'hace 12 min' },
+  disponible:   { ver:'v0.2.11', board:'waveshare_amoled_216', ble:'connected', bleName:'Clawdmeter', wifi:'connected', ssid:'Casa-2.4G', rssi:-52, batt:78, charging:false, ota:'available', latest:'v0.2.12', size:'1.4 MB', checked:'hace 12 min' },
+  comprobando:  { ver:'v0.2.11', board:'waveshare_amoled_216', ble:'connected', bleName:'Clawdmeter', wifi:'connected', ssid:'Casa-2.4G', rssi:-52, batt:78, charging:false, ota:'checking', checked:'ahora mismo' },
+  descargando:  { ver:'v0.2.11', board:'waveshare_amoled_216', ble:'connected', bleName:'Clawdmeter', wifi:'connected', ssid:'Casa-2.4G', rssi:-52, batt:81, charging:true, ota:'downloading', latest:'v0.2.12', size:'1.4 MB', pct:62, rate:'842 KB/s', eta:'~40 s', checked:'ahora mismo' },
+  verificando:  { ver:'v0.2.11', board:'waveshare_amoled_216', ble:'connected', bleName:'Clawdmeter', wifi:'connected', ssid:'Casa-2.4G', rssi:-52, batt:81, charging:true, ota:'verifying', latest:'v0.2.12', size:'1.4 MB', pct:100, checked:'ahora mismo' },
+  reiniciando:  { ver:'v0.2.12', board:'waveshare_amoled_216', ble:'connected', bleName:'Clawdmeter', wifi:'connected', ssid:'Casa-2.4G', rssi:-52, batt:81, charging:false, ota:'rebooting', latest:'v0.2.12', checked:'ahora mismo' },
+  sinWifi:      { ver:'v0.2.11', board:'waveshare_amoled_216', ble:'advertising', bleName:'Clawdmeter', wifi:'off', ssid:'', rssi:0, batt:64, charging:false, ota:'sin_wifi', latest:'v0.2.11', checked:'hace 3 h' },
+  errorRed:     { ver:'v0.2.11', board:'waveshare_amoled_216', ble:'connected', bleName:'Clawdmeter', wifi:'connected', ssid:'Casa-2.4G', rssi:-74, batt:55, charging:false, ota:'error', latest:'v0.2.11', checked:'hace 26 min', err:'manifiesto sin respuesta' }
+};
+const sysLabels = {
+  alDia:'Al día · v0.2.11', disponible:'Nueva v0.2.12 disponible', comprobando:'Comprobando…',
+  descargando:'Descargando 62%', verificando:'Verificando…', reiniciando:'Reiniciando…',
+  sinWifi:'Sin WiFi · no comprobable', errorRed:'Error de red'
 };
 
 const boardSpecs = { grande: { w: 480, h: 480 } };
@@ -651,9 +674,9 @@ function formatMoney(usd) {
 function formatTime(seconds) {
   if (seconds < 60) return seconds + 's';
   const mins = Math.floor(seconds / 60);
-  if (mins < 60) return mins + 'm';
+  if (mins < 60) return mins + 'min';
   const hours = Math.floor(mins / 60);
-  return hours + 'h ' + (mins % 60) + 'm';
+  return hours + 'h ' + (mins % 60) + 'min';
 }
 function fmtMins(minutes) {
   if (minutes === undefined || minutes === null || minutes < 0) return '—';
@@ -662,8 +685,8 @@ function fmtMins(minutes) {
     const hours = Math.floor((minutes % 1440) / 60);
     return days + 'd ' + hours + 'h';
   }
-  if (minutes >= 60) return Math.floor(minutes / 60) + 'h ' + (minutes % 60) + 'm';
-  return minutes + 'm';
+  if (minutes >= 60) return Math.floor(minutes / 60) + 'h ' + (minutes % 60) + 'min';
+  return minutes + 'min';
 }
 
 // === Portfolio number formats (portfolio spec §7) ===
@@ -722,9 +745,9 @@ function pfMoneyColor(n) {
 }
 
 const PF_EMPTY = {
-  nopos: { l1: 'sin posiciones', l2: '~/.config/claude-usage-monitor/portfolio', l2c: 'config: portfolio', l3: 'formato: SIMBOLO.CL cantidad' },
-  nores: { l1: 'sin precios', l3: 'revisar simbolos (.CL)' },
-  nonet: { l1: 'sin precios', l2: 'Yahoo no responde', l3: 'reintenta cada 60 s' }
+  nopos: { l1: 'Sin posiciones', l2: '~/.config/claude-usage-monitor/portfolio', l2c: 'config: portfolio', l3: 'Formato: TICKER.CL cantidad' },
+  nores: { l1: 'Sin precios', l3: 'Revisa el sufijo .CL' },
+  nonet: { l1: 'Sin precios', l2: 'Yahoo no responde', l3: 'Reintenta cada 60 s' }
 };
 
 // === Anexo A: OpenCode coordinate table ===
@@ -911,11 +934,11 @@ function renderOpenCode(container, sizeKey, data, uiState = {}) {
     panelDiv.appendChild(createDiv(heroText, 'left:' + layout.panelPadding + 'px;top:' + layout.hero.top + 'px;font-size:' + layout.hero.size + 'px;font-weight:500;color:' + tokens.text + ';'));
 
     let chipText;
-    if (isSoloConsumo) chipText = isPanel1 ? 'today' : '7 days';
+    if (isSoloConsumo) chipText = isPanel1 ? 'hoy' : '7 días';
     else {
-      chipText = isPanel1 ? '5h' : 'week';
+      chipText = isPanel1 ? '5 h' : 'semana';
       if (data.src === 'est') chipText += ' · est.';
-      if (isLimited && pct >= 100) chipText = 'limit';
+      if (isLimited && pct >= 100) chipText = 'límite';
     }
     const chipColor = isHighUsage ? tokens.error : tokens.primary;
     panelDiv.appendChild(createDiv(chipText, 'right:' + layout.panelPadding + 'px;top:' + layout.chip.top + 'px;height:' + layout.chip.h + 'px;line-height:' + layout.chip.h + 'px;font-size:' + layout.chip.size + 'px;padding:0 ' + layout.chip.px + 'px;background:' + tokens.element + ';color:' + chipColor + ';'));
@@ -933,10 +956,10 @@ function renderOpenCode(container, sizeKey, data, uiState = {}) {
     }
 
     let resetText;
-    if (isSoloConsumo) resetText = formatMoney(isPanel1 ? data.cd : data.c7) + ' spent';
+    if (isSoloConsumo) resetText = formatMoney(isPanel1 ? data.cd : data.c7) + ' gastado';
     else {
-      if (isPanel1 && data.r5 === -1) resetText = 'No active window';
-      else resetText = 'Resets in ' + fmtMins(resetsMins);
+      if (isPanel1 && data.r5 === -1) resetText = 'Sin ventana activa';
+      else resetText = 'Se renueva en ' + fmtMins(resetsMins);
     }
     panelDiv.appendChild(createDiv(resetText, 'left:' + layout.panelPadding + 'px;top:' + layout.costLine.top + 'px;font-size:' + layout.costLine.size + 'px;color:' + tokens.muted + ';'));
     return panelDiv;
@@ -949,12 +972,12 @@ function renderOpenCode(container, sizeKey, data, uiState = {}) {
     let titles, values;
     const modelTruncated = data.m.length > layout.stats.truncate ? data.m.substring(0, layout.stats.truncate) + '…' : data.m;
     if (isSoloConsumo) {
-      titles = ['7d tokens', 'top model', '7d cost'];
+      titles = ['Tokens 7 d', 'Modelo principal', 'Gasto 7 d'];
       values = [formatTokens(data.t7), modelTruncated + ' ' + data.ms + '%', formatMoney(data.c7)];
     } else {
-      titles = ['7d tokens', 'top model', 'month'];
+      titles = ['Tokens 7 d', 'Modelo principal', 'mes'];
       const daysRemaining = Math.round(data.rm / 1440);
-      values = [formatTokens(data.t7), modelTruncated + ' ' + data.ms + '%', data.pm + '% · ' + daysRemaining + 'd'];
+      values = [formatTokens(data.t7), modelTruncated + ' ' + data.ms + '%', data.pm + '% · ' + daysRemaining + ' d'];
     }
     for (let i = 0; i < 3; i++) {
       dimmedGroup.appendChild(createDiv(titles[i], 'left:' + layout.stats.cols[i] + 'px;top:' + layout.stats.titlesTop + 'px;font-size:' + layout.stats.size + 'px;color:' + tokens.text + ';'));
@@ -965,10 +988,10 @@ function renderOpenCode(container, sizeKey, data, uiState = {}) {
 
   let statusText = '';
   let statusColor = tokens.muted;
-  if (isOffline) { statusText = '○ bluetooth disconnected'; statusColor = tokens.error; }
-  else if (isStale) { statusText = '○ stale · updated 12m ago'; statusColor = tokens.error; }
-  else if (active >= 1) { statusText = data.ag + ' · working'; statusColor = tokens.text; }
-  else { statusText = 'idle · last activity ' + formatTime(data.la); statusColor = tokens.muted; }
+  if (isOffline) { statusText = '○ Bluetooth desconectado'; statusColor = tokens.error; }
+  else if (isStale) { statusText = '○ desactualizado · hace 12 min'; statusColor = tokens.error; }
+  else if (active >= 1) { statusText = data.ag + ' · trabajando'; statusColor = tokens.text; }
+  else { statusText = 'inactivo · última actividad hace ' + formatTime(data.la); statusColor = tokens.muted; }
 
   const statusLineDiv = document.createElement('div');
   statusLineDiv.style.cssText = 'position:absolute;left:0;top:' + layout.status.top + 'px;width:100%;';
@@ -1025,13 +1048,13 @@ function renderPortfolio(container, sizeKey, data, uiState = {}) {
     return div;
   }
 
-  let headerText = 'Portfolio';
+  let headerText = 'Portafolio';
   let headerColor = pfTokens.muted;
   if (ok && data.u >= 1) {
     headerText = data.ux ? (data.u > 1 ? '! ' + data.ux + ' +' + (data.u - 1) + ' sin precio' : '! ' + data.ux + ' sin precio') : '! ' + data.u + ' sin precio';
     headerColor = pfTokens.primary;
   } else if (ok && data.w >= 1) {
-    headerText = '! ' + data.w + ' aviso, ver log';
+    headerText = '! ' + data.w + ' aviso, ver registro';
     headerColor = pfTokens.primary;
   }
   root.appendChild(createDiv(headerText, 'left:' + layout.header.x + 'px;top:' + layout.header.top + 'px;font-size:' + layout.header.size + 'px;color:' + headerColor + ';'));
@@ -1057,7 +1080,7 @@ function renderPortfolio(container, sizeKey, data, uiState = {}) {
   if (!ok) {
     const e = PF_EMPTY[err] || PF_EMPTY.nores;
     const l2 = err === 'nores'
-      ? (uiState.private ? 'ninguno con precio' : '0 de ' + (data.n || 0) + ' con precio')
+      ? (uiState.private ? 'Ninguno con precio' : '0 de ' + (data.n || 0) + ' con precio')
       : (err === 'nopos' && PF_ROW.shortPaths ? e.l2c : e.l2);
     const lines = [
       { text: e.l1, cfg: layout.empty.l1, color: pfTokens.text },
@@ -1070,7 +1093,7 @@ function renderPortfolio(container, sizeKey, data, uiState = {}) {
     }
   } else if (isPrivate) {
     p1.appendChild(createDiv(pfDayPct(data.dp, data.dc), 'left:' + pad + 'px;top:' + layout.hero.top + 'px;font-size:' + layout.hero.size + 'px;font-weight:500;color:' + pfMoneyColor(data.dc) + ';'));
-    p1.appendChild(createDiv('hoy', 'right:' + layout.label.unitRi + 'px;top:' + layout.label.top + 'px;font-size:' + layout.label.size + 'px;color:' + pfTokens.muted + ';'));
+    p1.appendChild(createDiv('Cambio hoy', 'right:' + layout.label.unitRi + 'px;top:' + layout.label.top + 'px;font-size:' + layout.label.size + 'px;color:' + pfTokens.muted + ';'));
   } else {
     const LB = layout.label, K = layout.cols;
     p1.appendChild(createDiv('Valor total', 'left:' + pad + 'px;top:' + LB.top + 'px;font-size:' + LB.size + 'px;color:' + pfTokens.muted + ';'));
@@ -1087,11 +1110,11 @@ function renderPortfolio(container, sizeKey, data, uiState = {}) {
   if (ok) {
     const T = layout.listTitle;
     const p2 = cardBox(card2);
-    p2.appendChild(createDiv('mayores variaciones', 'left:' + pad + 'px;top:' + T.top + 'px;font-size:' + T.size + 'px;color:' + pfTokens.muted + ';'));
+    p2.appendChild(createDiv('Mayores variaciones', 'left:' + pad + 'px;top:' + T.top + 'px;font-size:' + T.size + 'px;color:' + pfTokens.muted + ';'));
     if (!isPrivate) p2.appendChild(createDiv('de ' + data.n, 'right:' + T.countRi + 'px;top:' + T.top + 'px;font-size:' + T.size + 'px;color:' + pfTokens.muted + ';'));
 
     if (rows.length === 0) {
-      p2.appendChild(createDiv('sin cambios por ahora', 'left:' + pad + 'px;top:' + layout.noRows.top + 'px;font-size:' + layout.noRows.size + 'px;color:' + pfTokens.muted + ';'));
+      p2.appendChild(createDiv('Sin cambios por ahora', 'left:' + pad + 'px;top:' + layout.noRows.top + 'px;font-size:' + layout.noRows.size + 'px;color:' + pfTokens.muted + ';'));
     } else {
       const R = layout.rows;
       const rowTop = (i) => R.top + i * R.pitch + (g > 0 && i >= g ? R.gapExtra : 0);
@@ -1130,16 +1153,16 @@ function renderPortfolio(container, sizeKey, data, uiState = {}) {
   let statusColor = pfTokens.muted;
   let showSquare = false;
   if (uiState.privNotice) {
-    statusText = isPrivate ? 'modo privado' : 'modo normal';
+    statusText = isPrivate ? 'Modo privado' : 'Modo normal';
   } else if (isOffline) {
-    statusText = '! bluetooth desconectado'; statusColor = pfTokens.primary;
+    statusText = '! Bluetooth desconectado'; statusColor = pfTokens.primary;
   } else if (!ok) {
     statusText = '';
   } else if (data.s === 'l') {
-    if (isStale) statusText = 'sin actualizar desde ' + pfClock(data.t);
-    else { statusText = 'en vivo, ' + pfClock(data.t); statusColor = pfTokens.text; showSquare = true; }
+    if (isStale) statusText = 'Sin actualizar desde ' + pfClock(data.t);
+    else { statusText = 'En vivo, ' + pfClock(data.t); statusColor = pfTokens.text; showSquare = true; }
   } else {
-    statusText = 'cierre ' + pfSessionDate(data.t);
+    statusText = 'Cierre ' + pfSessionDate(data.t);
   }
   if (statusText) {
     if (showSquare) root.appendChild(createDiv('', 'left:' + ST.x + 'px;top:' + ST.dotY + 'px;width:' + ST.dot + 'px;height:' + ST.dot + 'px;background:' + pfTokens.text + ';'));
@@ -1187,13 +1210,125 @@ function renderClaude(container, sizeKey, data, uiState = {}) {
     ov.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.58);';
     wrap.appendChild(ov);
     const badge = document.createElement('div');
-    badge.textContent = offline ? '○ bluetooth disconnected' : '○ stale · updated 12m ago';
+    badge.textContent = offline ? '○ Bluetooth desconectado' : '○ desactualizado · hace 12 min';
     badge.style.cssText =
       'position:absolute;left:0;bottom:26px;width:100%;text-align:center;' +
       "font-family:'IBM Plex Mono',monospace;font-size:16px;color:" + tokens.error + ';';
     wrap.appendChild(badge);
   }
   container.appendChild(wrap);
+}
+
+// === Pantalla Dispositivo / dashboard (PROPUESTA) ===
+// Lenguaje de portafolio (cards #1a1a1a radio 12) + Plex Mono (ya en el
+// firmware, sin fuente nueva). 480×480: header 36, card1 72..234 (versión +
+// progreso OTA), card2 246..398 (radios), hint 410, estado 448, dots 472.
+// Reglas: PWR corto = acción contextual (comprobar; con versión disponible el
+// primer PWR arma y el segundo confirma); sin WiFi el PWR abre el portal; el
+// hold 3 s sigue siendo emparejar; el tap navega como en el resto del ciclo.
+// La descarga muestra velocidad y tiempo restante bajo la barra.
+function renderSys(container, sizeKey, data, uiState = {}) {
+  const w = 480, h = 480;
+  const brightness = uiState.brightness || 255;
+  const active = ['checking', 'downloading', 'verifying', 'rebooting'].includes(data.ota);
+  container.innerHTML = '';
+  const root = document.createElement('div');
+  root.style.cssText = 'position:relative;width:' + w + 'px;height:' + h + 'px;background:' + pfTokens.bg +
+    ';overflow:hidden;font-family:\'IBM Plex Mono\',monospace;filter:brightness(' + (brightness / 255) + ');';
+  function div(text, css) {
+    const d = document.createElement('div');
+    if (text) d.textContent = text;
+    d.style.cssText = 'position:absolute;line-height:1;white-space:nowrap;margin:0;' + css;
+    return d;
+  }
+  function card(x, y, cw, ch) {
+    const c = div();
+    c.style.cssText += 'left:' + x + 'px;top:' + y + 'px;width:' + cw + 'px;height:' + ch + 'px;box-sizing:border-box;border-radius:12px;background:' + pfTokens.surface + ';';
+    return c;
+  }
+
+  root.appendChild(div('Dispositivo', 'left:20px;top:36px;font-size:16px;color:' + pfTokens.muted + ';'));
+  const bat = div();
+  bat.style.cssText += 'left:412px;top:34px;width:40px;height:20px;border:1px solid ' + pfTokens.text + ';';
+  const bf = document.createElement('div');
+  const bw = Math.round(36 * (data.batt / 100));
+  bf.style.cssText = 'position:absolute;left:2px;top:2px;width:' + bw + 'px;height:16px;background:' + pfTokens.text + ';';
+  bat.appendChild(bf);
+  root.appendChild(bat);
+
+  // --- Card 1: versión + OTA ---
+  const c1 = card(20, 72, 440, 162);
+  c1.appendChild(div('Versión', 'left:20px;top:18px;font-size:16px;color:' + pfTokens.muted + ';'));
+  c1.appendChild(div(data.board, 'right:20px;top:18px;font-size:12px;color:' + pfTokens.muted + ';'));
+  c1.appendChild(div(data.ver, 'left:20px;top:40px;font-size:48px;font-weight:500;color:' + pfTokens.text + ';'));
+  let otaText = '', otaColor = pfTokens.muted;
+  if (data.ota === 'up_to_date') { otaText = 'Al día'; otaColor = pfTokens.success; }
+  else if (data.ota === 'available') { otaText = 'Nueva: ' + data.latest + ' · ' + (data.size || ''); otaColor = pfTokens.primary; }
+  else if (data.ota === 'checking') { otaText = 'Comprobando…'; otaColor = pfTokens.text; }
+  else if (data.ota === 'downloading') { otaText = 'Descargando ' + data.latest + '… ' + data.pct + '%'; otaColor = pfTokens.text; }
+  else if (data.ota === 'verifying') { otaText = 'Verificando… 100%'; otaColor = pfTokens.text; }
+  else if (data.ota === 'rebooting') { otaText = 'Reiniciando en ' + data.latest + '…'; otaColor = pfTokens.success; }
+  else if (data.ota === 'sin_wifi') { otaText = 'Sin WiFi — no comprobable'; otaColor = pfTokens.primary; }
+  else if (data.ota === 'error') { otaText = '! ' + (data.err || 'error de red'); otaColor = pfTokens.primary; }
+  c1.appendChild(div(otaText, 'left:20px;top:104px;font-size:18px;color:' + otaColor + ';'));
+  if (data.ota === 'downloading' || data.ota === 'verifying') {
+    const track = div();
+    track.style.cssText += 'left:20px;top:124px;width:400px;height:12px;background:#000;border:1px solid #3c3c3c;';
+    const fill = document.createElement('div');
+    fill.style.cssText = 'position:absolute;left:0;top:0;height:100%;width:' + (data.ota === 'verifying' ? 100 : data.pct) + '%;background:' + tokens.primary + ';' + (data.ota === 'downloading' ? 'animation:blink 1s infinite;' : '');
+    track.appendChild(fill);
+    c1.appendChild(track);
+    if (data.ota === 'downloading' && data.rate) {
+      c1.appendChild(div(data.rate + ' · quedan ' + data.eta, 'left:20px;top:142px;font-size:14px;color:' + pfTokens.muted + ';'));
+    }
+  } else if (data.ota === 'available') {
+    if (uiState.confirm) {
+      c1.appendChild(div('¿Aplicar ' + data.latest + '? PWR confirma', 'left:20px;top:132px;font-size:14px;color:' + pfTokens.text + ';border:1px solid ' + pfTokens.primary + ';padding:6px 10px;background:#000;'));
+    } else {
+      c1.appendChild(div('PWR: aplicar actualización', 'left:20px;top:132px;font-size:14px;color:' + pfTokens.text + ';border:1px solid #3c3c3c;padding:6px 10px;background:#000;'));
+    }
+  } else if (data.ota === 'sin_wifi') {
+    c1.appendChild(div('PWR: abrir portal WiFi', 'left:20px;top:132px;font-size:14px;color:' + pfTokens.text + ';border:1px solid #3c3c3c;padding:6px 10px;background:#000;'));
+  } else if (!active) {
+    c1.appendChild(div('PWR: comprobar ahora', 'left:20px;top:132px;font-size:14px;color:' + pfTokens.muted + ';'));
+  }
+  root.appendChild(c1);
+
+  // --- Card 2: radios ---
+  const c2 = card(20, 246, 440, 152);
+  c2.appendChild(div('Radios y batería', 'left:20px;top:14px;font-size:16px;color:' + pfTokens.muted + ';'));
+  function row(label, value, color, top) {
+    c2.appendChild(div(label, 'left:20px;top:' + top + 'px;font-size:16px;color:' + pfTokens.muted + ';'));
+    c2.appendChild(div(value, 'right:20px;top:' + top + 'px;font-size:16px;color:' + color + ';'));
+  }
+  const bleTxt = data.ble === 'connected' ? '● ' + data.bleName + ' conectado' : data.ble === 'advertising' ? '○ publicitando…' : '○ BLE apagado';
+  const bleCol = data.ble === 'connected' ? pfTokens.success : pfTokens.error;
+  const wifiTxt = data.wifi === 'connected' ? '● ' + data.ssid + ' ' + data.rssi + ' dBm' : data.wifi === 'portal' ? '● portal 192.168.4.1' : '○ WiFi apagado';
+  const wifiCol = data.wifi === 'connected' || data.wifi === 'portal' ? pfTokens.success : pfTokens.error;
+  const battTxt = (data.charging ? '▲ ' : '') + data.batt + '%';
+  const battCol = data.batt <= 20 && !data.charging ? pfTokens.error : pfTokens.text;
+  row('BLE', bleTxt, bleCol, 44);
+  row('WiFi', wifiTxt, wifiCol, 76);
+  row('Batería', battTxt, battCol, 108);
+  root.appendChild(c2);
+
+  // --- Hint + estado ---
+  const hint = data.ota === 'available'
+    ? (uiState.confirm ? 'PWR: confirmar · Toque: siguiente' : 'Toque: siguiente · PWR: aplicar ' + data.latest)
+    : data.ota === 'sin_wifi' ? 'Toque: siguiente · PWR: portal'
+    : active ? 'No apagues · ' + otaText : 'Toque: siguiente · PWR: comprobar';
+  root.appendChild(div(hint, 'left:20px;top:410px;font-size:14px;color:' + pfTokens.muted + ';'));
+  const stTxt = active ? '● trabajando…' : 'Última comprobación ' + (data.checked || '');
+  root.appendChild(div(stTxt, 'left:20px;top:448px;font-size:16px;color:' + (active ? pfTokens.text : pfTokens.muted) + ';'));
+
+  if (uiState.dots) {
+    const count = 6, dSize = 6, dGap = 10;
+    const strip = count * dSize + (count - 1) * dGap;
+    for (let i = 0; i < count; i++) {
+      root.appendChild(div('', 'left:' + (Math.round((w - strip) / 2) + i * (dSize + dGap)) + 'px;top:' + (472 - dSize / 2) + 'px;width:' + dSize + 'px;height:' + dSize + 'px;border-radius:50%;background:' + (i === count - 1 ? pfTokens.text : '#2a2a2a') + ';'));
+    }
+  }
+  container.appendChild(root);
 }
 
 // === Payload builders ===
@@ -1486,7 +1621,7 @@ function renderConfigScreen(container) {
   line('Modo configuración', 70, 30, tokens.text, 500);
   line('Conecta este dispositivo a tu red WiFi', 116, 15, tokens.muted);
   line('Red: ' + PORTAL_SSID, 200, 18, tokens.primary);
-  line('Pair: ' + PAIRING_CODE, 244, 22, tokens.text);
+  line('Código: ' + PAIRING_CODE, 244, 22, tokens.text);
   line('http://192.168.4.1', 296, 16, tokens.muted);
   line('● SoftAP activo · escaneando…', 408, 16, tokens.success);
   container.appendChild(root);
@@ -1571,7 +1706,7 @@ function renderPairingFlow(body) {
   const left = document.createElement('div');
   left.className = 'flow-col';
   const lh = document.createElement('h4'); lh.textContent = 'El dispositivo muestra el código'; left.appendChild(lh);
-  left.appendChild(miniScreen(renderConfigScreen, 'Temp: “Pair: ' + PAIRING_CODE + '” en pantalla y en el portal'));
+  left.appendChild(miniScreen(renderConfigScreen, 'Temporal: “Código: ' + PAIRING_CODE + '” en pantalla y en el portal'));
   const note = document.createElement('p');
   note.className = 'flow-note';
   note.textContent = 'Código de 8 caracteres del alfabeto sin ambigüedades (sin 0/O/1/I/L), TTL 15 min. El token de dispositivo (32 bytes base64url) se devuelve una sola vez y se guarda en NVS (namespace otah, clave dev_token). El firmware no lleva ningún secreto compilado (PHASE2-CONTRACT §2, §6).';
@@ -1605,7 +1740,7 @@ function renderOtaFlow(body) {
   left.appendChild(miniScreen(renderOtaScreen, 'Línea de estado transitoria: “■ OTA · no desconectes”'));
   const note = document.createElement('p');
   note.className = 'flow-note';
-  note.textContent = 'El camino BLE es sólo control (CTRL …0005, requiere enlace emparejado y cifrado). El binario viaja por WiFi con ArduinoOTA/espota y la radio se baja al terminar. Si la imagen nueva no arranca 3 veces, la aplicación vuelve a la ranura anterior (rollback por boot_tries).';
+  note.textContent = 'El camino BLE es solo control (CTRL …0005, requiere enlace emparejado y cifrado). El binario viaja por WiFi con ArduinoOTA/espota y la radio se baja al terminar. Si la imagen nueva no arranca 3 veces, la aplicación vuelve a la ranura anterior (rollback por boot_tries).';
   left.appendChild(note);
   grid.appendChild(left);
 
@@ -1632,18 +1767,18 @@ function renderBleFlow(body) {
   const h = document.createElement('h4'); h.textContent = 'Estados del enlace BLE y datos'; wrap.appendChild(h);
   const note = document.createElement('p');
   note.className = 'flow-note';
-  note.textContent = 'Mismo servicio RX; el payload se enruta por “k” (“oc” OpenCode, “pf” portafolio, sin “k” = Claude). Enlace caído ⇒ paneles al 40 %; datos viejos (5 min) ⇒ paneles al 40 % y línea “stale”. Máximo 240 bytes por payload.';
+  note.textContent = 'Mismo servicio RX; el payload se enruta por “k” (“oc” OpenCode, “pf” portafolio, sin “k” = Claude). Enlace caído ⇒ paneles al 40 %; datos viejos (5 min) ⇒ paneles al 40 % y línea “desactualizado”. Máximo 240 bytes por payload.';
   wrap.appendChild(note);
 
   const row = document.createElement('div'); row.className = 'mini-row';
   const ocData = { ...scenarios.activa };
   const pfData = { ...pfScenarios.real };
   row.appendChild(miniScreen((c) => renderOpenCode(c, 'grande', ocData, { offline: false, stale: false }),
-    'OpenCode conectado · ■ build · working'));
+    'OpenCode conectado · ■ build · trabajando'));
   row.appendChild(miniScreen((c) => renderOpenCode(c, 'grande', ocData, { offline: true }),
-    'OpenCode BLE caído · ○ bluetooth disconnected'));
+    'OpenCode BLE caído · ○ Bluetooth desconectado'));
   row.appendChild(miniScreen((c) => renderOpenCode(c, 'grande', ocData, { stale: true }),
-    'OpenCode datos viejos · ○ stale · updated 12m ago'));
+    'OpenCode datos viejos · ○ desactualizado · hace 12 min'));
   wrap.appendChild(row);
 
   const row2 = document.createElement('div'); row2.className = 'mini-row'; row2.style.marginTop = '20px';
@@ -1665,11 +1800,14 @@ const simulatorState = {
   claudeScenario: 'real',
   scenario: 'real',             // OpenCode
   pfScenario: 'real',
+  sysScenario: 'disponible',
+  sysConfirm: false,
+  sysConfirmTimer: null,
   connected: true,
   daemonSendsOC: true,
   daemonSendsPF: true,
   pfPrivate: false,
-  currentScreen: 'clawd',       // clawd, claude, ocsplash, ocusage, portfolio
+  currentScreen: 'clawd',       // clawd, claude, ocsplash, ocusage, portfolio, sys
   brightness: 255,
   ocSplash: null,
   buttonDownTime: {},
@@ -1693,6 +1831,7 @@ const simulatorState = {
   setClaudeScenario(s) { this.claudeScenario = s; render(); },
   setScenario(s) { this.scenario = s; render(); },
   setPfScenario(s) { this.pfScenario = s; render(); },
+  setSysScenario(s) { this.sysScenario = s; render(); },
   setPfPrivate(value, announce = true) {
     this.pfPrivate = !!value;
     if (announce) this.showPfNotice();
@@ -1723,6 +1862,7 @@ const simulatorState = {
     const screens = ['clawd', 'claude'];
     if (this.daemonSendsOC) screens.push('ocsplash', 'ocusage');
     if (this.daemonSendsPF) screens.push('portfolio');
+    screens.push('sys');   // propuesta: el dashboard siempre cierra el ciclo
     return screens;
   },
   getMood() {
@@ -1739,13 +1879,14 @@ const simulatorState = {
     const downTime = this.buttonDownTime[button] || 0;
     const elapsed = Date.now() - downTime;
     delete this.buttonDownTime[button];
-    if (this.mode !== 'screens') { showToast('Botones físicos: sólo en modo Pantallas'); return; }
+    if (this.mode !== 'screens') { showToast('Botones físicos: solo en modo Pantallas'); return; }
 
     if (button === 'boot') {
       if (elapsed < 300) {
         const screens = this.getScreenList();
         const idx = screens.indexOf(this.currentScreen);
         this.currentScreen = screens[(idx - 1 + screens.length) % screens.length];
+        this.sysConfirm = false;
         showPageIndicator(); render();
       } else {
         showToast('Espacio mantenido ' + (elapsed / 1000).toFixed(1) + ' s → HID (dictado)');
@@ -1755,6 +1896,7 @@ const simulatorState = {
         const screens = this.getScreenList();
         const idx = screens.indexOf(this.currentScreen);
         this.currentScreen = screens[(idx + 1) % screens.length];
+        this.sysConfirm = false;
         showPageIndicator(); render();
       } else {
         showToast('Shift+Tab → HID (cambio de modo)');
@@ -1768,6 +1910,27 @@ const simulatorState = {
           showToast('PWR → siguiente animación de Clawd (captura real)');
         } else if (this.currentScreen === 'portfolio') {
           this.setPfPrivate(!this.pfPrivate);
+        } else if (this.currentScreen === 'sys') {
+          const d = sysScenarios[this.sysScenario];
+          if (d && d.ota === 'available') {
+            if (!this.sysConfirm) {
+              this.sysConfirm = true;
+              if (this.sysConfirmTimer) clearTimeout(this.sysConfirmTimer);
+              this.sysConfirmTimer = setTimeout(() => { this.sysConfirm = false; this.sysConfirmTimer = null; render(); }, 3500);
+              showToast('¿Aplicar ' + d.latest + '? PWR otra vez para confirmar');
+            } else {
+              this.sysConfirm = false;
+              if (this.sysConfirmTimer) { clearTimeout(this.sysConfirmTimer); this.sysConfirmTimer = null; }
+              showToast('Aplicando ' + d.latest + '… (propuesta)');
+            }
+            render();
+          } else if (d && d.ota === 'sin_wifi') {
+            showToast('PWR → abrir portal WiFi (propuesta)');
+          } else if (d && ['checking', 'downloading', 'verifying', 'rebooting'].includes(d.ota)) {
+            showToast('OTA en curso, espera… (propuesta)');
+          } else {
+            showToast('PWR → comprobar actualización (propuesta)');
+          }
         } else {
           const levels = [64, 128, 200, 255];
           const idx = levels.indexOf(this.brightness);
@@ -1785,6 +1948,7 @@ const simulatorState = {
     const screens = this.getScreenList();
     const idx = screens.indexOf(this.currentScreen);
     this.currentScreen = screens[(idx + 1) % screens.length];
+    this.sysConfirm = false;
     showPageIndicator(); render();
   }
 };
@@ -1843,7 +2007,7 @@ function renderStage() {
 
     const cap = document.createElement('p');
     cap.style.cssText = 'font-size:12px;color:#888;text-align:center;max-width:420px;';
-    cap.textContent = 'Clawd y Claude: capturas reales 480×480. OpenCode: canvas (splash) y render (uso). Portafolio: render BVC.';
+    cap.textContent = 'Clawd y Claude: capturas reales 480×480. OpenCode: canvas (splash) y render (uso). Portafolio y Dispositivo: render.';
     dc.appendChild(cap);
 
     stage.appendChild(dc);
@@ -1879,7 +2043,7 @@ function renderPhysicalButtons() {
   container.innerHTML = '';
   const configs = [
     { name: 'BOOT ◀', actions: 'toque ◀ · mantener: Espacio', id: 'boot' },
-    { name: 'PWR', actions: 'brillo · splash: escena/animación · portafolio: privado · 3 s: emparejar', id: 'pwr' },
+    { name: 'PWR', actions: 'brillo · splash: escena/anim · portafolio: privado · dispositivo: comprobar/aplicar · 3 s: emparejar', id: 'pwr' },
     { name: 'SEC ▶', actions: 'toque ▶ · mantener: Shift+Tab', id: 'sec' }
   ];
   for (const btn of configs) {
@@ -1910,7 +2074,7 @@ function renderControlPanel() {
     '<input type="radio" id="mode-flows" name="mode" ' + (!screens ? 'checked' : '') + ' onchange="simulatorState.setMode(\'flujos\')">' +
     '<label for="mode-flows">Flujos</label></div></div>';
 
-  html += '<div class="control-group"><label>Board</label><div class="segmented-control">' +
+  html += '<div class="control-group"><label>Placa</label><div class="segmented-control">' +
     '<input type="radio" id="board-216" name="board" value="grande" checked onchange="simulatorState.setBoard(\'grande\')">' +
     '<label for="board-216">2.16" 480×480</label></div></div>';
 
@@ -1940,6 +2104,15 @@ function renderControlPanel() {
     html += '<input type="radio" id="pf-' + key + '" name="pfsc" ' + (simulatorState.pfScenario === key ? 'checked' : '') +
       ' onchange="simulatorState.setPfScenario(\'' + key + '\')">' +
       '<label for="pf-' + key + '">' + pfLabels[key] + '</label>';
+  }
+  html += '</div></div>';
+
+  html += '<div class="control-group"><label>Dispositivo — propuesta</label><div class="radio-group">';
+  const sysOrder = ['alDia', 'disponible', 'comprobando', 'descargando', 'verificando', 'reiniciando', 'sinWifi', 'errorRed'];
+  for (const key of sysOrder) {
+    html += '<input type="radio" id="sys-' + key + '" name="syssc" ' + (simulatorState.sysScenario === key ? 'checked' : '') +
+      ' onchange="simulatorState.setSysScenario(\'' + key + '\')">' +
+      '<label for="sys-' + key + '">' + sysLabels[key] + '</label>';
   }
   html += '</div></div>';
 
@@ -1975,9 +2148,9 @@ function renderControlPanel() {
     '<ul>' +
     '<li><strong>BOOT ◀:</strong> &lt; 300 ms = pantalla anterior. ≥ 300 ms = Espacio (HID, dictado)</li>' +
     '<li><strong>SEC ▶:</strong> &lt; 300 ms = siguiente pantalla. ≥ 300 ms = Shift+Tab (HID)</li>' +
-    '<li><strong>PWR:</strong> &lt; 1.5 s = brillo (splash: escena/animación · portafolio: modo privado). ≥ 3 s = emparejar</li>' +
-    '<li><strong>Toque:</strong> siguiente pantalla (todos los boards)</li>' +
-    '<li><em>El ciclo es clawd → claude → ocsplash → ocusage → portfolio. Las pantallas OC y el portafolio entran cuando llega su primer payload.</em></li>' +
+    '<li><strong>PWR:</strong> &lt; 1.5 s = brillo (splash: escena/animación · portafolio: modo privado · <strong>dispositivo: comprobar/aplicar — propuesta</strong>). ≥ 3 s = emparejar</li>' +
+    '<li><strong>Toque:</strong> siguiente pantalla (todas las placas)</li>' +
+    '<li><em>El ciclo es clawd → claude → ocsplash → ocusage → portfolio → <strong>dispositivo (propuesta, siempre)</strong>. Las pantallas OC y el portafolio entran cuando llega su primer payload.</em></li>' +
     '</ul></div>';
 
   cp.innerHTML = html;
@@ -2055,6 +2228,13 @@ function render() {
     });
     deviceScreen.innerHTML = '';
     while (temp.firstChild) deviceScreen.appendChild(temp.firstChild);
+  } else if (simulatorState.currentScreen === 'sys') {
+    const sysData = { ...sysScenarios[simulatorState.sysScenario] };
+    if (!simulatorState.connected && (sysData.ble === 'connected')) sysData.ble = 'advertising';
+    const temp = document.createElement('div');
+    renderSys(temp, simulatorState.board, sysData, { brightness: simulatorState.brightness, confirm: simulatorState.sysConfirm });
+    deviceScreen.innerHTML = '';
+    while (temp.firstChild) deviceScreen.appendChild(temp.firstChild);
   }
 
   renderPhysicalButtons();
@@ -2081,6 +2261,7 @@ function currentPayload() {
     return '{"k":"oc"} / {"k":"pf"} / {} · enlace BLE y frescura';
   }
   if (simulatorState.currentScreen === 'portfolio') return buildPfPayload(pfScenarios[simulatorState.pfScenario]);
+  if (simulatorState.currentScreen === 'sys') return '{"sys":"device","ver":"' + sysScenarios[simulatorState.sysScenario].ver + '","ota":"' + sysScenarios[simulatorState.sysScenario].ota + '"} · estado local, sin BLE';
   if (simulatorState.currentScreen === 'clawd' || simulatorState.currentScreen === 'claude') {
     return buildClaudePayload(claudeScenarios[simulatorState.claudeScenario]);
   }
@@ -2107,7 +2288,7 @@ function renderInfo() {
     el.textContent = 'Flujo: ' + names[simulatorState.flow] + ' · (no es una pantalla del ciclo)';
     return;
   }
-  const names = { clawd: 'Clawd', claude: 'Claude', ocsplash: 'OCSplash', ocusage: 'OCUsage', portfolio: 'Portafolio' };
+  const names = { clawd: 'Clawd', claude: 'Claude', ocsplash: 'OCSplash', ocusage: 'OCUsage', portfolio: 'Portafolio', sys: 'Dispositivo (propuesta)' };
   el.textContent = 'Pantalla: ' + names[simulatorState.currentScreen] + ' · ' + simulatorState.brightness + ' / 255' +
     (simulatorState.currentScreen === 'portfolio' && simulatorState.pfPrivate ? ' · modo privado' : '');
 }
@@ -2171,8 +2352,8 @@ function buildVariantsGrid() {
   grid.appendChild(s1.section);
 
   // 2. Splash OpenCode
-  const s2 = gridSection('Splash OpenCode', 'Escenas automáticas por estado (idle=typeon, resto=scanner). Moods idle/active/busy/near/limited (research §8).');
-  const moodLabels = { idle: 'idle (typeon)', active: 'active (scanner)', near: 'near (ámbar)', limited: 'limited (rojo)' };
+  const s2 = gridSection('Splash OpenCode', 'Escenas automáticas por estado (inactivo=typeon, resto=scanner). Estados inactivo/activo/ocupado/cerca del límite/límite (research §8).');
+  const moodLabels = { idle: 'inactivo (typeon)', active: 'activo (scanner)', near: 'cerca del límite (ámbar)', limited: 'límite (rojo)' };
   for (const mood of ['idle', 'active', 'near', 'limited']) {
     const box = screenBox('grande');
     if (window.OCSplash) {
@@ -2230,13 +2411,24 @@ function buildVariantsGrid() {
   s4.section.appendChild(buildPfGrid(true));
   grid.appendChild(s4.section);
 
-  // 5. Portal cautivo (mock)
-  const s5 = gridSection('Portal cautivo (Flujo, no pantalla)', 'Mock fiel a WIFI-SCAN.md §5. SSIDs y códigos ficticios.');
-  for (const v of [['scanning', 'Escaneando · “Buscando redes…”'], ['list', 'Lista detectada · RSSI, candado, tap-to-fill'], ['empty', 'Sin redes · “No se encontraron redes”'], ['saved', 'Guardado ✓ · conectando']]) {
-    const portal = createPortalMock({ view: v[0], interactive: false });
-    s5.grid.appendChild(variantCell('Portal · ' + v[1], phoneFrame(portal.el, 'http://192.168.4.1')));
+  // 5. Dispositivo / dashboard (PROPUESTA, no implementado en firmware)
+  const s5 = gridSection('Dispositivo / dashboard — PROPUESTA A REVISAR',
+    'Lenguaje de portafolio (cards radio 12) + Plex Mono. Datos locales: ver/board (ota_version + board_caps), BLE (ble_get_state), WiFi (NVS/portal), batería (power_hal), OTA (ota_pull_state_name + pct). PWR corto = comprobar (doble PWR confirma la aplicación); sin WiFi el PWR abre el portal; hold 3 s sigue siendo emparejar; tap navega. Cierra el ciclo siempre (estado local). La descarga muestra velocidad y tiempo restante.');
+  const sysOrder = ['alDia', 'disponible', 'comprobando', 'descargando', 'verificando', 'reiniciando', 'sinWifi', 'errorRed'];
+  for (const key of sysOrder) {
+    const box = screenBox('grande');
+    renderSys(box, 'grande', { ...sysScenarios[key] }, { dots: true });
+    s5.grid.appendChild(variantCell('480×480 — Dispositivo · ' + sysLabels[key], box));
   }
   grid.appendChild(s5.section);
+
+  // 6. Portal cautivo (mock)
+  const s6 = gridSection('Portal cautivo (Flujo, no pantalla)', 'Mock fiel a WIFI-SCAN.md §5. SSIDs y códigos ficticios.');
+  for (const v of [['scanning', 'Escaneando · “Buscando redes…”'], ['list', 'Lista detectada · RSSI, candado, tap-to-fill'], ['empty', 'Sin redes · “No se encontraron redes”'], ['saved', 'Guardado ✓ · conectando']]) {
+    const portal = createPortalMock({ view: v[0], interactive: false });
+    s6.grid.appendChild(variantCell('Portal · ' + v[1], phoneFrame(portal.el, 'http://192.168.4.1')));
+  }
+  grid.appendChild(s6.section);
 }
 
 // =============================================================================
