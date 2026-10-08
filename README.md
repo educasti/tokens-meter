@@ -342,6 +342,38 @@ bonded and encrypted link, and every command is answered on the TX characteristi
 [Firmware updates](#firmware-updates-hybrid-ota) and
 [`design/ota-hybrid/DESIGN.md`](design/ota-hybrid/DESIGN.md).
 
+## WiFi provisioning (captive portal)
+
+The device brings up its own WiFi network so you can hand it your home network
+without a cable or an app — important on iOS, which has no Web Bluetooth. When no
+credentials are stored it raises the SoftAP about 5 s after boot; you can also
+trigger it on demand over BLE/serial with `{"cmd":"portal"}` (and stop it with
+`{"cmd":"portal","mode":"off"}`).
+
+1. Join the network the device advertises: **`Clawdmeter-XXXX`** (XXXX = the last
+   two bytes of its WiFi MAC).
+2. The captive portal opens by itself; if it does not, browse to
+   **<http://192.168.4.1>** (iOS in particular does not always auto-open it).
+3. The page scans and **lists the nearby networks**, strongest first, each with a
+   signal indicator and a lock for the secured ones. Tap one to fill in the network
+   name, type the password, and **Guardar y conectar**. An **Actualizar** button
+   re-scans, and the name field stays editable for a hidden network or one that
+   does not show up in the list.
+4. The credentials go to the device's NVS (the same path OTA uses) and the SoftAP
+   shuts down a couple of seconds later.
+
+While the device is still unpaired the page also shows the **pairing code** used to
+register it with the backend. An unattended portal closes itself after 5 minutes,
+and it never runs while a hybrid or pull OTA owns the radio. The page is in
+Spanish.
+
+The scan is asynchronous (the client polls `/scan`) and the radio runs in `AP_STA`
+so the SoftAP stays up while the STA interface scans. Design and endpoint contract:
+[`design/backend-wifi/WIFI-SCAN.md`](design/backend-wifi/WIFI-SCAN.md) and
+[`design/backend-wifi/ROADMAP.md`](design/backend-wifi/ROADMAP.md) §7. The whole
+device, this page included, is mocked up in
+[`design/device-prototype/prototype.html`](design/device-prototype/prototype.html).
+
 ## Firmware updates (hybrid OTA)
 
 The device can update its own firmware over WiFi, triggered over the BLE link you

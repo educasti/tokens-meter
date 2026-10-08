@@ -1,0 +1,2304 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Clawdmeter — prototipo completo del dispositivo</title>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+  <script src="../opencode-screen/oc-splash.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #111;
+      color: #ddd;
+      font-family: system-ui, -apple-system, sans-serif;
+      padding: 40px 20px;
+      line-height: 1.6;
+    }
+
+    h1 { font-size: 28px; margin-bottom: 8px; }
+    .subtitle { font-size: 14px; color: #888; margin-bottom: 24px; }
+
+    h2 { font-size: 20px; margin-top: 40px; margin-bottom: 20px; border-bottom: 1px solid #333; padding-bottom: 10px; }
+
+    h3 { font-size: 14px; margin-bottom: 12px; text-transform: uppercase; color: #bbb; letter-spacing: 0.5px; }
+    h4 { font-size: 13px; margin-bottom: 10px; color: #bbb; letter-spacing: 0.3px; }
+
+    .notice {
+      margin: 0 0 32px 0; padding: 10px 14px; border: 1px solid #fab283;
+      border-radius: 4px; background: rgba(250,178,131,0.08); font-size: 12px;
+      color: #fab283; line-height: 1.5;
+    }
+
+    /* --- Section A: Simulator --- */
+    .section-a {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 40px;
+      margin-bottom: 60px;
+      align-items: start;
+    }
+
+    @media (max-width: 980px) {
+      .section-a { grid-template-columns: 1fr; }
+    }
+
+    .stage { min-width: 0; }
+
+    .device-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .device-bezel {
+      background: #222;
+      border-radius: 28px;
+      padding: 24px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+      margin-bottom: 24px;
+      position: relative;
+    }
+
+    .device-screen {
+      background: #000;
+      overflow: hidden;
+      position: relative;
+      cursor: pointer;
+      border: 1px solid #333;
+    }
+
+    .device-info {
+      font-size: 12px;
+      color: #888;
+      text-align: center;
+      margin-bottom: 16px;
+    }
+
+    .device-buttons {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: nowrap;
+      margin-bottom: 24px;
+      font-size: 12px;
+    }
+
+    .physical-button {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .physical-button-name {
+      font-size: 12px;
+      font-weight: 600;
+      color: #fab283;
+      min-width: 60px;
+      text-align: center;
+    }
+
+    .physical-button-actions {
+      font-size: 10px;
+      color: #888;
+      text-align: center;
+      line-height: 1.3;
+      min-width: 80px;
+    }
+
+    .device-buttons button {
+      background: #222;
+      border: 1px solid #333;
+      color: #ddd;
+      padding: 6px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: system-ui;
+      font-size: 11px;
+      transition: all 0.2s;
+      min-width: 60px;
+    }
+
+    .device-buttons button:active { background: #fab283; color: #000; }
+    .device-buttons button:hover { background: #333; }
+
+    .toast {
+      position: fixed;
+      bottom: 120px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #1e1e1e;
+      color: #ddd;
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 12px;
+      opacity: 0;
+      pointer-events: none;
+      z-index: 100;
+      animation: toast-fade 1.4s ease-in-out;
+    }
+
+    @keyframes toast-fade {
+      0% { opacity: 1; }
+      70% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+
+    /* Page indicator dots */
+    .page-indicator {
+      position: absolute;
+      bottom: 32px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 8px;
+      opacity: 0;
+      pointer-events: none;
+      animation: indicator-fade 1.5s ease-in-out;
+    }
+
+    @keyframes indicator-fade {
+      0% { opacity: 1; }
+      80% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+
+    .page-indicator span {
+      width: 6px; height: 6px; border-radius: 50%; background: #484848;
+    }
+    .page-indicator span.active { background: #eeeeee; }
+
+    /* --- Control Panel --- */
+    .control-panel { display: flex; flex-direction: column; gap: 24px; }
+    .control-group { display: flex; flex-direction: column; gap: 8px; }
+
+    .control-group > label {
+      font-size: 12px; font-weight: 500; color: #bbb;
+      text-transform: uppercase; letter-spacing: 0.5px;
+    }
+
+    .segmented-control {
+      display: flex; gap: 1px; background: #1e1e1e; border-radius: 4px; overflow: hidden;
+    }
+    .segmented-control input[type="radio"] { display: none; }
+    .segmented-control label {
+      flex: 1; padding: 8px; text-align: center; background: #222; cursor: pointer;
+      font-size: 12px; border: none; text-transform: none; color: #888;
+      letter-spacing: normal; transition: all 0.2s;
+    }
+    .segmented-control input[type="radio"]:checked + label {
+      background: #fab283; color: #000; font-weight: 500;
+    }
+
+    .radio-group { display: flex; flex-direction: column; gap: 8px; }
+    .radio-group input[type="radio"] { display: none; }
+    .radio-group label {
+      display: flex; align-items: center; gap: 8px; padding: 8px; cursor: pointer;
+      font-size: 12px; border-radius: 4px; transition: background 0.2s;
+      text-transform: none; letter-spacing: normal; font-weight: normal; color: #bbb;
+    }
+    .radio-group label::before {
+      content: ''; display: inline-block; width: 12px; height: 12px;
+      border: 1px solid #555; border-radius: 2px; background: #222;
+    }
+    .radio-group input[type="radio"]:checked + label { background: rgba(250,178,131,0.1); color: #fab283; }
+    .radio-group input[type="radio"]:checked + label::before { background: #fab283; border-color: #fab283; }
+
+    .toggle-group { display: flex; gap: 12px; flex-wrap: wrap; }
+    .toggle {
+      display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+      background: #222; border: 1px solid #333; border-radius: 4px; cursor: pointer;
+      font-size: 12px; transition: all 0.2s;
+    }
+    .toggle input[type="checkbox"] { display: none; }
+    .toggle input[type="checkbox"]:checked ~ .toggle-switch { background: #fab283; }
+    .toggle-switch {
+      display: inline-block; width: 12px; height: 12px; border-radius: 2px;
+      background: #444; transition: background 0.2s;
+    }
+
+    .payload-display {
+      background: #1a1a1a; border: 1px solid #333; border-radius: 4px; padding: 12px;
+      font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #888;
+      overflow-x: auto; max-height: 120px; overflow-y: auto;
+    }
+    .payload-display code { color: #ddd; }
+    .payload-bytes { margin-top: 8px; font-size: 11px; color: #888; }
+    .payload-bytes.warning { color: #e06c75; }
+
+    .nav-explanation {
+      background: #1a1a1a; border-left: 2px solid #fab283; padding: 12px;
+      border-radius: 4px; font-size: 12px; line-height: 1.5;
+    }
+    .nav-explanation ul { margin-left: 20px; margin-top: 6px; font-size: 11px; line-height: 1.6; }
+
+    .fieldset {
+      border: 1px solid #2a2a2a; border-radius: 6px; padding: 14px;
+      display: flex; flex-direction: column; gap: 16px;
+    }
+    .fieldset > legend {
+      font-size: 11px; color: #fab283; text-transform: uppercase;
+      letter-spacing: 0.5px; padding: 0 6px;
+    }
+
+    /* --- Flujos --- */
+    .flows { display: flex; flex-direction: column; gap: 18px; }
+    .flow-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+    .flow-tab {
+      background: #222; border: 1px solid #333; color: #bbb; padding: 7px 12px;
+      border-radius: 4px; cursor: pointer; font-size: 12px; font-family: system-ui;
+      transition: all 0.2s;
+    }
+    .flow-tab:hover { background: #2a2a2a; }
+    .flow-tab.active { background: #fab283; color: #000; font-weight: 600; border-color: #fab283; }
+    .flow-body { min-width: 0; }
+    .flow-grid {
+      display: grid; grid-template-columns: minmax(300px, 1fr) minmax(300px, 1fr);
+      gap: 32px; align-items: start;
+    }
+    @media (max-width: 820px) { .flow-grid { grid-template-columns: 1fr; } }
+    .flow-col { min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+    .flow-note { font-size: 11px; color: #888; line-height: 1.5; }
+    .flow-card {
+      background: #161616; border: 1px solid #333; border-radius: 6px; padding: 16px;
+    }
+    .flow-card h4 { margin-bottom: 10px; }
+    .flow-rows { display: flex; flex-direction: column; gap: 8px; }
+    .flow-row { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; }
+    .flow-row .k { color: #888; }
+    .flow-row .v { color: #ddd; font-family: 'IBM Plex Mono', monospace; text-align: right; }
+    .flow-row .v.hi { color: #fab283; }
+    .flow-row .v.ok { color: #7fd88f; }
+
+    .flow-steps { display: flex; flex-direction: column; gap: 10px; }
+    .flow-step {
+      display: flex; gap: 10px; background: #161616; border: 1px solid #2a2a2a;
+      border-radius: 6px; padding: 10px 12px; font-size: 12px; line-height: 1.5;
+    }
+    .flow-step .n {
+      flex-shrink: 0; width: 20px; height: 20px; border-radius: 50%;
+      background: #fab283; color: #000; font-weight: 700; font-size: 11px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .flow-step .t { color: #ccc; }
+    .flow-step code, .code-block {
+      font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #fab283;
+      background: #0e0e0e; border: 1px solid #2a2a2a; border-radius: 4px; padding: 1px 5px;
+    }
+    .code-block {
+      display: block; padding: 10px; color: #ddd; line-height: 1.6; white-space: pre-wrap;
+      word-break: break-word; overflow-x: auto;
+    }
+    .code-block .c { color: #6a9955; }
+    .code-block .s { color: #ce9178; }
+    .code-block .k { color: #9cdcfe; }
+
+    .tag {
+      display: inline-block; font-size: 10px; padding: 2px 7px; border-radius: 10px;
+      border: 1px solid #333; color: #888; text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .tag.warn { color: #fab283; border-color: #fab283; }
+    .tag.ok { color: #7fd88f; border-color: #7fd88f; }
+    .tag.err { color: #e06c75; border-color: #e06c75; }
+
+    /* Mini device screens (scale 480 → 288) */
+    .mini-screen {
+      width: 288px; height: 288px; overflow: hidden; background: #000;
+      border: 1px solid #333; position: relative;
+    }
+    .mini-inner { width: 480px; height: 480px; transform: scale(0.6); transform-origin: top left; }
+    .mini-row { display: flex; gap: 20px; flex-wrap: wrap; }
+    .mini-cell { display: flex; flex-direction: column; gap: 8px; align-items: center; }
+    .mini-caption { font-size: 11px; color: #888; text-align: center; }
+
+    /* --- Portal cautivo (mock fiel a WIFI-SCAN.md §5) --- */
+    .phone {
+      width: 100%; max-width: 360px; background: #010409; border: 1px solid #30363d;
+      border-radius: 18px; padding: 8px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+      margin: 0 auto;
+    }
+    .phone-bar { display: flex; align-items: center; gap: 6px; padding: 6px 8px 10px; }
+    .phone-bar .dot { width: 8px; height: 8px; border-radius: 50%; background: #30363d; }
+    .phone-bar .url {
+      flex: 1; background: #161b22; border-radius: 6px; padding: 3px 8px; font-size: 11px;
+      color: #8b949e; font-family: 'IBM Plex Mono', monospace; text-align: center;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .phone-screen { background: #0d1117; border-radius: 10px; overflow: hidden; }
+
+    .portal {
+      background: #0d1117; color: #c9d1d9; padding: 16px;
+      font-family: system-ui, -apple-system, sans-serif; font-size: 14px; line-height: 1.5;
+    }
+    .portal h1 { font-size: 20px; color: #f0f6fc; margin-bottom: 6px; }
+    .portal .lead { color: #8b949e; margin-bottom: 14px; font-size: 13px; }
+    .portal .pair-block {
+      background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+      padding: 12px; margin-bottom: 14px;
+    }
+    .portal .pair-block h3 {
+      font-size: 13px; color: #f0f6fc; margin-bottom: 4px; text-transform: none; letter-spacing: normal;
+    }
+    .portal .pair-block p { font-size: 12px; color: #8b949e; margin-bottom: 8px; }
+    .portal .pair-block code {
+      display: inline-block; background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+      padding: 4px 10px; font-family: 'IBM Plex Mono', monospace; font-size: 17px;
+      letter-spacing: 3px; color: #f0f6fc;
+    }
+    .portal .nets { margin-bottom: 14px; }
+    .portal .nets-head {
+      display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;
+    }
+    .portal .nets-head span { font-size: 13px; color: #f0f6fc; font-weight: 600; }
+    .portal .nets-head button {
+      background: #21262d; color: #c9d1d9; border: 1px solid #30363d; border-radius: 6px;
+      padding: 4px 10px; font-size: 12px; cursor: pointer; font-family: system-ui;
+    }
+    .portal .nets-head button:disabled { opacity: 0.5; cursor: default; }
+    .portal .nets-list { display: flex; flex-direction: column; gap: 6px; }
+    .portal .nets-msg { color: #8b949e; font-size: 12px; padding: 6px 2px; }
+    .portal .net {
+      display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+      background: #161b22; border: 1px solid #30363d; border-radius: 6px;
+      padding: 8px 10px; cursor: pointer; color: #c9d1d9; font-size: 13px;
+    }
+    .portal .net:hover { border-color: #484f58; }
+    .portal .net.on { border-color: #238636; background: rgba(35,134,54,0.12); }
+    .portal .net .ssid { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .portal .net .sig { display: inline-flex; align-items: flex-end; gap: 2px; height: 14px; }
+    .portal .net .sig i { width: 3px; background: #30363d; border-radius: 1px; display: block; }
+    .portal .net .sig i.on { background: #3fb950; }
+    .portal .net .lock { font-size: 12px; color: #8b949e; width: 16px; text-align: center; }
+    .portal form label { display: block; font-size: 12px; color: #8b949e; margin: 10px 0 4px; }
+    .portal form input {
+      width: 100%; background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+      padding: 8px 10px; color: #f0f6fc; font-size: 14px; font-family: system-ui;
+    }
+    .portal form input:focus { outline: none; border-color: #58a6ff; }
+    .portal form button[type="submit"] {
+      width: 100%; margin-top: 14px; background: #238636; border: 1px solid #2ea043;
+      border-radius: 6px; color: #fff; padding: 9px; font-size: 14px; cursor: pointer;
+      font-family: system-ui;
+    }
+    .portal form button[type="submit"]:hover { background: #2ea043; }
+    .portal .s { font-size: 11px; color: #8b949e; margin-top: 14px; }
+    .portal .s b { color: #c9d1d9; }
+    .portal .saved, .portal .error { text-align: center; padding: 34px 8px; }
+    .portal .saved h2 { color: #3fb950; font-size: 20px; margin-bottom: 10px; }
+    .portal .error h2 { color: #f85149; font-size: 18px; margin-bottom: 10px; }
+    .portal .saved p, .portal .error p { color: #8b949e; font-size: 13px; margin-bottom: 14px; }
+    .portal .linklike {
+      background: none; border: none; color: #58a6ff; cursor: pointer; font-size: 13px;
+      font-family: system-ui; text-decoration: underline;
+    }
+
+    /* --- Section B: Variants Grid --- */
+    .section-b { margin-bottom: 60px; }
+    .variants-grid { display: grid; gap: 40px; align-items: start; }
+    .variant-cell { display: flex; flex-direction: column; gap: 12px; }
+    .variant-caption { font-size: 11px; color: #888; text-align: center; }
+    .variant-screen { background: #000; border: 1px solid #333; }
+
+    /* --- Section C: Palette --- */
+    .section-c { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 40px; }
+    .palette-section { min-width: 0; }
+    .color-swatch {
+      display: flex; align-items: center; gap: 12px; padding: 8px;
+      background: #1a1a1a; border-radius: 4px; margin-bottom: 8px;
+    }
+    .color-box { width: 40px; height: 40px; border-radius: 4px; border: 1px solid #333; flex-shrink: 0; }
+    .color-info { display: flex; flex-direction: column; gap: 2px; }
+    .color-name { font-size: 12px; font-weight: 500; color: #ddd; }
+    .color-value { font-size: 11px; color: #888; font-family: 'IBM Plex Mono', monospace; }
+    .typography-section { display: flex; flex-direction: column; gap: 12px; }
+    .type-specimen {
+      padding: 12px; background: #1a1a1a; border-radius: 4px;
+      font-family: 'IBM Plex Mono', monospace; color: #ddd; line-height: 1.4;
+    }
+    .type-48 { font-size: 48px; font-weight: 500; }
+    .type-40 { font-size: 40px; font-weight: 500; }
+    .type-28 { font-size: 28px; font-weight: 400; }
+    .type-24 { font-size: 24px; font-weight: 400; }
+    .type-20 { font-size: 20px; font-weight: 400; }
+    .type-18 { font-size: 18px; font-weight: 400; }
+    .type-16 { font-size: 16px; font-weight: 400; }
+    .type-14 { font-size: 14px; font-weight: 400; }
+    .type-12 { font-size: 12px; font-weight: 400; }
+    .type-note { font-size: 11px; color: #888; line-height: 1.5; }
+    .tiempos { font-family: Georgia, 'Times New Roman', serif; }
+
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+    .status-indicator-active { animation: blink 1s infinite; }
+
+    /* Tipografía de la pantalla de portafolio (referencia opencode-screen/prototype.html).
+       Styrene B es comercial y no se puede cargar: Inter es un sustituto. */
+    .pf { font-family: 'Inter', -apple-system, 'Segoe UI', sans-serif; }
+  </style>
+</head>
+<body>
+
+<h1>Clawdmeter — prototipo completo del dispositivo</h1>
+<p class="subtitle">v0.1 · 5 pantallas (clawd, claude, ocsplash, ocusage, portfolio) + Flujos (portal cautivo, emparejamiento, OTA híbrido, enlace BLE) · navegación con botones físicos</p>
+
+<div class="notice">
+  <strong>Cifras ficticias.</strong> Todos los números de la pantalla de portafolio y los
+  escenarios de OpenCode son inventados, igual que las redes WiFi del portal (SSIDs,
+  direcciones y códigos). El único lugar con datos reales es el dispositivo, cuando el
+  daemon los manda en vivo. Las capturas de Clawd y Claude sí son reales
+  (<code>screenshots/splash.gif</code> y <code>screenshots/usage.png</code>).
+</div>
+
+<!-- SECTION A: Simulador interactivo -->
+<h2>A — Simulador interactivo</h2>
+<div class="section-a">
+  <div class="stage" id="stage"></div>
+  <div class="control-panel" id="controlPanel"></div>
+</div>
+
+<!-- SECTION B: Todas las variantes -->
+<h2>B — Todas las variantes</h2>
+<div class="section-b">
+  <div class="variants-grid" id="variantsGrid"></div>
+</div>
+
+<!-- SECTION C: Paleta y tipografía -->
+<h2>C — Paleta y tipografía</h2>
+<div class="section-c">
+  <div class="palette-section">
+    <h3>Colores — OpenCode (Plex)</h3>
+    <div id="colorPaletteOC"></div>
+  </div>
+
+  <div class="palette-section">
+    <h3>Colores — Portafolio BVC</h3>
+    <div id="colorPalettePF"></div>
+  </div>
+
+  <div class="palette-section">
+    <h3>IBM Plex Mono — OpenCode</h3>
+    <div class="typography-section">
+      <div class="type-specimen"><span class="type-48">48px</span></div>
+      <div class="type-specimen"><span class="type-40">40px</span></div>
+      <div class="type-specimen"><span class="type-24">24px</span></div>
+      <div class="type-specimen"><span class="type-20">20px</span></div>
+      <div class="type-specimen"><span class="type-18">18px</span></div>
+      <div class="type-specimen"><span class="type-16">16px</span></div>
+      <div class="type-specimen"><span class="type-14">14px</span></div>
+      <div class="type-specimen"><span class="type-12">12px</span></div>
+      <p class="type-note">IBM Plex Mono (SIL OFL) es la monoespaciada que la propia
+        opencode.ai declara. Es la fuente de las pantallas de OpenCode.</p>
+    </div>
+  </div>
+
+  <div class="palette-section">
+    <h3>Portafolio BVC — Inter, <em>sustituto</em> de Styrene</h3>
+    <div class="typography-section">
+      <div class="type-specimen pf"><span class="type-48">91.4M</span></div>
+      <div class="type-specimen pf"><span class="type-28" style="color:#e06c75;">-523,141</span></div>
+      <div class="type-specimen pf"><span class="type-24">Sin posiciones</span></div>
+      <div class="type-specimen pf" style="white-space:pre">Mayores variaciones     ALPHA  2,450  +1.34%  +4,925</div>
+      <p class="type-note">
+        El firmware dibuja el portafolio en <strong>Styrene B</strong> (Commercial Type),
+        compilada en la placa; no está en Google Fonts y no se distribuye acá.
+        <strong>Inter</strong> es un sustituto libre (neo-grotesca, x-height alto). Las
+        cifras de Inter son ~8&nbsp;% más angostas, así que las filas tienen más aire que
+        en la placa. La tipografía real se verifica en el simulador nativo.
+      </p>
+    </div>
+  </div>
+
+  <div class="palette-section">
+    <h3>Sistema Claude — Tiempos + mono</h3>
+    <div class="typography-section">
+      <div class="type-specimen tiempos"><span class="type-48">05:00</span></div>
+      <div class="type-specimen tiempos"><span class="type-24">Resets in 4h 55m</span></div>
+      <div class="type-specimen"><span class="type-20">Connected…</span></div>
+      <p class="type-note">
+        Las pantallas de Claude (splash y uso) usan el sistema del firmware:
+        <strong>Tiempos</strong> (56/34, serif comercial, no cargable) para las cifras
+        grandes y una monoespaciada para el resto. Acá se muestran capturas reales; el
+        espécimen de arriba usa una serif del sistema solo como referencia.
+        OpenCode y el portafolio siguen en Plex Mono e Inter respectivamente.
+      </p>
+    </div>
+  </div>
+</div>
+
+<script>
+// =============================================================================
+// Clawdmeter — prototipo completo. Reutiliza el código del prototipo de la
+// pantalla de OpenCode (design/opencode-screen/prototype.html).
+// =============================================================================
+
+// === Tokens from opencode SPEC §3 ===
+const tokens = {
+  bg: '#000000',
+  element: '#1e1e1e',
+  border: '#3c3c3c',
+  text: '#eeeeee',
+  muted: '#808080',
+  primary: '#fab283',
+  error: '#e06c75',
+  success: '#7fd88f',
+  logo_outer: '#F1ECEC',
+  logo_inner: '#4B4646'
+};
+
+// === Claude scenarios (payload de Claude, sin "k") ===
+// La pantalla de Claude usa una captura real; estos escenarios alimentan el
+// payload BLE, la línea de info y la atenuación por enlace caído/datos viejos.
+const claudeScenarios = {
+  real:         { s: 0,   sr: -1,  w: 0,  wr: 9430, st: 'allowed' },
+  activa:       { s: 37,  sr: 134, w: 22, wr: 5040, st: 'allowed' },
+  varias:       { s: 58,  sr: 71,  w: 41, wr: 5040, st: 'allowed' },
+  cerca:        { s: 91,  sr: 42,  w: 78, wr: 2880, st: 'allowed' },
+  limite:       { s: 100, sr: 18,  w: 83, wr: 2880, st: 'limited' },
+  viejo:        { s: 12,  sr: 250, w: 8,  wr: 9430, st: 'allowed', stale: true },
+  desconectado: { s: 12,  sr: 250, w: 8,  wr: 9430, st: 'allowed', offline: true }
+};
+const claudeLabels = {
+  real: 'Hoy real (default)', activa: 'Sesión activa', varias: 'Varias sesiones',
+  cerca: 'Cerca del límite', limite: 'Límite alcanzado', viejo: 'Datos viejos',
+  desconectado: 'BLE desconectado'
+};
+
+// === OpenCode scenarios (SPEC §8, brief §D) — portados del prototipo ===
+const scenarios = {
+  real:   { k:'oc', ok:true, src:'api', p5:0, r5:-1, pw:0, rw:9430, pm:3, rm:20354, st:'ok', t7:106969, m:'ds-v4.1-flash', ms:93, a:0, ag:'build', la:1260 },
+  activa: { k:'oc', ok:true, src:'api', p5:37, r5:134, pw:22, rw:5040, pm:5, rm:20354, st:'ok', t7:112400, m:'ds-v4.1-flash', ms:88, a:1, ag:'build', la:5 },
+  varias: { k:'oc', ok:true, src:'api', p5:58, r5:71, pw:41, rw:5040, pm:9, rm:20354, st:'ok', t7:131700, m:'kimi-k3', ms:61, a:2, ag:'plan', la:3 },
+  cerca:  { k:'oc', ok:true, src:'api', p5:91, r5:42, pw:78, rw:2880, pm:31, rm:20354, st:'ok', t7:131700, m:'ds-v4.1-flash', ms:81, a:1, ag:'plan', la:12 },
+  limite: { k:'oc', ok:true, src:'api', p5:100, r5:18, pw:83, rw:2880, pm:33, rm:20354, st:'limited', t7:131700, m:'ds-v4.1-flash', ms:81, a:0, ag:'plan', la:240 },
+  est:    { k:'oc', ok:true, src:'est', p5:12, r5:250, pw:8, rw:9430, pm:2, rm:20354, st:'ok', t7:108200, m:'ds-v4.1-flash', ms:92, a:1, ag:'build', la:20 },
+  consumo:{ k:'oc', ok:true, src:'none', t7:106969, m:'ds-v4.1-flash', ms:93, a:0, ag:'build', la:1260, tk:3221, cd:0, c7:1.10 },
+  viejo:  { k:'oc', ok:true, src:'api', p5:0, r5:-1, pw:0, rw:9430, pm:3, rm:20354, st:'ok', t7:106969, m:'ds-v4.1-flash', ms:93, a:0, ag:'build', la:1260 }
+};
+const ocLabels = {
+  real: 'Hoy real (default)', activa: 'Sesión activa', varias: 'Varias sesiones',
+  cerca: 'Cerca del límite', limite: 'Límite alcanzado', est: 'Estimado (sin red)',
+  consumo: 'Solo consumo', viejo: 'Datos viejos'
+};
+
+// === Portfolio scenarios (portfolio BVC spec §4) — portados del prototipo ===
+// ASCII puro: Styrene no cubre nada fuera de 0x20-0x7E.
+const pfScenarios = {
+  real: { k:'pf', ok:true, s:'l', t:'09291042', mv:91355200, dc:-523141, dp:-57, n:12,
+          r:[['ALPHA',2450,134,4925],['BETAGROUP',1875,62,3488],['THETA',375,-158,-18368],['KAPPACO',18780,-147,-154597]] },
+  cerrado: { k:'pf', ok:true, s:'c', t:'09291600', mv:91355200, dc:-523141, dp:-57, n:12,
+          r:[['ALPHA',2450,134,4925],['BETAGROUP',1875,62,3488],['THETA',375,-158,-18368],['KAPPACO',18780,-147,-154597]] },
+  feriado: { k:'pf', ok:true, s:'c', t:'10091200', mv:91355200, dc:812400, dp:110, n:12,
+          r:[['LONGNAMEGRP',122900,425,1186920],['BETAGROUP',1875,62,3488]] },
+  sinActualizar: { k:'pf', ok:true, s:'l', t:'09291042', mv:91355200, dc:-523141, dp:-57, n:12,
+          r:[['ALPHA',2450,134,4925],['BETAGROUP',1875,62,3488],['THETA',375,-158,-18368],['KAPPACO',18780,-147,-154597]] },
+  todosSuben: { k:'pf', ok:true, s:'l', t:'09291042', mv:91355200, dc:170200, dp:13, n:12,
+          r:[['ALPHA',2450,134,4925],['BETAGROUP',1875,62,3488]] },
+  todosBajan: { k:'pf', ok:true, s:'l', t:'09291042', mv:91355200, dc:-219400, dp:-17, n:12,
+          r:[['THETA',375,-158,-18368],['KAPPACO',18780,-147,-154597]] },
+  unaGanadora: { k:'pf', ok:true, s:'l', t:'09291042', mv:91355200, dc:-181080, dp:-14, n:12,
+          r:[['BETAGROUP',1875,62,3488],['THETA',375,-158,-18368],['KAPPACO',18780,-147,-154597]] },
+  sinVariaciones: { k:'pf', ok:true, s:'l', t:'09291040', mv:91355200, dc:0, dp:0, n:12, r:[] },
+  cero: { k:'pf', ok:true, s:'l', t:'09291042', mv:91355200, dc:0, dp:0, n:12,
+          r:[['BETAGROUP',1875,62,3488],['ZETA',375,-106,-38320]] },
+  largo: { k:'pf', ok:true, s:'l', t:'09291042', mv:91355200, dc:-1188600, dp:-1025, n:12,
+          r:[['BETAGROUP',1875,62,3488],['LONGNAMEGRP',122900,-1025,-1186920]] },
+  tickerSinPrecio: { k:'pf', ok:true, s:'l', t:'09291042', mv:91355200, dc:-523141, dp:-57, n:12, u:1, ux:'EPMX',
+          r:[['ALPHA',2450,134,4925],['BETAGROUP',1875,62,3488],['THETA',375,-158,-18368],['KAPPACO',18780,-147,-154597]] },
+  dosSinPrecio: { k:'pf', ok:true, s:'l', t:'09291042', mv:91355200, dc:-523141, dp:-57, n:12, u:2, ux:'EPMX',
+          r:[['ALPHA',2450,134,4925],['BETAGROUP',1875,62,3488],['THETA',375,-158,-18368],['KAPPACO',18780,-147,-154597]] },
+  duplicado: { k:'pf', ok:true, s:'l', t:'09291042', mv:91355200, dc:-523141, dp:-57, n:12, w:1,
+          r:[['ALPHA',2450,134,4925],['BETAGROUP',1875,62,3488],['THETA',375,-158,-18368],['KAPPACO',18780,-147,-154597]] },
+  nopos: { k:'pf', ok:false, e:'nopos', n:0 },
+  nores: { k:'pf', ok:false, e:'nores', n:12 },
+  nonet: { k:'pf', ok:false, e:'nonet', n:12 },
+  bleCaido: { k:'pf', ok:true, s:'l', t:'09291042', mv:91355200, dc:-523141, dp:-57, n:12,
+          r:[['ALPHA',2450,134,4925],['BETAGROUP',1875,62,3488],['THETA',375,-158,-18368],['KAPPACO',18780,-147,-154597]] }
+};
+const pfLabels = {
+  real:'Mercado abierto', cerrado:'Cierre 29 sep', feriado:'Cierre 9 oct (feriado)',
+  sinActualizar:'Sin actualizar', todosSuben:'Todos suben', todosBajan:'Todos bajan',
+  unaGanadora:'Una sola ganadora', sinVariaciones:'Sin variaciones', cero:'Day change 0',
+  largo:'Símbolo largo', tickerSinPrecio:'EPMX sin precio', dosSinPrecio:'2 sin precio',
+  nopos:'Sin posiciones', nores:'Ningún ticker resolvió', nonet:'Yahoo no responde',
+  duplicado:'1 aviso · ver log', bleCaido:'BLE desconectado'
+};
+
+const boardSpecs = { grande: { w: 480, h: 480 } };
+
+// === Portal cautivo: redes ficticias (WIFI-SCAN.md §4, §5) ===
+const PORTAL_NETS = [
+  { ssid: 'Casa-2.4G',        rssi: -45, sec: true },
+  { ssid: 'Clawdmeter-A1B2',  rssi: -52, sec: true },
+  { ssid: 'CafeInvitado',     rssi: -67, sec: false },
+  { ssid: 'Vecino_WiFi',      rssi: -74, sec: true },
+  { ssid: 'IoT-Seguro',       rssi: -81, sec: true }
+];
+const PORTAL_SSID = 'Clawdmeter-A1B2';
+const PAIRING_CODE = 'ABCD-2345';
+
+// === Small format utilities ===
+function formatTokens(thousands) {
+  if (thousands === undefined || thousands === null) return '—';
+  if (thousands < 1000) return thousands + 'k';
+  if (thousands < 1000000) return (thousands / 1000).toFixed(1) + 'M';
+  return (thousands / 1000000).toFixed(1) + 'B';
+}
+function formatMoney(usd) {
+  if (usd === undefined || usd === null) return '—';
+  return '$' + usd.toFixed(2);
+}
+function formatTime(seconds) {
+  if (seconds < 60) return seconds + 's';
+  const mins = Math.floor(seconds / 60);
+  if (mins < 60) return mins + 'm';
+  const hours = Math.floor(mins / 60);
+  return hours + 'h ' + (mins % 60) + 'm';
+}
+function fmtMins(minutes) {
+  if (minutes === undefined || minutes === null || minutes < 0) return '—';
+  if (minutes >= 1440) {
+    const days = Math.floor(minutes / 1440);
+    const hours = Math.floor((minutes % 1440) / 60);
+    return days + 'd ' + hours + 'h';
+  }
+  if (minutes >= 60) return Math.floor(minutes / 60) + 'h ' + (minutes % 60) + 'm';
+  return minutes + 'm';
+}
+
+// === Portfolio number formats (portfolio spec §7) ===
+const PF_MONTHS = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+function pfInt(n) {
+  const s = String(Math.abs(Math.round(n)));
+  let out = '';
+  for (let i = 0; i < s.length; i++) {
+    if (i > 0 && (s.length - i) % 3 === 0) out += ',';
+    out += s[i];
+  }
+  return out;
+}
+function pfMarketValue(mv) {
+  const a = Math.abs(mv);
+  if (a < 1000000) return pfInt(mv);
+  if (a < 999950000) return (mv / 1000000).toFixed(1) + 'M';
+  return (mv / 1000000000).toFixed(2) + 'B';
+}
+function pfSign(n) { return n > 0 ? '+' : n < 0 ? '-' : ''; }
+function pfCopFull(n) {
+  const a = Math.abs(n);
+  if (a < 1000000) return pfSign(n) + pfInt(n);
+  return pfSign(n) + (a / 1000000).toFixed(2) + 'M';
+}
+function pfCopShort(n) {
+  const a = Math.abs(Math.round(n));
+  if (a < 1000) return pfSign(n) + pfInt(a);
+  if (a < 10000) return pfSign(n) + (a / 1000).toFixed(1) + 'k';
+  if (a < 1000000) return pfSign(n) + Math.round(a / 1000) + 'k';
+  return pfSign(n) + (a / 1000000).toFixed(1) + 'M';
+}
+function pfRowPct(cents) { return pfSign(cents) + (Math.abs(cents) / 100).toFixed(2) + '%'; }
+function pfDayPct(dp, dc) {
+  if (dc === 0) return '0.00%';
+  return (dc < 0 ? '-' : '+') + (Math.abs(dp) / 100).toFixed(2) + '%';
+}
+function pfTrimSym(sym, symMax, size = PF_ROW.font) {
+  if (pfTextW(sym, size) <= symMax) return sym;
+  for (let n = sym.length - 1; n > 3; n--) {
+    const cut = sym.substring(0, n) + '.';
+    if (pfTextW(cut, size) <= symMax) return cut;
+  }
+  return sym.substring(0, 3) + '.';
+}
+function pfClock(t) {
+  if (!t || t.length < 8) return '--:--';
+  return t.substring(4, 6) + ':' + t.substring(6, 8);
+}
+function pfSessionDate(t) {
+  if (!t || t.length < 8) return '-- ---';
+  return parseInt(t.substring(2, 4), 10) + ' ' + PF_MONTHS[parseInt(t.substring(0, 2), 10) - 1];
+}
+function pfMoneyColor(n) {
+  return n > 0 ? pfTokens.success : n < 0 ? pfTokens.error : pfTokens.text;
+}
+
+const PF_EMPTY = {
+  nopos: { l1: 'sin posiciones', l2: '~/.config/claude-usage-monitor/portfolio', l2c: 'config: portfolio', l3: 'formato: SIMBOLO.CL cantidad' },
+  nores: { l1: 'sin precios', l3: 'revisar simbolos (.CL)' },
+  nonet: { l1: 'sin precios', l2: 'Yahoo no responde', l3: 'reintenta cada 60 s' }
+};
+
+// === Anexo A: OpenCode coordinate table ===
+const L = {
+  grande: {
+    w: 480, h: 480,
+    logo: { x: 20, y: 24, w: 40, h: 50 },
+    wordmark: { x: 140, y: 32, w: 200 },
+    battery: { x: 412, y: 34, w: 40, h: 20 },
+    panel1: { x: 20, y: 96, w: 440, h: 132 },
+    panel2: { x: 20, y: 240, w: 440, h: 132 },
+    panelPadding: 16,
+    hero: { top: 12, size: 48 },
+    chip: { top: 18, h: 26, size: 18, px: 8 },
+    bar: { top: 72, segments: 34, w: 10, h: 20, gap: 2 },
+    costLine: { top: 104, size: 18 },
+    stats: { titlesTop: 386, valsTop: 410, cols: [20, 150, 370], size: 18, truncate: 12 },
+    status: { top: 448, size: 18, square: 10, textX: 38 },
+    pageIndicator: { centerY: 472 }
+  }
+};
+
+// === Paleta del portafolio ===
+const pfTokens = {
+  bg: '#000000',
+  surface: '#1a1a1a',
+  text: '#eeeeee',
+  muted: '#8c8c8c',
+  primary: '#fab283',
+  error: '#e06c75',
+  success: '#2ee88a'
+};
+
+// === Anexo A (portfolio): coordinate table ===
+const LT = {
+  grande: {
+    w: 480, h: 480,
+    header:  { x: 20, top: 36, size: 16 },
+    battery: { x: 412, y: 34, w: 40, h: 20 },
+    card1:   { x: 20, y: 72,  h: 172, radius: 12, pad: 20 },
+    card2:   { x: 20, y: 256, h: 180, radius: 12, pad: 20 },
+    label:   { top: 18, size: 16, unitRi: 20 },
+    hero:    { top: 40, size: 48 },
+    cols:    { labelTop: 104, valueTop: 124, labelSize: 16, valueSize: 28, x1: 20, x2: 240 },
+    listTitle: { top: 18, size: 16, countRi: 20 },
+    rows:    { top: 48, pitch: 28, size: 16, lineH: 17, gapExtra: 10 },
+    noRows:  { top: 48, size: 16 },
+    empty:   { h: 114, l1: { top: 20, size: 24 }, l2: { top: 58, size: 14 }, l3: { top: 80, size: 14 } },
+    status:  { x: 20, top: 448, size: 16, dot: 8, dotY: 452, textX: 36 },
+    pageIndicator: { centerY: 472 },
+    pvCard1H: 109,
+    pvCard2Y: 193
+  }
+};
+
+// === La fila: anclada a la derecha y medida ===
+const PF_ROW = {
+  family: "'IBM Plex Mono', monospace",
+  font: LT.grande.rows.size,
+  minSym: 'WWW.',
+  normal:  { symX: 20, gap: 16, priceRi: 199, pctRi: 118, contribRi: 20,  contrib: 'full' },
+  private: { symX: 20, gap: 16, priceRi: 101, pctRi:  20, contribRi: null, contrib: 'full' },
+  shortPaths: false
+};
+
+const _pfCtx = document.createElement('canvas').getContext('2d');
+function pfTextW(s, size, family = PF_ROW.family) {
+  _pfCtx.font = size + 'px ' + family;
+  return _pfCtx.measureText(s).width;
+}
+function pfRowLayout(cardW, f, w, withC, withPr) {
+  let left = Infinity;
+  let contribR = null, priceR = null;
+  if (withC) {
+    contribR = cardW - f.contribRi;
+    left = contribR - w.contrib;
+  }
+  let pctR = cardW - f.pctRi;
+  if (pctR > left - f.gap) pctR = left - f.gap;
+  left = pctR - w.pct;
+  if (withPr) {
+    priceR = cardW - f.priceRi;
+    if (priceR > left - f.gap) priceR = left - f.gap;
+    left = priceR - w.price;
+  }
+  return { contribR, pctR, priceR, symBudget: left - f.gap - f.symX };
+}
+function pfTightestBudget(cardW, f, widths, withC, withPr) {
+  let tightest = Infinity;
+  for (const w of widths) {
+    tightest = Math.min(tightest, pfRowLayout(cardW, f, w, withC, withPr).symBudget);
+  }
+  return tightest;
+}
+
+// === Main render function: OpenCode screen (ported) ===
+function renderOpenCode(container, sizeKey, data, uiState = {}) {
+  const layout = L[sizeKey];
+  if (!layout) return;
+  const { w, h } = layout;
+  const isSoloConsumo = data.src === 'none';
+  const isStale = uiState.stale || false;
+  const isOffline = uiState.offline || false;
+  const brightness = uiState.brightness || 255;
+  const active = data.a || 0;
+
+  container.innerHTML = '';
+  const root = document.createElement('div');
+  root.className = 'oc';
+  root.style.cssText =
+    'position:relative;width:' + w + 'px;height:' + h + 'px;background:' + tokens.bg +
+    ';overflow:hidden;font-family:\'IBM Plex Mono\',monospace;filter:brightness(' + (brightness / 255) + ');';
+
+  function createDiv(text = '', cssText = '') {
+    const div = document.createElement('div');
+    if (text) div.textContent = text;
+    div.style.cssText = 'position:absolute;line-height:1;white-space:nowrap;margin:0;' + cssText;
+    return div;
+  }
+
+  // Logo
+  const logoSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  logoSvg.setAttribute('width', layout.logo.w);
+  logoSvg.setAttribute('height', layout.logo.h);
+  logoSvg.setAttribute('viewBox', '0 0 240 300');
+  logoSvg.style.cssText = 'position:absolute;left:' + layout.logo.x + 'px;top:' + layout.logo.y + 'px;';
+  const innerPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  innerPath.setAttribute('d', 'M180 240H60V120H180V240Z');
+  innerPath.setAttribute('fill', tokens.logo_inner);
+  logoSvg.appendChild(innerPath);
+  const outerPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  outerPath.setAttribute('d', 'M180 60H60V240H180V60ZM240 300H0V0H240V300Z');
+  outerPath.setAttribute('fill', tokens.logo_outer);
+  logoSvg.appendChild(outerPath);
+  root.appendChild(logoSvg);
+
+  // Wordmark
+  const wordmarkH = Math.round(layout.wordmark.w * 115 / 641);
+  const wordmarkSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  wordmarkSvg.setAttribute('width', layout.wordmark.w);
+  wordmarkSvg.setAttribute('height', wordmarkH);
+  wordmarkSvg.setAttribute('viewBox', '0 0 641 115');
+  wordmarkSvg.style.cssText = 'position:absolute;left:' + layout.wordmark.x + 'px;top:' + layout.wordmark.y + 'px;';
+  const wordmarkPaths = [
+    'M49.2857 32.8573H16.4286V82.143H49.2857V32.8573ZM65.7143 98.5716H0V16.4287H65.7143V98.5716Z',
+    'M98.5692 82.143H131.426V32.8573H98.5692V82.143ZM147.855 98.5716H98.5692V115H82.1406V16.4287H147.855V98.5716Z',
+    'M230.003 65.7144H180.718V82.143H230.003V98.5716H164.289V16.4287H230.003V65.7144ZM180.718 49.2859H213.575V32.8573H180.718V49.2859Z',
+    'M295.715 32.8573H262.858V98.5716H246.43V16.4287H295.715V32.8573ZM312.144 98.5716H295.715V32.8573H312.144V98.5716Z',
+    'M394.285 32.8573H344.999V82.143H394.285V98.5716H328.57V16.4287H394.285V32.8573Z',
+    'M459.997 32.8573H427.14V82.143H459.997V32.8573ZM476.425 98.5716H410.711V16.4287H476.425V98.5716Z',
+    'M542.145 32.8571H509.288V82.1429H542.145V32.8571ZM558.574 98.5714H492.859V16.4286H542.145V0H558.574V98.5714Z',
+    'M591.429 32.8573V49.2859H624.286V32.8573H591.429ZM640.714 65.7144H591.429V82.143H640.714V98.5716H575V16.4287H640.714V65.7144Z'
+  ];
+  for (const pathD of wordmarkPaths) {
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', pathD);
+    p.setAttribute('fill', 'white');
+    wordmarkSvg.appendChild(p);
+  }
+  root.appendChild(wordmarkSvg);
+
+  // Battery
+  const batteryDiv = createDiv();
+  batteryDiv.style.cssText += 'left:' + layout.battery.x + 'px;top:' + layout.battery.y + 'px;width:' + layout.battery.w + 'px;height:' + layout.battery.h + 'px;border:1px solid ' + tokens.text + ';';
+  const batteryFill = document.createElement('div');
+  batteryFill.style.cssText = 'position:absolute;left:2px;top:2px;width:' + Math.round(layout.battery.w * 0.7 * 0.8) + 'px;height:' + (layout.battery.h - 4) + 'px;background:' + tokens.text + ';';
+  batteryDiv.appendChild(batteryFill);
+  root.appendChild(batteryDiv);
+
+  const dimmedGroup = document.createElement('div');
+  dimmedGroup.style.cssText = 'position:absolute;width:' + w + 'px;height:' + h + 'px;opacity:' + (isStale || isOffline ? '0.4' : '1') + ';';
+
+  const renderPanel = (panelLayout, isPanel1) => {
+    const pct = isPanel1 ? (data.p5 || 0) : (data.pw || 0);
+    const resetsMins = isPanel1 ? (data.r5 || 0) : (data.rw || 0);
+    const isHighUsage = pct >= 85 || data.st === 'limited';
+    const isLimited = data.st === 'limited';
+    const panelDiv = createDiv();
+    panelDiv.style.cssText += 'left:' + panelLayout.x + 'px;top:' + panelLayout.y + 'px;width:' + panelLayout.w + 'px;height:' + panelLayout.h + 'px;box-sizing:border-box;border:1px solid ' + tokens.border + ';';
+
+    let heroText;
+    if (isSoloConsumo) heroText = formatTokens(isPanel1 ? data.tk : data.t7);
+    else heroText = pct + '%';
+    panelDiv.appendChild(createDiv(heroText, 'left:' + layout.panelPadding + 'px;top:' + layout.hero.top + 'px;font-size:' + layout.hero.size + 'px;font-weight:500;color:' + tokens.text + ';'));
+
+    let chipText;
+    if (isSoloConsumo) chipText = isPanel1 ? 'today' : '7 days';
+    else {
+      chipText = isPanel1 ? '5h' : 'week';
+      if (data.src === 'est') chipText += ' · est.';
+      if (isLimited && pct >= 100) chipText = 'limit';
+    }
+    const chipColor = isHighUsage ? tokens.error : tokens.primary;
+    panelDiv.appendChild(createDiv(chipText, 'right:' + layout.panelPadding + 'px;top:' + layout.chip.top + 'px;height:' + layout.chip.h + 'px;line-height:' + layout.chip.h + 'px;font-size:' + layout.chip.size + 'px;padding:0 ' + layout.chip.px + 'px;background:' + tokens.element + ';color:' + chipColor + ';'));
+
+    if (!isSoloConsumo) {
+      const barDiv = document.createElement('div');
+      barDiv.style.cssText = 'position:absolute;left:' + layout.panelPadding + 'px;top:' + layout.bar.top + 'px;display:flex;gap:' + layout.bar.gap + 'px;';
+      const filledCount = Math.round((pct / 100) * layout.bar.segments);
+      for (let i = 0; i < layout.bar.segments; i++) {
+        const seg = document.createElement('div');
+        seg.style.cssText = 'width:' + layout.bar.w + 'px;height:' + layout.bar.h + 'px;background:' + (i < filledCount ? (isHighUsage ? tokens.error : tokens.primary) : tokens.element) + ';';
+        barDiv.appendChild(seg);
+      }
+      panelDiv.appendChild(barDiv);
+    }
+
+    let resetText;
+    if (isSoloConsumo) resetText = formatMoney(isPanel1 ? data.cd : data.c7) + ' spent';
+    else {
+      if (isPanel1 && data.r5 === -1) resetText = 'No active window';
+      else resetText = 'Resets in ' + fmtMins(resetsMins);
+    }
+    panelDiv.appendChild(createDiv(resetText, 'left:' + layout.panelPadding + 'px;top:' + layout.costLine.top + 'px;font-size:' + layout.costLine.size + 'px;color:' + tokens.muted + ';'));
+    return panelDiv;
+  };
+
+  dimmedGroup.appendChild(renderPanel(layout.panel1, true));
+  dimmedGroup.appendChild(renderPanel(layout.panel2, false));
+
+  if (layout.stats) {
+    let titles, values;
+    const modelTruncated = data.m.length > layout.stats.truncate ? data.m.substring(0, layout.stats.truncate) + '…' : data.m;
+    if (isSoloConsumo) {
+      titles = ['7d tokens', 'top model', '7d cost'];
+      values = [formatTokens(data.t7), modelTruncated + ' ' + data.ms + '%', formatMoney(data.c7)];
+    } else {
+      titles = ['7d tokens', 'top model', 'month'];
+      const daysRemaining = Math.round(data.rm / 1440);
+      values = [formatTokens(data.t7), modelTruncated + ' ' + data.ms + '%', data.pm + '% · ' + daysRemaining + 'd'];
+    }
+    for (let i = 0; i < 3; i++) {
+      dimmedGroup.appendChild(createDiv(titles[i], 'left:' + layout.stats.cols[i] + 'px;top:' + layout.stats.titlesTop + 'px;font-size:' + layout.stats.size + 'px;color:' + tokens.text + ';'));
+      dimmedGroup.appendChild(createDiv(values[i], 'left:' + layout.stats.cols[i] + 'px;top:' + layout.stats.valsTop + 'px;font-size:' + layout.stats.size + 'px;color:' + tokens.muted + ';'));
+    }
+  }
+  root.appendChild(dimmedGroup);
+
+  let statusText = '';
+  let statusColor = tokens.muted;
+  if (isOffline) { statusText = '○ bluetooth disconnected'; statusColor = tokens.error; }
+  else if (isStale) { statusText = '○ stale · updated 12m ago'; statusColor = tokens.error; }
+  else if (active >= 1) { statusText = data.ag + ' · working'; statusColor = tokens.text; }
+  else { statusText = 'idle · last activity ' + formatTime(data.la); statusColor = tokens.muted; }
+
+  const statusLineDiv = document.createElement('div');
+  statusLineDiv.style.cssText = 'position:absolute;left:0;top:' + layout.status.top + 'px;width:100%;';
+  if (active >= 1 && !isOffline && !isStale) {
+    const dotDiv = document.createElement('div');
+    dotDiv.style.cssText = 'position:absolute;left:' + layout.panelPadding + 'px;top:0;width:' + layout.status.square + 'px;height:' + layout.status.square + 'px;background:' + tokens.success + ';animation:blink 1s infinite;';
+    statusLineDiv.appendChild(dotDiv);
+    statusLineDiv.appendChild(createDiv(statusText, 'left:' + layout.status.textX + 'px;font-size:' + layout.status.size + 'px;color:' + statusColor + ';'));
+  } else {
+    statusLineDiv.appendChild(createDiv(statusText, 'left:' + layout.panelPadding + 'px;font-size:' + layout.status.size + 'px;color:' + statusColor + ';'));
+  }
+  root.appendChild(statusLineDiv);
+  container.appendChild(root);
+}
+
+// === Main render function: Portfolio screen (ported) ===
+function renderPortfolio(container, sizeKey, data, uiState = {}) {
+  const layout = LT[sizeKey];
+  if (!layout) return;
+  const { w, h } = layout;
+  const isOffline = uiState.offline || false;
+  const isStale = uiState.stale || false;
+  const brightness = uiState.brightness || 255;
+  const ok = data.ok !== false;
+  const err = ok ? null : (data.e || 'nores');
+  const isPrivate = !!(uiState.private && ok);
+  const pad = layout.card1.pad;
+  const cardW = w - layout.card1.x * 2;
+  const right = (edge) => Math.round(cardW - edge);
+
+  const card1 = {
+    x: layout.card1.x, y: layout.card1.y, w: cardW, radius: layout.card1.radius,
+    h: isPrivate ? layout.pvCard1H : (ok ? layout.card1.h : layout.empty.h)
+  };
+  const card2 = {
+    x: layout.card2.x, y: isPrivate ? layout.pvCard2Y : layout.card2.y,
+    w: cardW, h: layout.card2.h, radius: layout.card2.radius
+  };
+
+  const rows = ok && Array.isArray(data.r) ? data.r.filter(r => r[2] !== 0).slice(0, 4) : [];
+  const g = rows.filter(r => r[2] > 0).length;
+
+  container.innerHTML = '';
+  const root = document.createElement('div');
+  root.className = 'pf';
+  root.style.cssText =
+    'position:relative;width:' + w + 'px;height:' + h + 'px;background:' + pfTokens.bg +
+    ';overflow:hidden;font-family:\'IBM Plex Mono\',monospace;filter:brightness(' + (brightness / 255) + ');';
+
+  function createDiv(text = '', cssText = '') {
+    const div = document.createElement('div');
+    if (text) div.textContent = text;
+    div.style.cssText = 'position:absolute;line-height:1;white-space:nowrap;margin:0;' + cssText;
+    return div;
+  }
+
+  let headerText = 'Portfolio';
+  let headerColor = pfTokens.muted;
+  if (ok && data.u >= 1) {
+    headerText = data.ux ? (data.u > 1 ? '! ' + data.ux + ' +' + (data.u - 1) + ' sin precio' : '! ' + data.ux + ' sin precio') : '! ' + data.u + ' sin precio';
+    headerColor = pfTokens.primary;
+  } else if (ok && data.w >= 1) {
+    headerText = '! ' + data.w + ' aviso, ver log';
+    headerColor = pfTokens.primary;
+  }
+  root.appendChild(createDiv(headerText, 'left:' + layout.header.x + 'px;top:' + layout.header.top + 'px;font-size:' + layout.header.size + 'px;color:' + headerColor + ';'));
+
+  const BAT = layout.battery;
+  const batteryDiv = createDiv();
+  batteryDiv.style.cssText += 'left:' + BAT.x + 'px;top:' + BAT.y + 'px;width:' + BAT.w + 'px;height:' + BAT.h + 'px;border:1px solid ' + pfTokens.text + ';';
+  const batteryFill = document.createElement('div');
+  batteryFill.style.cssText = 'position:absolute;left:2px;top:2px;width:' + Math.round(BAT.w * 0.7 * 0.8) + 'px;height:' + (BAT.h - 4) + 'px;background:' + pfTokens.text + ';';
+  batteryDiv.appendChild(batteryFill);
+  root.appendChild(batteryDiv);
+
+  const dimmedGroup = document.createElement('div');
+  dimmedGroup.style.cssText = 'position:absolute;width:' + w + 'px;height:' + h + 'px;opacity:' + (isOffline ? '0.4' : '1') + ';';
+
+  const cardBox = (c) => {
+    const cardDiv = createDiv();
+    cardDiv.style.cssText += 'left:' + c.x + 'px;top:' + c.y + 'px;width:' + c.w + 'px;height:' + c.h + 'px;box-sizing:border-box;border-radius:' + c.radius + 'px;background:' + pfTokens.surface + ';';
+    return cardDiv;
+  };
+
+  const p1 = cardBox(card1);
+  if (!ok) {
+    const e = PF_EMPTY[err] || PF_EMPTY.nores;
+    const l2 = err === 'nores'
+      ? (uiState.private ? 'ninguno con precio' : '0 de ' + (data.n || 0) + ' con precio')
+      : (err === 'nopos' && PF_ROW.shortPaths ? e.l2c : e.l2);
+    const lines = [
+      { text: e.l1, cfg: layout.empty.l1, color: pfTokens.text },
+      { text: l2, cfg: layout.empty.l2, color: pfTokens.muted },
+      { text: e.l3, cfg: layout.empty.l3, color: pfTokens.muted }
+    ];
+    for (const line of lines) {
+      if (!line.text) continue;
+      p1.appendChild(createDiv(line.text, 'left:' + pad + 'px;top:' + line.cfg.top + 'px;font-size:' + line.cfg.size + 'px;color:' + line.color + ';'));
+    }
+  } else if (isPrivate) {
+    p1.appendChild(createDiv(pfDayPct(data.dp, data.dc), 'left:' + pad + 'px;top:' + layout.hero.top + 'px;font-size:' + layout.hero.size + 'px;font-weight:500;color:' + pfMoneyColor(data.dc) + ';'));
+    p1.appendChild(createDiv('hoy', 'right:' + layout.label.unitRi + 'px;top:' + layout.label.top + 'px;font-size:' + layout.label.size + 'px;color:' + pfTokens.muted + ';'));
+  } else {
+    const LB = layout.label, K = layout.cols;
+    p1.appendChild(createDiv('Valor total', 'left:' + pad + 'px;top:' + LB.top + 'px;font-size:' + LB.size + 'px;color:' + pfTokens.muted + ';'));
+    p1.appendChild(createDiv('COP', 'right:' + LB.unitRi + 'px;top:' + LB.top + 'px;font-size:' + LB.size + 'px;color:' + pfTokens.muted + ';'));
+    p1.appendChild(createDiv(pfMarketValue(data.mv), 'left:' + pad + 'px;top:' + layout.hero.top + 'px;font-size:' + layout.hero.size + 'px;font-weight:500;color:' + pfTokens.text + ';'));
+    const dcColor = pfMoneyColor(data.dc);
+    p1.appendChild(createDiv('Cambio hoy', 'left:' + K.x1 + 'px;top:' + K.labelTop + 'px;font-size:' + K.labelSize + 'px;color:' + pfTokens.muted + ';'));
+    p1.appendChild(createDiv('Cambio %', 'left:' + K.x2 + 'px;top:' + K.labelTop + 'px;font-size:' + K.labelSize + 'px;color:' + pfTokens.muted + ';'));
+    p1.appendChild(createDiv(pfCopFull(data.dc), 'left:' + K.x1 + 'px;top:' + K.valueTop + 'px;font-size:' + K.valueSize + 'px;font-weight:500;color:' + dcColor + ';'));
+    p1.appendChild(createDiv(pfDayPct(data.dp, data.dc), 'left:' + K.x2 + 'px;top:' + K.valueTop + 'px;font-size:' + K.valueSize + 'px;font-weight:500;color:' + dcColor + ';'));
+  }
+  dimmedGroup.appendChild(p1);
+
+  if (ok) {
+    const T = layout.listTitle;
+    const p2 = cardBox(card2);
+    p2.appendChild(createDiv('mayores variaciones', 'left:' + pad + 'px;top:' + T.top + 'px;font-size:' + T.size + 'px;color:' + pfTokens.muted + ';'));
+    if (!isPrivate) p2.appendChild(createDiv('de ' + data.n, 'right:' + T.countRi + 'px;top:' + T.top + 'px;font-size:' + T.size + 'px;color:' + pfTokens.muted + ';'));
+
+    if (rows.length === 0) {
+      p2.appendChild(createDiv('sin cambios por ahora', 'left:' + pad + 'px;top:' + layout.noRows.top + 'px;font-size:' + layout.noRows.size + 'px;color:' + pfTokens.muted + ';'));
+    } else {
+      const R = layout.rows;
+      const rowTop = (i) => R.top + i * R.pitch + (g > 0 && i >= g ? R.gapExtra : 0);
+      const C = isPrivate ? PF_ROW.private : PF_ROW.normal;
+      const cells = rows.map(rw => ({
+        price: pfInt(rw[1]),
+        pct: pfRowPct(rw[2]),
+        contrib: C.contribRi === null ? '' : (C.contrib === 'full' ? pfCopFull(rw[3]) : pfCopShort(rw[3]))
+      }));
+      const widths = cells.map(c => ({ price: pfTextW(c.price, R.size), pct: pfTextW(c.pct, R.size), contrib: pfTextW(c.contrib, R.size) }));
+      const minSymW = pfTextW(PF_ROW.minSym, R.size);
+      let showC = C.contribRi !== null;
+      let showPr = C.priceRi !== null;
+      if (pfTightestBudget(cardW, C, widths, showC, showPr) < minSymW) {
+        showC = false;
+        if (pfTightestBudget(cardW, C, widths, showC, showPr) < minSymW) showPr = false;
+      }
+      cells.forEach((c, i) => {
+        const L2 = pfRowLayout(cardW, C, widths[i], showC, showPr);
+        const top = rowTop(i);
+        const pctColor = pfMoneyColor(rows[i][2]);
+        if (L2.symBudget >= minSymW) {
+          p2.appendChild(createDiv(pfTrimSym(rows[i][0], L2.symBudget, R.size), 'left:' + C.symX + 'px;top:' + top + 'px;font-size:' + R.size + 'px;color:' + pfTokens.text + ';'));
+        }
+        if (showPr) p2.appendChild(createDiv(c.price, 'right:' + right(L2.priceR) + 'px;top:' + top + 'px;font-size:' + R.size + 'px;color:' + pfTokens.muted + ';'));
+        p2.appendChild(createDiv(c.pct, 'right:' + right(L2.pctR) + 'px;top:' + top + 'px;font-size:' + R.size + 'px;color:' + pctColor + ';'));
+        if (showC) p2.appendChild(createDiv(c.contrib, 'right:' + right(L2.contribR) + 'px;top:' + top + 'px;font-size:' + R.size + 'px;color:' + pctColor + ';'));
+      });
+    }
+    dimmedGroup.appendChild(p2);
+  }
+  root.appendChild(dimmedGroup);
+
+  const ST = layout.status;
+  let statusText = '';
+  let statusColor = pfTokens.muted;
+  let showSquare = false;
+  if (uiState.privNotice) {
+    statusText = isPrivate ? 'modo privado' : 'modo normal';
+  } else if (isOffline) {
+    statusText = '! bluetooth desconectado'; statusColor = pfTokens.primary;
+  } else if (!ok) {
+    statusText = '';
+  } else if (data.s === 'l') {
+    if (isStale) statusText = 'sin actualizar desde ' + pfClock(data.t);
+    else { statusText = 'en vivo, ' + pfClock(data.t); statusColor = pfTokens.text; showSquare = true; }
+  } else {
+    statusText = 'cierre ' + pfSessionDate(data.t);
+  }
+  if (statusText) {
+    if (showSquare) root.appendChild(createDiv('', 'left:' + ST.x + 'px;top:' + ST.dotY + 'px;width:' + ST.dot + 'px;height:' + ST.dot + 'px;background:' + pfTokens.text + ';'));
+    root.appendChild(createDiv(statusText, 'left:' + (showSquare ? ST.textX : ST.x) + 'px;top:' + ST.top + 'px;font-size:' + ST.size + 'px;color:' + statusColor + ';'));
+  }
+
+  if (uiState.dots) {
+    const count = 5, dSize = 6, dGap = 10;
+    const strip = count * dSize + (count - 1) * dGap;
+    for (let i = 0; i < count; i++) {
+      root.appendChild(createDiv('', 'left:' + (Math.round((w - strip) / 2) + i * (dSize + dGap)) + 'px;top:' + (layout.pageIndicator.centerY - dSize / 2) + 'px;width:' + dSize + 'px;height:' + dSize + 'px;border-radius:50%;background:' + (i === count - 1 ? pfTokens.text : pfTokens.surface) + ';'));
+    }
+  }
+  container.appendChild(root);
+}
+
+// === Claude screen (captura real) y Clawd splash (gif real) ===
+function renderClawd(container, sizeKey) {
+  const s = boardSpecs[sizeKey];
+  container.innerHTML = '';
+  const img = document.createElement('img');
+  img.src = '../../screenshots/splash.gif';
+  img.alt = 'Clawd splash';
+  img.style.cssText = 'width:' + s.w + 'px;height:' + s.h + 'px;object-fit:contain;background:#000;display:block;';
+  container.appendChild(img);
+}
+
+function renderClaude(container, sizeKey, data, uiState = {}) {
+  const s = boardSpecs[sizeKey];
+  const offline = uiState.offline || false;
+  const stale = uiState.stale || false;
+  const brightness = uiState.brightness || 255;
+  container.innerHTML = '';
+  const wrap = document.createElement('div');
+  wrap.style.cssText =
+    'position:relative;width:' + s.w + 'px;height:' + s.h + 'px;background:#000;overflow:hidden;' +
+    'filter:brightness(' + (brightness / 255) + ');';
+  const img = document.createElement('img');
+  img.src = '../../screenshots/usage.png';
+  img.alt = 'Claude usage';
+  img.style.cssText = 'width:100%;height:100%;object-fit:contain;display:block;';
+  wrap.appendChild(img);
+  if (offline || stale) {
+    const ov = document.createElement('div');
+    ov.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.58);';
+    wrap.appendChild(ov);
+    const badge = document.createElement('div');
+    badge.textContent = offline ? '○ bluetooth disconnected' : '○ stale · updated 12m ago';
+    badge.style.cssText =
+      'position:absolute;left:0;bottom:26px;width:100%;text-align:center;' +
+      "font-family:'IBM Plex Mono',monospace;font-size:16px;color:" + tokens.error + ';';
+    wrap.appendChild(badge);
+  }
+  container.appendChild(wrap);
+}
+
+// === Payload builders ===
+function buildClaudePayload(data) {
+  const p = { s: data.s, sr: data.sr, w: data.w, wr: data.wr, st: data.st, ok: true };
+  return JSON.stringify(p);
+}
+function buildOcPayload(data) {
+  const payload = { k: 'oc', ok: true };
+  if (data.src) payload.src = data.src;
+  if (data.p5 !== undefined) payload.p5 = data.p5;
+  if (data.r5 !== undefined) payload.r5 = data.r5;
+  if (data.pw !== undefined) payload.pw = data.pw;
+  if (data.rw !== undefined) payload.rw = data.rw;
+  if (data.pm !== undefined) payload.pm = data.pm;
+  if (data.rm !== undefined) payload.rm = data.rm;
+  if (data.st) payload.st = data.st;
+  if (data.t7) payload.t7 = data.t7;
+  if (data.m) payload.m = data.m;
+  if (data.ms) payload.ms = data.ms;
+  if (data.a !== undefined) payload.a = data.a;
+  if (data.ag) payload.ag = data.ag;
+  if (data.la) payload.la = data.la;
+  if (data.tk) payload.tk = data.tk;
+  if (data.cd !== undefined) payload.cd = data.cd;
+  if (data.c7) payload.c7 = data.c7;
+  return JSON.stringify(payload);
+}
+function buildPfPayload(data) {
+  const p = { k: 'pf', ok: data.ok !== false };
+  if (!p.ok) p.e = data.e || 'nores';
+  if (p.ok) { p.s = data.s; p.t = data.t; p.mv = data.mv; p.dc = data.dc; p.dp = data.dp; }
+  p.n = data.n;
+  if (p.ok && data.u) { p.u = data.u; if (data.ux) p.ux = data.ux; }
+  if (p.ok && data.w) p.w = data.w;
+  if (p.ok && Array.isArray(data.r) && data.r.length) p.r = data.r;
+  return JSON.stringify(p);
+}
+
+// =============================================================================
+// Portal cautivo mock — fiel a WIFI-SCAN.md §5 (español, auto-escaneo,
+// Actualizar, tap-to-fill). Los SSID se escriben con textContent.
+// =============================================================================
+function signalBars(rssi) {
+  if (rssi >= -55) return 4;
+  if (rssi >= -67) return 3;
+  if (rssi >= -75) return 2;
+  return 1;
+}
+
+function createPortalMock(opts = {}) {
+  const state = {
+    view: opts.view || 'list',          // scanning | list | empty | saved | error
+    selected: opts.selected || null,
+    ssid: opts.ssid || '',
+    pass: opts.pass || '',
+    interactive: opts.interactive !== false,
+    nets: (opts.nets || PORTAL_NETS).slice(),
+    timer: null
+  };
+  const el = document.createElement('div');
+  el.className = 'portal';
+
+  function destroy() { if (state.timer) { clearTimeout(state.timer); state.timer = null; } }
+
+  function renderNet(net) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'net' + (state.selected === net.ssid ? ' on' : '');
+    const ssid = document.createElement('span');
+    ssid.className = 'ssid';
+    ssid.textContent = net.ssid;                    // textContent: SSID nunca por innerHTML
+    b.appendChild(ssid);
+    const sig = document.createElement('span');
+    sig.className = 'sig';
+    const n = signalBars(net.rssi);
+    const heights = [4, 7, 10, 14];
+    for (let i = 0; i < 4; i++) {
+      const bar = document.createElement('i');
+      bar.style.height = heights[i] + 'px';
+      if (i < n) bar.className = 'on';
+      sig.appendChild(bar);
+    }
+    b.appendChild(sig);
+    const lock = document.createElement('span');
+    lock.className = 'lock';
+    lock.textContent = net.sec ? '🔒' : '🔓';
+    b.appendChild(lock);
+    if (state.interactive) {
+      b.onclick = () => {
+        state.selected = net.ssid;
+        state.ssid = net.ssid;                      // "tap-to-fill"
+        render();
+        const pass = el.querySelector('#pass');
+        if (pass) pass.focus();
+      };
+    }
+    return b;
+  }
+
+  function render() {
+    el.innerHTML = '';
+
+    if (state.view === 'saved') {
+      const box = document.createElement('div');
+      box.className = 'saved';
+      const h = document.createElement('h2'); h.textContent = 'Guardado ✓'; box.appendChild(h);
+      const p = document.createElement('p'); p.textContent = 'Conectando a tu red… puedes cerrar esta pestaña.'; box.appendChild(p);
+      if (state.interactive) {
+        const b = document.createElement('button'); b.type = 'button'; b.className = 'linklike'; b.textContent = 'Volver al portal';
+        b.onclick = () => { state.view = 'list'; state.selected = null; state.ssid = ''; state.pass = ''; render(); };
+        box.appendChild(b);
+      }
+      el.appendChild(box);
+      return;
+    }
+
+    if (state.view === 'error') {
+      const box = document.createElement('div');
+      box.className = 'error';
+      const h = document.createElement('h2'); h.textContent = 'Falta el nombre de la red'; box.appendChild(h);
+      const p = document.createElement('p'); p.textContent = 'Escribe el nombre de tu red.'; box.appendChild(p);
+      if (state.interactive) {
+        const b = document.createElement('button'); b.type = 'button'; b.className = 'linklike'; b.textContent = 'Reintentar';
+        b.onclick = () => { state.view = 'list'; render(); };
+        box.appendChild(b);
+      }
+      el.appendChild(box);
+      return;
+    }
+
+    const h1 = document.createElement('h1'); h1.textContent = 'Configurar Clawdmeter'; el.appendChild(h1);
+    const lead = document.createElement('p'); lead.className = 'lead'; lead.textContent = 'Conecta este dispositivo a tu red WiFi.'; el.appendChild(lead);
+
+    // Bloque de emparejamiento (§5.1, texto en español)
+    const pair = document.createElement('div'); pair.className = 'pair-block';
+    const ph = document.createElement('h3'); ph.textContent = 'Código de emparejamiento'; pair.appendChild(ph);
+    const pp = document.createElement('p'); pp.textContent = 'Introduce este código con la herramienta del propietario para emparejar el dispositivo.'; pair.appendChild(pp);
+    const pc = document.createElement('code'); pc.textContent = PAIRING_CODE; pair.appendChild(pc);
+    el.appendChild(pair);
+
+    // Redes detectadas
+    const section = document.createElement('section'); section.className = 'nets';
+    const head = document.createElement('div'); head.className = 'nets-head';
+    const headSpan = document.createElement('span'); headSpan.textContent = 'Redes disponibles'; head.appendChild(headSpan);
+    const rescan = document.createElement('button'); rescan.type = 'button'; rescan.id = 'rescan'; rescan.textContent = 'Actualizar';
+    if (state.view === 'scanning') rescan.disabled = true;
+    if (state.interactive) rescan.onclick = () => startScan();
+    head.appendChild(rescan);
+    section.appendChild(head);
+    const list = document.createElement('div'); list.id = 'nets'; list.className = 'nets-list';
+    if (state.view === 'scanning') {
+      const m = document.createElement('p'); m.className = 'nets-msg'; m.textContent = 'Buscando redes…'; list.appendChild(m);
+    } else if (state.view === 'empty') {
+      const m = document.createElement('p'); m.className = 'nets-msg'; m.textContent = 'No se encontraron redes'; list.appendChild(m);
+    } else {
+      for (const net of state.nets) list.appendChild(renderNet(net));
+    }
+    section.appendChild(list);
+    el.appendChild(section);
+
+    // Formulario
+    const form = document.createElement('form');
+    form.method = 'POST'; form.action = '/save';
+    const ls = document.createElement('label'); ls.setAttribute('for', 'ssid'); ls.textContent = 'Red (SSID)'; form.appendChild(ls);
+    const is = document.createElement('input');
+    is.id = 'ssid'; is.name = 'ssid'; is.maxLength = 63; is.required = true;
+    is.autocapitalize = 'off'; is.autocorrect = 'off'; is.autocomplete = 'off';
+    is.value = state.ssid;
+    is.addEventListener('input', () => { state.ssid = is.value; });
+    form.appendChild(is);
+    const lp = document.createElement('label'); lp.setAttribute('for', 'pass'); lp.textContent = 'Contraseña'; form.appendChild(lp);
+    const ip = document.createElement('input');
+    ip.id = 'pass'; ip.name = 'pass'; ip.type = 'password'; ip.maxLength = 63;
+    ip.value = state.pass;
+    ip.addEventListener('input', () => { state.pass = ip.value; });
+    form.appendChild(ip);
+    const submit = document.createElement('button'); submit.type = 'submit'; submit.textContent = 'Guardar y conectar';
+    form.appendChild(submit);
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (!state.ssid.trim()) state.view = 'error';
+      else state.view = 'saved';
+      render();
+    });
+    el.appendChild(form);
+
+    const foot = document.createElement('p'); foot.className = 's';
+    foot.appendChild(document.createTextNode('Guardado solo en este dispositivo. Si esta página no se abre sola, visita '));
+    const b = document.createElement('b'); b.textContent = 'http://192.168.4.1';
+    foot.appendChild(b);
+    el.appendChild(foot);
+  }
+
+  function startScan() {
+    destroy();
+    state.view = 'scanning';
+    render();
+    state.timer = setTimeout(() => {
+      state.timer = null;
+      state.view = 'list';
+      // Un re-escaneo cambia el orden (RSSI descendente, §4).
+      state.nets = state.nets.slice().sort((a, b2) => b2.rssi - a.rssi);
+      render();
+    }, 950);
+  }
+
+  render();
+  return { el, state, render, startScan, destroy };
+}
+
+function phoneFrame(portalEl, url) {
+  const phone = document.createElement('div');
+  phone.className = 'phone';
+  const bar = document.createElement('div');
+  bar.className = 'phone-bar';
+  for (let i = 0; i < 3; i++) { const d = document.createElement('div'); d.className = 'dot'; bar.appendChild(d); }
+  const u = document.createElement('div'); u.className = 'url'; u.textContent = url || 'http://192.168.4.1'; bar.appendChild(u);
+  phone.appendChild(bar);
+  const screen = document.createElement('div'); screen.className = 'phone-screen'; screen.appendChild(portalEl);
+  phone.appendChild(screen);
+  return phone;
+}
+
+// =============================================================================
+// Flujos (no-pantalla)
+// =============================================================================
+function miniScreen(renderFn, caption) {
+  const outer = document.createElement('div');
+  outer.className = 'mini-screen';
+  const inner = document.createElement('div');
+  inner.className = 'mini-inner';
+  renderFn(inner);
+  outer.appendChild(inner);
+  if (caption) {
+    const cell = document.createElement('div');
+    cell.className = 'mini-cell';
+    cell.appendChild(outer);
+    const cap = document.createElement('div');
+    cap.className = 'mini-caption';
+    cap.textContent = caption;
+    cell.appendChild(cap);
+    return cell;
+  }
+  return outer;
+}
+
+function flowCard(title) {
+  const card = document.createElement('div');
+  card.className = 'flow-card';
+  if (title) { const h = document.createElement('h4'); h.textContent = title; card.appendChild(h); }
+  return card;
+}
+
+function flowRow(k, v, cls) {
+  const row = document.createElement('div');
+  row.className = 'flow-row';
+  const kk = document.createElement('span'); kk.className = 'k'; kk.textContent = k; row.appendChild(kk);
+  const vv = document.createElement('span'); vv.className = 'v' + (cls ? ' ' + cls : ''); vv.textContent = v; row.appendChild(vv);
+  return row;
+}
+
+function flowStep(n, text, code) {
+  const step = document.createElement('div');
+  step.className = 'flow-step';
+  const nn = document.createElement('span'); nn.className = 'n'; nn.textContent = String(n); step.appendChild(nn);
+  const t = document.createElement('span'); t.className = 't'; t.textContent = text; step.appendChild(t);
+  if (code) { const c = document.createElement('code'); c.textContent = code; step.appendChild(c); }
+  return step;
+}
+
+function codeBlock(text) {
+  const pre = document.createElement('pre');
+  pre.className = 'code-block';
+  pre.textContent = text;
+  return pre;
+}
+
+function renderConfigScreen(container) {
+  const s = boardSpecs.grande;
+  container.innerHTML = '';
+  const root = document.createElement('div');
+  root.style.cssText = 'position:relative;width:' + s.w + 'px;height:' + s.h + 'px;background:#000;overflow:hidden;font-family:\'IBM Plex Mono\',monospace;';
+  function line(text, top, size, color, weight) {
+    const d = document.createElement('div');
+    d.textContent = text;
+    d.style.cssText = 'position:absolute;left:24px;right:24px;top:' + top + 'px;font-size:' + size + 'px;line-height:1.25;color:' + color + ';' + (weight ? 'font-weight:' + weight + ';' : '');
+    root.appendChild(d);
+  }
+  line('Modo configuración', 70, 30, tokens.text, 500);
+  line('Conecta este dispositivo a tu red WiFi', 116, 15, tokens.muted);
+  line('Red: ' + PORTAL_SSID, 200, 18, tokens.primary);
+  line('Pair: ' + PAIRING_CODE, 244, 22, tokens.text);
+  line('http://192.168.4.1', 296, 16, tokens.muted);
+  line('● SoftAP activo · escaneando…', 408, 16, tokens.success);
+  container.appendChild(root);
+}
+
+function renderOtaScreen(container) {
+  const s = boardSpecs.grande;
+  container.innerHTML = '';
+  const root = document.createElement('div');
+  root.style.cssText = 'position:relative;width:' + s.w + 'px;height:' + s.h + 'px;background:#000;overflow:hidden;font-family:\'IBM Plex Mono\',monospace;';
+  function line(text, top, size, color, weight) {
+    const d = document.createElement('div');
+    d.textContent = text;
+    d.style.cssText = 'position:absolute;left:24px;right:24px;top:' + top + 'px;font-size:' + size + 'px;line-height:1.25;color:' + color + ';' + (weight ? 'font-weight:' + weight + ';' : '');
+    root.appendChild(d);
+  }
+  line('Actualización de firmware', 70, 28, tokens.text, 500);
+  line('OTA híbrido · BLE + WiFi', 112, 16, tokens.muted);
+  line('Recibiendo firmware.bin…', 210, 18, tokens.text);
+  const track = document.createElement('div');
+  track.style.cssText = 'position:absolute;left:24px;top:260px;width:432px;height:20px;border:1px solid ' + tokens.border + ';';
+  const fill = document.createElement('div');
+  fill.style.cssText = 'position:absolute;left:0;top:0;height:100%;width:62%;background:' + tokens.primary + ';';
+  track.appendChild(fill);
+  root.appendChild(track);
+  line('62%', 300, 20, tokens.primary);
+  line('■ OTA · no desconectes', 408, 16, tokens.success);
+  container.appendChild(root);
+}
+
+function renderPortalFlow(body) {
+  const grid = document.createElement('div');
+  grid.className = 'flow-grid';
+
+  // Izquierda: página del portal en un marco de teléfono.
+  const left = document.createElement('div');
+  left.className = 'flow-col';
+  const lh = document.createElement('h4'); lh.textContent = 'Página del portal cautivo (español)'; left.appendChild(lh);
+  const portal = createPortalMock({ view: 'list', interactive: true });
+  left.appendChild(phoneFrame(portal.el, 'http://192.168.4.1'));
+  const note = document.createElement('p');
+  note.className = 'flow-note';
+  note.textContent = 'Al abrir escanea solo; “Actualizar” re-escanea (async, 500 ms de polling); tocar una red rellena el SSID y enfoca la contraseña; la entrada manual siempre queda. El listado va ordenado por RSSI, deduplicado por SSID y sin SSID vacíos (WIFI-SCAN.md §4–§5).';
+  left.appendChild(note);
+  grid.appendChild(left);
+
+  // Derecha: lado dispositivo + contrato.
+  const right = document.createElement('div');
+  right.className = 'flow-col';
+  const rh = document.createElement('h4'); rh.textContent = 'Lado dispositivo (SoftAP)'; right.appendChild(rh);
+  const card = flowCard('Red de configuración');
+  const rows = document.createElement('div'); rows.className = 'flow-rows';
+  rows.appendChild(flowRow('SSID anunciado', PORTAL_SSID, 'hi'));
+  rows.appendChild(flowRow('Código de emparejamiento', PAIRING_CODE, 'hi'));
+  rows.appendChild(flowRow('URL de respaldo', 'http://192.168.4.1'));
+  rows.appendChild(flowRow('Modo radio', 'WIFI_AP_STA (§3, W2)'));
+  rows.appendChild(flowRow('Escaneo', 'asíncrono · tope 24 (§4)'));
+  rows.appendChild(flowRow('Escritura NVS', 'ota_set_wifi() — único camino'));
+  card.appendChild(rows);
+  right.appendChild(card);
+
+  const mini = miniScreen(renderConfigScreen, 'Pantalla del dispositivo en modo configuración');
+  right.appendChild(mini);
+
+  const code = flowCard('Contrato HTTP (§4)');
+  code.appendChild(codeBlock('GET /scan?start=1   → {"state":"scanning"}\nGET /scan           → {"state":"done","nets":[{"ssid":"Casa","rssi":-45,"sec":true}, …]}\nPOST /save (ssid, pass) → "Guardado ✓"'));
+  right.appendChild(code);
+
+  const extra = document.createElement('p');
+  extra.className = 'flow-note';
+  extra.textContent = 'El portal corre mientras no hay OTA activo. iOS no siempre abre el portal solo, por eso la pantalla muestra la URL manual http://192.168.4.1 (ROADMAP §7).';
+  right.appendChild(extra);
+
+  grid.appendChild(right);
+  body.appendChild(grid);
+}
+
+function renderPairingFlow(body) {
+  const grid = document.createElement('div');
+  grid.className = 'flow-grid';
+
+  const left = document.createElement('div');
+  left.className = 'flow-col';
+  const lh = document.createElement('h4'); lh.textContent = 'El dispositivo muestra el código'; left.appendChild(lh);
+  left.appendChild(miniScreen(renderConfigScreen, 'Temp: “Pair: ' + PAIRING_CODE + '” en pantalla y en el portal'));
+  const note = document.createElement('p');
+  note.className = 'flow-note';
+  note.textContent = 'Código de 8 caracteres del alfabeto sin ambigüedades (sin 0/O/1/I/L), TTL 15 min. El token de dispositivo (32 bytes base64url) se devuelve una sola vez y se guarda en NVS (namespace otah, clave dev_token). El firmware no lleva ningún secreto compilado (PHASE2-CONTRACT §2, §6).';
+  left.appendChild(note);
+  grid.appendChild(left);
+
+  const right = document.createElement('div');
+  right.className = 'flow-col';
+  const rh = document.createElement('h4'); rh.textContent = 'Registro en el backend'; right.appendChild(rh);
+  const steps = document.createElement('div'); steps.className = 'flow-steps';
+  steps.appendChild(flowStep(1, 'El dispositivo genera el código y lo publica.', 'POST /api/pair/start {code, board}'));
+  steps.appendChild(flowStep(2, 'El dueño aprueba el código en la VM.', 'manage.py pair --code ' + PAIRING_CODE + ' --label "mi-device"'));
+  steps.appendChild(flowStep(3, 'El backend acuña el token y marca el código.', 'state: pending → paired'));
+  steps.appendChild(flowStep(4, 'El dispositivo sondea y recibe el token una vez.', 'GET /api/pair/status?code=' + PAIRING_CODE));
+  steps.appendChild(flowStep(5, 'Guarda el token en NVS y hace GET /api/usage con Bearer.', 'Authorization: Bearer <device_token>'));
+  right.appendChild(steps);
+  const rev = flowCard('Revocación');
+  rev.appendChild(codeBlock('manage.py revoke-device <id>\n→ GET /api/usage devuelve 401\n→ el firmware llama usage_pair_clear() y vuelve a emparejar'));
+  right.appendChild(rev);
+  grid.appendChild(right);
+  body.appendChild(grid);
+}
+
+function renderOtaFlow(body) {
+  const grid = document.createElement('div');
+  grid.className = 'flow-grid';
+
+  const left = document.createElement('div');
+  left.className = 'flow-col';
+  const lh = document.createElement('h4'); lh.textContent = 'BLE dispara, WiFi transfiere'; left.appendChild(lh);
+  left.appendChild(miniScreen(renderOtaScreen, 'Línea de estado transitoria: “■ OTA · no desconectes”'));
+  const note = document.createElement('p');
+  note.className = 'flow-note';
+  note.textContent = 'El camino BLE es sólo control (CTRL …0005, requiere enlace emparejado y cifrado). El binario viaja por WiFi con ArduinoOTA/espota y la radio se baja al terminar. Si la imagen nueva no arranca 3 veces, la aplicación vuelve a la ranura anterior (rollback por boot_tries).';
+  left.appendChild(note);
+  grid.appendChild(left);
+
+  const right = document.createElement('div');
+  right.className = 'flow-col';
+  const rh = document.createElement('h4'); rh.textContent = 'Secuencia (ota_flash.py)'; right.appendChild(rh);
+  const steps = document.createElement('div'); steps.className = 'flow-steps';
+  steps.appendChild(flowStep(1, 'El helper detiene el daemon y conecta por BLE.', 'subscribe TX …0003'));
+  steps.appendChild(flowStep(2, 'Identifica el dispositivo y aborta si no coincide.', '{"cmd":"info"} → board/waveshare_amoled_216'));
+  steps.appendChild(flowStep(3, 'Aprovisiona las credenciales WiFi en NVS.', '{"cmd":"wifi","ssid":"S","pass":"P"}'));
+  steps.appendChild(flowStep(4, 'Enciende OTA y lee la IP.', '{"cmd":"ota","mode":"on"} → {"state":"ready","ip":"192.168.1.42","port":3232}'));
+  steps.appendChild(flowStep(5, 'Sube el binario por WiFi.', 'espota.py -i 192.168.1.42 -p 3232 -f firmware.bin'));
+  steps.appendChild(flowStep(6, 'Apaga OTA; el dispositivo reinicia en la ranura nueva.', '{"cmd":"ota","mode":"off"}'));
+  right.appendChild(steps);
+  const src = flowCard('Fuente');
+  src.appendChild(codeBlock('design/ota-hybrid/DESIGN.md §2–§4\nREADME.md · “Firmware updates (hybrid OTA)”'));
+  right.appendChild(src);
+  grid.appendChild(right);
+  body.appendChild(grid);
+}
+
+function renderBleFlow(body) {
+  const wrap = document.createElement('div');
+  const h = document.createElement('h4'); h.textContent = 'Estados del enlace BLE y datos'; wrap.appendChild(h);
+  const note = document.createElement('p');
+  note.className = 'flow-note';
+  note.textContent = 'Mismo servicio RX; el payload se enruta por “k” (“oc” OpenCode, “pf” portafolio, sin “k” = Claude). Enlace caído ⇒ paneles al 40 %; datos viejos (5 min) ⇒ paneles al 40 % y línea “stale”. Máximo 240 bytes por payload.';
+  wrap.appendChild(note);
+
+  const row = document.createElement('div'); row.className = 'mini-row';
+  const ocData = { ...scenarios.activa };
+  const pfData = { ...pfScenarios.real };
+  row.appendChild(miniScreen((c) => renderOpenCode(c, 'grande', ocData, { offline: false, stale: false }),
+    'OpenCode conectado · ■ build · working'));
+  row.appendChild(miniScreen((c) => renderOpenCode(c, 'grande', ocData, { offline: true }),
+    'OpenCode BLE caído · ○ bluetooth disconnected'));
+  row.appendChild(miniScreen((c) => renderOpenCode(c, 'grande', ocData, { stale: true }),
+    'OpenCode datos viejos · ○ stale · updated 12m ago'));
+  wrap.appendChild(row);
+
+  const row2 = document.createElement('div'); row2.className = 'mini-row'; row2.style.marginTop = '20px';
+  row2.appendChild(miniScreen((c) => renderPortfolio(c, 'grande', pfData, { offline: false }), 'Portafolio en vivo · en vivo, 10:42'));
+  row2.appendChild(miniScreen((c) => renderPortfolio(c, 'grande', pfData, { offline: true }), 'Portafolio BLE caído · ! bluetooth desconectado'));
+  row2.appendChild(miniScreen((c) => renderPortfolio(c, 'grande', { ...pfScenarios.sinActualizar }, { stale: true }), 'Portafolio datos viejos · sin actualizar desde 10:42'));
+  wrap.appendChild(row2);
+
+  body.appendChild(wrap);
+}
+
+// =============================================================================
+// Simulator state
+// =============================================================================
+const simulatorState = {
+  mode: 'screens',              // screens | flujos
+  flow: 'portal',               // portal | pairing | ota | ble
+  board: 'grande',
+  claudeScenario: 'real',
+  scenario: 'real',             // OpenCode
+  pfScenario: 'real',
+  connected: true,
+  daemonSendsOC: true,
+  daemonSendsPF: true,
+  pfPrivate: false,
+  currentScreen: 'clawd',       // clawd, claude, ocsplash, ocusage, portfolio
+  brightness: 255,
+  ocSplash: null,
+  buttonDownTime: {},
+  pfNotice: false,
+  pfNoticeTimer: null,
+
+  setMode(mode) {
+    if (this.ocSplash) { this.ocSplash.destroy(); this.ocSplash = null; }
+    this.mode = mode;
+    renderControlPanel();
+    renderStage();
+  },
+  setFlow(flow) { this.flow = flow; renderStage(); },
+  setBoard(board) {
+    this.board = board;
+    this.currentScreen = 'clawd';
+    this.brightness = 255;
+    if (this.ocSplash) { this.ocSplash.destroy(); this.ocSplash = null; }
+    render();
+  },
+  setClaudeScenario(s) { this.claudeScenario = s; render(); },
+  setScenario(s) { this.scenario = s; render(); },
+  setPfScenario(s) { this.pfScenario = s; render(); },
+  setPfPrivate(value, announce = true) {
+    this.pfPrivate = !!value;
+    if (announce) this.showPfNotice();
+    render();
+  },
+  showPfNotice() {
+    if (this.pfNoticeTimer) clearTimeout(this.pfNoticeTimer);
+    this.pfNotice = true;
+    this.pfNoticeTimer = setTimeout(() => { this.pfNotice = false; this.pfNoticeTimer = null; render(); }, 1500);
+  },
+  setDaemonSendsPortfolio(sends) {
+    this.daemonSendsPortfolio = sends;
+    if (!sends && this.currentScreen === 'portfolio') this.currentScreen = 'clawd';
+    render();
+  },
+  setConnected(connected) {
+    this.connected = connected;
+    if (!connected) this.currentScreen = 'clawd';
+    render();
+  },
+  setDaemonSendsOC(sends) {
+    this.daemonSendsOC = sends;
+    if (!sends && ['ocsplash', 'ocusage'].includes(this.currentScreen)) this.currentScreen = 'clawd';
+    if (this.ocSplash) { this.ocSplash.destroy(); this.ocSplash = null; }
+    render();
+  },
+  getScreenList() {
+    const screens = ['clawd', 'claude'];
+    if (this.daemonSendsOC) screens.push('ocsplash', 'ocusage');
+    if (this.daemonSendsPF) screens.push('portfolio');
+    return screens;
+  },
+  getMood() {
+    const data = scenarios[this.scenario];
+    if (data.st === 'limited') return 'limited';
+    const maxUsage = Math.max(data.p5 || 0, data.pw || 0);
+    if (maxUsage >= 75) return 'near';
+    if ((data.a || 0) >= 2) return 'busy';
+    if ((data.a || 0) >= 1) return 'active';
+    return 'idle';
+  },
+  pressButtonDown(button) { this.buttonDownTime[button] = Date.now(); },
+  pressButtonUp(button) {
+    const downTime = this.buttonDownTime[button] || 0;
+    const elapsed = Date.now() - downTime;
+    delete this.buttonDownTime[button];
+    if (this.mode !== 'screens') { showToast('Botones físicos: sólo en modo Pantallas'); return; }
+
+    if (button === 'boot') {
+      if (elapsed < 300) {
+        const screens = this.getScreenList();
+        const idx = screens.indexOf(this.currentScreen);
+        this.currentScreen = screens[(idx - 1 + screens.length) % screens.length];
+        showPageIndicator(); render();
+      } else {
+        showToast('Espacio mantenido ' + (elapsed / 1000).toFixed(1) + ' s → HID (dictado)');
+      }
+    } else if (button === 'sec') {
+      if (elapsed < 300) {
+        const screens = this.getScreenList();
+        const idx = screens.indexOf(this.currentScreen);
+        this.currentScreen = screens[(idx + 1) % screens.length];
+        showPageIndicator(); render();
+      } else {
+        showToast('Shift+Tab → HID (cambio de modo)');
+      }
+    } else if (button === 'pwr') {
+      if (elapsed < 1500) {
+        if (this.currentScreen === 'ocsplash') {
+          const newScene = this.ocSplash ? this.ocSplash.nextScene() : 'scanner';
+          showToast('PWR → escena: ' + newScene);
+        } else if (this.currentScreen === 'clawd') {
+          showToast('PWR → siguiente animación de Clawd (captura real)');
+        } else if (this.currentScreen === 'portfolio') {
+          this.setPfPrivate(!this.pfPrivate);
+        } else {
+          const levels = [64, 128, 200, 255];
+          const idx = levels.indexOf(this.brightness);
+          this.brightness = levels[(idx + 1) % levels.length];
+          render();
+        }
+      } else if (elapsed < 3000) {
+        showToast('PWR 1.5-3 s → nada (cancela el emparejar pendiente)');
+      } else {
+        showToast('PWR 3 s → modo emparejar');
+      }
+    }
+  },
+  cycleScreen() {
+    const screens = this.getScreenList();
+    const idx = screens.indexOf(this.currentScreen);
+    this.currentScreen = screens[(idx + 1) % screens.length];
+    showPageIndicator(); render();
+  }
+};
+window.simulatorState = simulatorState;
+
+function showToast(text) {
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.textContent = text;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 1400);
+}
+
+function showPageIndicator() {
+  const indicator = document.getElementById('pageIndicator');
+  if (!indicator) return;
+  const screens = simulatorState.getScreenList();
+  const current = screens.indexOf(simulatorState.currentScreen);
+  indicator.innerHTML = screens.map((_, i) => '<span class="' + (i === current ? 'active' : '') + '"></span>').join('');
+  indicator.style.animation = 'none';
+  setTimeout(() => { indicator.style.animation = 'indicator-fade 1.5s ease-in-out'; }, 10);
+}
+
+// =============================================================================
+// Stage + control panel
+// =============================================================================
+function renderStage() {
+  const stage = document.getElementById('stage');
+  stage.innerHTML = '';
+
+  if (simulatorState.mode === 'screens') {
+    const dc = document.createElement('div');
+    dc.className = 'device-container';
+
+    const bezel = document.createElement('div');
+    bezel.className = 'device-bezel';
+    const screen = document.createElement('div');
+    screen.id = 'deviceScreen';
+    screen.className = 'device-screen';
+    bezel.appendChild(screen);
+    const pi = document.createElement('div');
+    pi.className = 'page-indicator';
+    pi.id = 'pageIndicator';
+    bezel.appendChild(pi);
+    dc.appendChild(bezel);
+
+    const info = document.createElement('div');
+    info.className = 'device-info';
+    info.id = 'deviceInfo';
+    dc.appendChild(info);
+
+    const btns = document.createElement('div');
+    btns.className = 'device-buttons';
+    btns.id = 'physicalButtons';
+    dc.appendChild(btns);
+
+    const cap = document.createElement('p');
+    cap.style.cssText = 'font-size:12px;color:#888;text-align:center;max-width:420px;';
+    cap.textContent = 'Clawd y Claude: capturas reales 480×480. OpenCode: canvas (splash) y render (uso). Portafolio: render BVC.';
+    dc.appendChild(cap);
+
+    stage.appendChild(dc);
+    render();
+    showPageIndicator();
+  } else {
+    const flows = document.createElement('div');
+    flows.className = 'flows';
+    const tabs = document.createElement('div');
+    tabs.className = 'flow-tabs';
+    const items = [['portal', 'Portal cautivo (SoftAP)'], ['pairing', 'Emparejamiento'], ['ota', 'OTA híbrido'], ['ble', 'Enlace BLE']];
+    for (const [id, label] of items) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'flow-tab' + (simulatorState.flow === id ? ' active' : '');
+      b.textContent = label;
+      b.onclick = () => simulatorState.setFlow(id);
+      tabs.appendChild(b);
+    }
+    flows.appendChild(tabs);
+    const body = document.createElement('div');
+    body.className = 'flow-body';
+    body.id = 'flowBody';
+    flows.appendChild(body);
+    stage.appendChild(flows);
+    render();
+  }
+}
+
+function renderPhysicalButtons() {
+  const container = document.getElementById('physicalButtons');
+  if (!container) return;
+  container.innerHTML = '';
+  const configs = [
+    { name: 'BOOT ◀', actions: 'toque ◀ · mantener: Espacio', id: 'boot' },
+    { name: 'PWR', actions: 'brillo · splash: escena/animación · portafolio: privado · 3 s: emparejar', id: 'pwr' },
+    { name: 'SEC ▶', actions: 'toque ▶ · mantener: Shift+Tab', id: 'sec' }
+  ];
+  for (const btn of configs) {
+    const div = document.createElement('div');
+    div.className = 'physical-button';
+    const b = document.createElement('button');
+    b.textContent = btn.name;
+    b.onpointerdown = (e) => simulatorState.pressButtonDown(btn.id, e);
+    b.onpointerup = (e) => simulatorState.pressButtonUp(btn.id, e);
+    b.onpointerleave = (e) => simulatorState.pressButtonUp(btn.id, e);
+    div.appendChild(b);
+    const actions = document.createElement('div');
+    actions.className = 'physical-button-actions';
+    actions.textContent = btn.actions;
+    div.appendChild(actions);
+    container.appendChild(div);
+  }
+}
+
+function renderControlPanel() {
+  const cp = document.getElementById('controlPanel');
+  const screens = simulatorState.mode === 'screens';
+
+  let html = '';
+  html += '<div class="control-group"><label>Modo</label><div class="segmented-control">' +
+    '<input type="radio" id="mode-screens" name="mode" ' + (screens ? 'checked' : '') + ' onchange="simulatorState.setMode(\'screens\')">' +
+    '<label for="mode-screens">Pantallas</label>' +
+    '<input type="radio" id="mode-flows" name="mode" ' + (!screens ? 'checked' : '') + ' onchange="simulatorState.setMode(\'flujos\')">' +
+    '<label for="mode-flows">Flujos</label></div></div>';
+
+  html += '<div class="control-group"><label>Board</label><div class="segmented-control">' +
+    '<input type="radio" id="board-216" name="board" value="grande" checked onchange="simulatorState.setBoard(\'grande\')">' +
+    '<label for="board-216">2.16" 480×480</label></div></div>';
+
+  // --- Controles de pantallas ---
+  html += '<fieldset class="fieldset" id="screensControls"' + (screens ? '' : ' style="display:none"') + '>';
+  html += '<legend>Escenarios de pantalla</legend>';
+
+  html += '<div class="control-group"><label>Claude (uso)</label><div class="radio-group">';
+  for (const key of Object.keys(claudeLabels)) {
+    html += '<input type="radio" id="cl-' + key + '" name="claudesc" ' + (simulatorState.claudeScenario === key ? 'checked' : '') +
+      ' onchange="simulatorState.setClaudeScenario(\'' + key + '\')">' +
+      '<label for="cl-' + key + '">' + claudeLabels[key] + '</label>';
+  }
+  html += '</div></div>';
+
+  html += '<div class="control-group"><label>OpenCode (uso y splash)</label><div class="radio-group">';
+  for (const key of Object.keys(ocLabels)) {
+    html += '<input type="radio" id="oc-' + key + '" name="ocsc" ' + (simulatorState.scenario === key ? 'checked' : '') +
+      ' onchange="simulatorState.setScenario(\'' + key + '\')">' +
+      '<label for="oc-' + key + '">' + ocLabels[key] + '</label>';
+  }
+  html += '</div></div>';
+
+  html += '<div class="control-group"><label>Portafolio BVC</label><div class="radio-group">';
+  const pfOrder = ['real', 'cerrado', 'feriado', 'sinActualizar', 'todosSuben', 'todosBajan', 'unaGanadora', 'sinVariaciones', 'cero', 'largo', 'tickerSinPrecio', 'dosSinPrecio', 'nopos', 'nores', 'nonet', 'duplicado', 'bleCaido'];
+  for (const key of pfOrder) {
+    html += '<input type="radio" id="pf-' + key + '" name="pfsc" ' + (simulatorState.pfScenario === key ? 'checked' : '') +
+      ' onchange="simulatorState.setPfScenario(\'' + key + '\')">' +
+      '<label for="pf-' + key + '">' + pfLabels[key] + '</label>';
+  }
+  html += '</div></div>';
+
+  html += '<div class="control-group"><label>Estados</label><div class="toggle-group">' +
+    '<label class="toggle"><input type="checkbox" ' + (simulatorState.connected ? 'checked' : '') + ' onchange="simulatorState.setConnected(this.checked)"><span class="toggle-switch"></span><span>BLE conectado</span></label>' +
+    '<label class="toggle"><input type="checkbox" ' + (simulatorState.daemonSendsOC ? 'checked' : '') + ' onchange="simulatorState.setDaemonSendsOC(this.checked)"><span class="toggle-switch"></span><span>Daemon envía OC</span></label>' +
+    '<label class="toggle"><input type="checkbox" ' + (simulatorState.daemonSendsPF ? 'checked' : '') + ' onchange="simulatorState.setDaemonSendsPortfolio(this.checked)"><span class="toggle-switch"></span><span>Daemon envía PF</span></label>' +
+    '<label class="toggle" title="Equivale a un PWR corto en la pantalla de portafolio"><input type="checkbox" id="pfPrivateToggle" ' + (simulatorState.pfPrivate ? 'checked' : '') + ' onchange="simulatorState.setPfPrivate(this.checked)"><span class="toggle-switch"></span><span>Modo privado</span></label>' +
+    '</div></div>';
+  html += '</fieldset>';
+
+  // --- Controles de flujos ---
+  html += '<fieldset class="fieldset" id="flowsControls"' + (screens ? ' style="display:none"' : '') + '>';
+  html += '<legend>Flujos del dispositivo (no son pantallas)</legend>';
+  html += '<div class="control-group"><label>Flujo</label><div class="radio-group">';
+  const flowItems = [['portal', 'Portal cautivo (SoftAP)'], ['pairing', 'Emparejamiento'], ['ota', 'OTA híbrido'], ['ble', 'Enlace BLE']];
+  for (const [id, label] of flowItems) {
+    html += '<input type="radio" id="fl-' + id + '" name="flowsel" ' + (simulatorState.flow === id ? 'checked' : '') +
+      ' onchange="simulatorState.setFlow(\'' + id + '\')"><label for="fl-' + id + '">' + label + '</label>';
+  }
+  html += '</div></div>';
+  html += '<div class="control-group"><label>Estados</label><div class="toggle-group">' +
+    '<label class="toggle"><input type="checkbox" ' + (simulatorState.connected ? 'checked' : '') + ' onchange="simulatorState.setConnected(this.checked)"><span class="toggle-switch"></span><span>BLE conectado</span></label>' +
+    '</div></div>';
+  html += '</fieldset>';
+
+  // --- Payload ---
+  html += '<div class="control-group"><label>Payload BLE</label><div class="payload-display"><code id="payloadJson"></code></div>' +
+    '<div class="payload-bytes" id="payloadBytes">0 / 240 bytes</div></div>';
+
+  // --- Navegación ---
+  html += '<div class="nav-explanation"><strong>Navegación (SPEC §6 · CLAUDE.md):</strong>' +
+    '<ul>' +
+    '<li><strong>BOOT ◀:</strong> &lt; 300 ms = pantalla anterior. ≥ 300 ms = Espacio (HID, dictado)</li>' +
+    '<li><strong>SEC ▶:</strong> &lt; 300 ms = siguiente pantalla. ≥ 300 ms = Shift+Tab (HID)</li>' +
+    '<li><strong>PWR:</strong> &lt; 1.5 s = brillo (splash: escena/animación · portafolio: modo privado). ≥ 3 s = emparejar</li>' +
+    '<li><strong>Toque:</strong> siguiente pantalla (todos los boards)</li>' +
+    '<li><em>El ciclo es clawd → claude → ocsplash → ocusage → portfolio. Las pantallas OC y el portafolio entran cuando llega su primer payload.</em></li>' +
+    '</ul></div>';
+
+  cp.innerHTML = html;
+}
+
+// =============================================================================
+// Main render
+// =============================================================================
+function render() {
+  if (simulatorState.mode === 'flujos') {
+    renderFlowBody();
+    renderPayload();
+    renderInfo();
+    return;
+  }
+
+  const deviceScreen = document.getElementById('deviceScreen');
+  if (!deviceScreen) return;
+  const specs = boardSpecs[simulatorState.board];
+  deviceScreen.style.width = specs.w + 'px';
+  deviceScreen.style.height = specs.h + 'px';
+
+  if (simulatorState.currentScreen !== 'ocsplash' && simulatorState.ocSplash) {
+    simulatorState.ocSplash.destroy();
+    simulatorState.ocSplash = null;
+  }
+
+  if (simulatorState.currentScreen === 'clawd') {
+    renderClawd(deviceScreen, simulatorState.board);
+  } else if (simulatorState.currentScreen === 'claude') {
+    const cd = claudeScenarios[simulatorState.claudeScenario];
+    renderClaude(deviceScreen, simulatorState.board, cd, {
+      offline: !simulatorState.connected || !!cd.offline,
+      stale: !!cd.stale,
+      brightness: simulatorState.brightness
+    });
+  } else if (simulatorState.currentScreen === 'ocsplash') {
+    if (!simulatorState.ocSplash) {
+      const canvas = document.createElement('canvas');
+      canvas.width = specs.w;
+      canvas.height = specs.h;
+      if (window.OCSplash) {
+        simulatorState.ocSplash = OCSplash.create(canvas);
+        simulatorState.ocSplash.setMood(simulatorState.getMood());
+      } else {
+        const div = document.createElement('div');
+        div.style.cssText = 'width:' + specs.w + 'px;height:' + specs.h + 'px;background:#000;color:#444;display:flex;align-items:center;justify-content:center;font-size:12px;';
+        div.textContent = 'oc-splash.js no cargado';
+        deviceScreen.innerHTML = '';
+        deviceScreen.appendChild(div);
+        return;
+      }
+      deviceScreen.innerHTML = '';
+      deviceScreen.appendChild(canvas);
+    }
+  } else if (simulatorState.currentScreen === 'ocusage') {
+    const data = { ...scenarios[simulatorState.scenario] };
+    const temp = document.createElement('div');
+    renderOpenCode(temp, simulatorState.board, data, {
+      offline: !simulatorState.connected,
+      stale: simulatorState.scenario === 'viejo',
+      brightness: simulatorState.brightness
+    });
+    deviceScreen.innerHTML = '';
+    while (temp.firstChild) deviceScreen.appendChild(temp.firstChild);
+  } else if (simulatorState.currentScreen === 'portfolio') {
+    const pfData = { ...pfScenarios[simulatorState.pfScenario] };
+    const temp = document.createElement('div');
+    renderPortfolio(temp, simulatorState.board, pfData, {
+      offline: !simulatorState.connected,
+      stale: simulatorState.pfScenario === 'sinActualizar',
+      brightness: simulatorState.brightness,
+      private: simulatorState.pfPrivate,
+      privNotice: simulatorState.pfNotice
+    });
+    deviceScreen.innerHTML = '';
+    while (temp.firstChild) deviceScreen.appendChild(temp.firstChild);
+  }
+
+  renderPhysicalButtons();
+  renderPayload();
+  renderInfo();
+  deviceScreen.onclick = () => simulatorState.cycleScreen();
+}
+
+function renderFlowBody() {
+  const body = document.getElementById('flowBody');
+  if (!body) return;
+  body.innerHTML = '';
+  if (simulatorState.flow === 'portal') renderPortalFlow(body);
+  else if (simulatorState.flow === 'pairing') renderPairingFlow(body);
+  else if (simulatorState.flow === 'ota') renderOtaFlow(body);
+  else renderBleFlow(body);
+}
+
+function currentPayload() {
+  if (simulatorState.mode === 'flujos') {
+    if (simulatorState.flow === 'portal') return '{"portal":"softap","ssid":"' + PORTAL_SSID + '","state":"scanning"}';
+    if (simulatorState.flow === 'pairing') return 'POST /api/pair/start {"code":"' + PAIRING_CODE + '","board":"waveshare_amoled_216"}';
+    if (simulatorState.flow === 'ota') return '{"cmd":"ota","mode":"on","ip":"192.168.1.42","port":3232}';
+    return '{"k":"oc"} / {"k":"pf"} / {} · enlace BLE y frescura';
+  }
+  if (simulatorState.currentScreen === 'portfolio') return buildPfPayload(pfScenarios[simulatorState.pfScenario]);
+  if (simulatorState.currentScreen === 'clawd' || simulatorState.currentScreen === 'claude') {
+    return buildClaudePayload(claudeScenarios[simulatorState.claudeScenario]);
+  }
+  return buildOcPayload(scenarios[simulatorState.scenario]);
+}
+
+function renderPayload() {
+  const str = currentPayload();
+  const jsonEl = document.getElementById('payloadJson');
+  if (jsonEl) jsonEl.textContent = str;
+  const bytesEl = document.getElementById('payloadBytes');
+  if (bytesEl) {
+    const bytes = new Blob([str]).size;
+    bytesEl.textContent = bytes + ' / 240 bytes';
+    bytesEl.className = 'payload-bytes' + (bytes > 240 ? ' warning' : '');
+  }
+}
+
+function renderInfo() {
+  const el = document.getElementById('deviceInfo');
+  if (!el) return;
+  if (simulatorState.mode === 'flujos') {
+    const names = { portal: 'Portal cautivo', pairing: 'Emparejamiento', ota: 'OTA híbrido', ble: 'Enlace BLE' };
+    el.textContent = 'Flujo: ' + names[simulatorState.flow] + ' · (no es una pantalla del ciclo)';
+    return;
+  }
+  const names = { clawd: 'Clawd', claude: 'Claude', ocsplash: 'OCSplash', ocusage: 'OCUsage', portfolio: 'Portafolio' };
+  el.textContent = 'Pantalla: ' + names[simulatorState.currentScreen] + ' · ' + simulatorState.brightness + ' / 255' +
+    (simulatorState.currentScreen === 'portfolio' && simulatorState.pfPrivate ? ' · modo privado' : '');
+}
+
+// =============================================================================
+// Variants grid
+// =============================================================================
+function screenBox(sizeKey) {
+  const s = boardSpecs[sizeKey];
+  const d = document.createElement('div');
+  d.className = 'variant-screen';
+  d.style.width = s.w + 'px';
+  d.style.height = s.h + 'px';
+  return d;
+}
+
+function variantCell(captionText, el) {
+  const cell = document.createElement('div');
+  cell.className = 'variant-cell';
+  const cap = document.createElement('div');
+  cap.className = 'variant-caption';
+  cap.textContent = captionText;
+  cell.appendChild(cap);
+  cell.appendChild(el);
+  return cell;
+}
+
+function gridSection(title, subtitle) {
+  const section = document.createElement('div');
+  section.style.cssText = 'grid-column:1/-1;';
+  const h = document.createElement('h3');
+  h.textContent = title;
+  h.style.cssText = 'margin-bottom:' + (subtitle ? '6px' : '20px') + '; font-size:14px; color:#bbb;';
+  section.appendChild(h);
+  if (subtitle) {
+    const p = document.createElement('div');
+    p.textContent = subtitle;
+    p.style.cssText = 'margin-bottom:16px; font-size:12px; color:#888;';
+    section.appendChild(p);
+  }
+  const grid = document.createElement('div');
+  grid.style.cssText = 'display:grid;gap:40px;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));';
+  section.appendChild(grid);
+  return { section, grid };
+}
+
+function buildVariantsGrid() {
+  const grid = document.getElementById('variantsGrid');
+  grid.style.gridTemplateColumns = 'repeat(auto-fit, minmax(520px, 1fr))';
+
+  // 1. Clawd + Claude (capturas reales)
+  const s1 = gridSection('Splash y uso de Claude (capturas reales)');
+  const clawd = screenBox('grande'); renderClawd(clawd, 'grande');
+  s1.grid.appendChild(variantCell('480×480 — Splash Clawd (splash.gif)', clawd));
+  for (const key of ['real', 'desconectado', 'viejo']) {
+    const box = screenBox('grande');
+    const cd = claudeScenarios[key];
+    renderClaude(box, 'grande', cd, { offline: !!cd.offline, stale: !!cd.stale });
+    s1.grid.appendChild(variantCell('480×480 — Claude uso · ' + claudeLabels[key], box));
+  }
+  grid.appendChild(s1.section);
+
+  // 2. Splash OpenCode
+  const s2 = gridSection('Splash OpenCode', 'Escenas automáticas por estado (idle=typeon, resto=scanner). Moods idle/active/busy/near/limited (research §8).');
+  const moodLabels = { idle: 'idle (typeon)', active: 'active (scanner)', near: 'near (ámbar)', limited: 'limited (rojo)' };
+  for (const mood of ['idle', 'active', 'near', 'limited']) {
+    const box = screenBox('grande');
+    if (window.OCSplash) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 480; canvas.height = 480;
+      const inst = OCSplash.create(canvas);
+      inst.setMood(mood);
+      box.appendChild(canvas);
+      setTimeout(() => inst.destroy(), 5000);
+    } else {
+      box.style.cssText = 'width:480px;height:480px;background:#000;color:#444;display:flex;align-items:center;justify-content:center;font-size:12px;';
+      box.textContent = 'oc-splash.js no cargado';
+    }
+    s2.grid.appendChild(variantCell('480×480 — OCSplash · ' + moodLabels[mood], box));
+  }
+  grid.appendChild(s2.section);
+
+  // 3. Uso de OpenCode
+  const s3 = gridSection('Uso de OpenCode', 'Datos ficticios. Chip con “· est.” en estimado; rojo a ≥ 85 % o límite.');
+  for (const key of ['activa', 'cerca', 'limite', 'est', 'consumo', 'viejo']) {
+    const box = screenBox('grande');
+    renderOpenCode(box, 'grande', { ...scenarios[key] }, { stale: key === 'viejo' });
+    s3.grid.appendChild(variantCell('480×480 — OCUsage · ' + ocLabels[key], box));
+  }
+  const off = screenBox('grande');
+  renderOpenCode(off, 'grande', { ...scenarios.activa }, { offline: true });
+  s3.grid.appendChild(variantCell('480×480 — OCUsage · BLE desconectado', off));
+  grid.appendChild(s3.section);
+
+  // 4. Portafolio BVC (normal + privado)
+  const s4 = gridSection('Portafolio BVC — DATOS FICTICIOS');
+  const buildPfGrid = (privateMode) => {
+    const block = document.createElement('div');
+    block.style.cssText = 'margin-top:24px;';
+    const sub = document.createElement('div');
+    sub.textContent = privateMode ? 'Modo privado — PWR corto en la pantalla de portafolio' : 'Modo normal — pesos a la vista';
+    sub.style.cssText = 'margin-bottom:16px; font-size:12px; color:#888;';
+    block.appendChild(sub);
+    const g = document.createElement('div');
+    g.style.cssText = 'display:grid;gap:40px;grid-template-columns:repeat(auto-fit,minmax(520px,1fr));';
+    for (const key of Object.keys(pfLabels)) {
+      const box = screenBox('grande');
+      renderPortfolio(box, 'grande', { ...pfScenarios[key] }, {
+        offline: key === 'bleCaido',
+        stale: key === 'sinActualizar',
+        dots: true,
+        private: privateMode
+      });
+      g.appendChild(variantCell('480×480 — Portafolio · ' + pfLabels[key] + (privateMode ? ' · privado' : ' · normal'), box));
+    }
+    block.appendChild(g);
+    return block;
+  };
+  s4.section.appendChild(buildPfGrid(false));
+  s4.section.appendChild(buildPfGrid(true));
+  grid.appendChild(s4.section);
+
+  // 5. Portal cautivo (mock)
+  const s5 = gridSection('Portal cautivo (Flujo, no pantalla)', 'Mock fiel a WIFI-SCAN.md §5. SSIDs y códigos ficticios.');
+  for (const v of [['scanning', 'Escaneando · “Buscando redes…”'], ['list', 'Lista detectada · RSSI, candado, tap-to-fill'], ['empty', 'Sin redes · “No se encontraron redes”'], ['saved', 'Guardado ✓ · conectando']]) {
+    const portal = createPortalMock({ view: v[0], interactive: false });
+    s5.grid.appendChild(variantCell('Portal · ' + v[1], phoneFrame(portal.el, 'http://192.168.4.1')));
+  }
+  grid.appendChild(s5.section);
+}
+
+// =============================================================================
+// Palette
+// =============================================================================
+function buildPalette() {
+  function fill(id, colors, note) {
+    const div = document.getElementById(id);
+    div.innerHTML = '';
+    for (const c of colors) {
+      const sw = document.createElement('div');
+      sw.className = 'color-swatch';
+      const box = document.createElement('div');
+      box.className = 'color-box';
+      box.style.background = c.hex;
+      sw.appendChild(box);
+      const info = document.createElement('div');
+      info.className = 'color-info';
+      const n = document.createElement('div');
+      n.className = 'color-name';
+      n.textContent = c.name;
+      info.appendChild(n);
+      const v = document.createElement('div');
+      v.className = 'color-value';
+      v.textContent = c.hex + (c.note ? ' · ' + c.note : '');
+      info.appendChild(v);
+      sw.appendChild(info);
+      div.appendChild(sw);
+    }
+    if (note) {
+      const p = document.createElement('p');
+      p.className = 'type-note';
+      p.style.marginTop = '8px';
+      p.textContent = note;
+      div.appendChild(p);
+    }
+  }
+  fill('colorPaletteOC', [
+    { name: 'bg', hex: tokens.bg }, { name: 'element', hex: tokens.element },
+    { name: 'border', hex: tokens.border }, { name: 'text', hex: tokens.text },
+    { name: 'muted', hex: tokens.muted }, { name: 'primary', hex: tokens.primary },
+    { name: 'error', hex: tokens.error }, { name: 'success', hex: tokens.success },
+    { name: 'logo_outer', hex: tokens.logo_outer }, { name: 'logo_inner', hex: tokens.logo_inner }
+  ], 'OpenCode: esquinas rectas, barra segmentada, todo en Plex Mono.');
+  fill('colorPalettePF', [
+    { name: 'bg', hex: pfTokens.bg }, { name: 'surface', hex: pfTokens.surface },
+    { name: 'text', hex: pfTokens.text }, { name: 'muted', hex: pfTokens.muted, note: 'sube a 5,18:1 sobre surface' },
+    { name: 'primary', hex: pfTokens.primary, note: 'avisos, solo sobre bg' },
+    { name: 'error', hex: pfTokens.error }, { name: 'success', hex: pfTokens.success }
+  ], 'Portafolio: tarjetas redondeadas sin borde de 1 px; color solo en números con signo.');
+}
+
+// =============================================================================
+// Init
+// =============================================================================
+document.addEventListener('DOMContentLoaded', () => {
+  renderControlPanel();
+  renderStage();
+  buildVariantsGrid();
+  buildPalette();
+});
+</script>
+
+</body>
+</html>

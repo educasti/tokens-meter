@@ -14,14 +14,16 @@
 //   * The device advertises "Clawdmeter-XXXX" (XXXX = last two MAC bytes), runs
 //     a wildcard DNSServer that points every name at the portal IP and a
 //     WebServer on :80 serving a self-contained form (plus the backend pairing
-//     code while the device is unpaired). POSTing the form writes the
-//     credentials through ota_set_wifi() (the one NVS write path) and stops the
-//     AP after a short linger. A 5 min deadline stops an unattended portal.
+//     code while the device is unpaired, and the detected WiFi networks from an
+//     async scan — see design/backend-wifi/WIFI-SCAN.md). POSTing the form
+//     writes the credentials through ota_set_wifi() (the one NVS write path) and
+//     stops the AP after a short linger. A 5 min deadline stops an unattended
+//     portal.
 //   * The portal never runs while a pull OTA or the hybrid OTA owns the radio.
 //
 // Memory: internal RAM is tight. The static HTML lives in flash (.rodata) and
 // is streamed with sendContent_P() in Content-Length'd chunks — only the small
-// pairing-code block (~120 B) and the two short form fields ever become heap
+// pairing-code block (~230 B) and the two short form fields ever become heap
 // Strings, and they are copied straight into ota_set_wifi()'s fixed buffers.
 #include "portal.h"
 
@@ -31,6 +33,7 @@
 #include <WebServer.h>
 #include <WiFi.h>
 #include <esp_mac.h>
+#include <esp_wifi.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/portmacro.h>
 
@@ -56,6 +59,9 @@ static void format_pair_code(const char* code, char* buf, size_t len) {
 #define PORTAL_TIMEOUT_MS     (5u * 60u * 1000u)  // unattended portal lifetime
 #define PORTAL_SAVE_LINGER_MS 2000u               // stay up briefly after a save
 
+#define PORTAL_SCAN_STALE_MS  20000u              // hung async scan -> discard
+#define PORTAL_SCAN_MAX_NETS  24u                 // cap on listed networks (WIFI-SCAN.md §4)
+
 enum portal_req_t : uint8_t { PORTAL_REQ_NONE = 0, PORTAL_REQ_START, PORTAL_REQ_STOP };
 
 // ---- Pages (flash-resident) ------------------------------------------------
@@ -79,43 +85,97 @@ static const char PORTAL_HTML_HEAD[] PROGMEM =
     ".pc .c{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:1.6rem;"
     "font-weight:700;letter-spacing:.12em;color:#faf9f5;margin:.25rem 0}"
     ".pc .e{font-size:.75rem;color:#8b949e;margin:.35rem 0 0}"
+    ".nets{margin:.2rem 0 1rem}"
+    ".nets-head{display:flex;align-items:center;justify-content:space-between;gap:.5rem;"
+    "margin-bottom:.4rem}"
+    ".nets-head span{font-size:.8rem;color:#8b949e}"
+    ".nets-head button{width:auto;margin:0;padding:.35rem .6rem;background:#30363d;"
+    "font-size:.75rem}"
+    ".nets-list{display:flex;flex-direction:column;gap:.35rem;max-height:15rem;overflow-y:auto}"
+    ".nets-msg{margin:0}"
+    ".net{display:flex;align-items:center;gap:.5rem;width:100%;margin:0;padding:.5rem .6rem;"
+    "border:1px solid #30363d;border-radius:8px;background:#0d1117;color:#e6edf3;"
+    "font-size:.9rem;text-align:left;cursor:pointer}"
+    ".net:hover,.net:focus{border-color:#58a6ff;outline:none}"
+    ".net.on{border-color:#238636}"
+    ".net .ssid{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}"
+    ".net .sig{display:inline-flex;align-items:flex-end;gap:2px;height:1rem}"
+    ".net .sig i{width:3px;background:#30363d;border-radius:1px}"
+    ".net .sig i:nth-child(1){height:25%}.net .sig i:nth-child(2){height:50%}"
+    ".net .sig i:nth-child(3){height:75%}.net .sig i:nth-child(4){height:100%}"
+    ".net .sig i.on{background:#238636}"
+    ".lock{font-size:.8rem;color:#8b949e}"
     "</style></head><body><main>"
-    "<h1>Clawdmeter setup</h1><p>Connect this device to your WiFi network.</p>";
+    "<h1>Configurar Clawdmeter</h1><p>Conecta este dispositivo a tu red WiFi.</p>";
 
 // The form + footer are static. The pairing-code block that belongs between the
 // two halves is runtime state, so handle_root() streams the page in three
-// Content-Length'd chunks rather than building a full-page String.
+// Content-Length'd chunks rather than building a full-page String. The scan
+// list and its inline JS stay in flash too and are rendered client-side.
 static const char PORTAL_HTML_TAIL[] PROGMEM =
+    "<section class=\"nets\">"
+    "<div class=\"nets-head\"><span>Redes disponibles</span>"
+    "<button type=\"button\" id=\"rescan\">Actualizar</button></div>"
+    "<div id=\"nets\" class=\"nets-list\"><p class=\"nets-msg\">Buscando redes&hellip;</p></div>"
+    "</section>"
     "<form method=\"POST\" action=\"/save\">"
-    "<label for=\"ssid\">Network name (SSID)</label>"
+    "<label for=\"ssid\">Red (SSID)</label>"
     "<input id=\"ssid\" name=\"ssid\" maxlength=\"63\" required autocapitalize=\"off\" "
     "autocorrect=\"off\" autocomplete=\"off\">"
-    "<label for=\"pass\">Password</label>"
+    "<label for=\"pass\">Contrase&ntilde;a</label>"
     "<input id=\"pass\" name=\"pass\" type=\"password\" maxlength=\"63\">"
-    "<button type=\"submit\">Save &amp; connect</button></form>"
-    "<p class=\"s\">Saved to this device only. If this page does not open "
-    "automatically, browse to <b>http://192.168.4.1</b></p>"
-    "</main></body></html>";
+    "<button type=\"submit\">Guardar y conectar</button></form>"
+    "<p class=\"s\">Guardado solo en este dispositivo. Si esta p&aacute;gina no se "
+    "abre sola, visita <b>http://192.168.4.1</b></p>"
+    "</main><script>(function(){"
+    "var nets=document.getElementById('nets'),rescan=document.getElementById('rescan'),"
+    "ssid=document.getElementById('ssid'),pass=document.getElementById('pass');"
+    "var tries=0,active=null;"
+    "function bars(r){return r>=-55?4:r>=-67?3:r>=-75?2:1;}"
+    "function msg(t){nets.textContent='';var p=document.createElement('p');"
+    "p.className='nets-msg';p.textContent=t;nets.appendChild(p);}"
+    "function row(n){var b=document.createElement('button');b.type='button';b.className='net';"
+    "var s=document.createElement('span');s.className='ssid';s.textContent=n.ssid;"
+    "var g=document.createElement('span');g.className='sig';var lv=bars(n.rssi);"
+    "for(var i=1;i<=4;i++){var e=document.createElement('i');if(i<=lv)e.className='on';"
+    "g.appendChild(e);}b.appendChild(s);b.appendChild(g);"
+    "if(n.sec){var k=document.createElement('span');k.className='lock';"
+    "k.textContent='\\uD83D\\uDD12';b.appendChild(k);}"
+    "b.onclick=function(){ssid.value=n.ssid;pass.focus();"
+    "if(active)active.classList.remove('on');b.classList.add('on');active=b;};return b;}"
+    "function render(list){nets.textContent='';"
+    "if(!list.length){msg('No se encontraron redes');return;}"
+    "for(var i=0;i<list.length;i++)nets.appendChild(row(list[i]));}"
+    "function fail(){msg('No se pudo escanear. Intenta de nuevo.');rescan.disabled=false;}"
+    "function poll(){fetch('/scan').then(function(r){return r.json();}).then(function(d){"
+    "if(d.state==='done'){render(d.nets||[]);rescan.disabled=false;}"
+    "else if(++tries<20){setTimeout(poll,500);}else{fail();}}).catch(fail);}"
+    "function startScan(){rescan.disabled=true;tries=0;active=null;"
+    "msg('Buscando redes\\u2026');"
+    "fetch('/scan?start=1').then(function(){poll();}).catch(fail);}"
+    "rescan.onclick=startScan;"
+    "document.addEventListener('DOMContentLoaded',startScan);"
+    "})();</script></body></html>";
 
 static const char SAVED_HTML[] PROGMEM =
     "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
     "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-    "<title>Saved</title><style>"
+    "<title>Guardado</title><style>"
     "body{font-family:system-ui,sans-serif;margin:0;background:#0d1117;color:#e6edf3;"
     "text-align:center}div{max-width:22rem;margin:10vh auto;padding:1.5rem}"
     "h1{font-size:1.25rem}p{color:#8b949e}</style></head><body><div>"
-    "<h1>Saved &#10003;</h1><p>Connecting to your network&hellip; "
-    "you can close this tab.</p></div></body></html>";
+    "<h1>Guardado &#10003;</h1><p>Conectando a tu red&hellip; "
+    "puedes cerrar esta pesta&ntilde;a.</p></div></body></html>";
 
 static const char ERROR_HTML[] PROGMEM =
     "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
     "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-    "<title>Missing SSID</title><style>"
+    "<title>Falta el nombre de la red</title><style>"
     "body{font-family:system-ui,sans-serif;margin:0;background:#0d1117;color:#e6edf3;"
     "text-align:center}div{max-width:22rem;margin:10vh auto;padding:1.5rem}"
     "a{color:#58a6ff}</style></head><body><div>"
-    "<h1>SSID required</h1><p>Please enter your network name.</p>"
-    "<p><a href=\"/\">Try again</a></p></div></body></html>";
+    "<h1>Falta el nombre de la red</h1><p>Escribe el nombre de tu red.</p>"
+    "<p><a href=\"/\">Reintentar</a></p></div></body></html>";
 
 // ---- State -----------------------------------------------------------------
 
@@ -128,6 +188,88 @@ static uint32_t s_deadline = 0;    // absolute ms: unattended auto-stop
 static uint32_t s_stop_at = 0;     // absolute ms: linger after a successful save
 static uint8_t  s_req = PORTAL_REQ_NONE;
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
+
+static uint32_t s_scan_started_ms = 0;  // 0 = no async scan tracked (WIFI-SCAN.md §4)
+
+// ---- WiFi scan (run on the loop task, never the NimBLE task) ----------------
+
+// Bounded, deduped-by-SSID scan result. The list never becomes one big heap
+// String: /scan streams it row by row with a small stack buffer.
+typedef struct {
+    char    ssid[33];
+    int32_t rssi;
+    bool    sec;
+} portal_net_t;
+
+static const char PORTAL_SCAN_JSON_PREFIX[] PROGMEM = "{\"state\":\"done\",\"nets\":[";
+static const char PORTAL_SCAN_JSON_SUFFIX[] PROGMEM = "]}";
+
+// Escape `src` into `dst` as the body of a JSON string. An SSID is an arbitrary
+// byte string, so quotes, backslashes and control characters must never be
+// emitted raw. `dst` must hold 6 bytes per input byte plus the NUL.
+static void json_escape(const char* src, char* dst, size_t cap) {
+    size_t o = 0;
+    for (const unsigned char* p = (const unsigned char*)src; *p; ++p) {
+        char tmp[8];
+        const char* rep = NULL;
+        size_t rl = 0;
+        if (*p == '"')       { rep = "\\\""; rl = 2; }
+        else if (*p == '\\') { rep = "\\\\"; rl = 2; }
+        else if (*p < 0x20)  { snprintf(tmp, sizeof(tmp), "\\u%04x", *p); rep = tmp; rl = strlen(tmp); }
+        if (rep) {
+            if (o + rl >= cap) break;
+            memcpy(dst + o, rep, rl);
+            o += rl;
+        } else {
+            if (o + 1 >= cap) break;
+            dst[o++] = (char)*p;
+        }
+    }
+    dst[o] = '\0';
+}
+
+// Insert one AP into the capped set: dedupe by SSID keeping the strongest RSSI
+// (with its sec flag), and once full replace the weakest entry only with a
+// strictly stronger new SSID, so the result is the top 24 by RSSI. Returns the
+// new count.
+static size_t scan_insert(portal_net_t* nets, size_t n, const char* ssid,
+                          int32_t rssi, bool sec) {
+    for (size_t i = 0; i < n; ++i) {
+        if (strcmp(nets[i].ssid, ssid) == 0) {
+            if (rssi > nets[i].rssi) { nets[i].rssi = rssi; nets[i].sec = sec; }
+            return n;
+        }
+    }
+    size_t slot = n;
+    if (n >= PORTAL_SCAN_MAX_NETS) {
+        slot = 0;
+        for (size_t i = 1; i < n; ++i)
+            if (nets[i].rssi < nets[slot].rssi) slot = i;
+        if (rssi <= nets[slot].rssi) return n;
+    }
+    snprintf(nets[slot].ssid, sizeof(nets[slot].ssid), "%s", ssid);
+    nets[slot].rssi = rssi;
+    nets[slot].sec = sec;
+    return (slot == n) ? n + 1 : n;
+}
+
+// Format one result as a JSON object into `row`; returns the bytes written
+// (the caller has already put the set in RSSI-descending order).
+static size_t scan_row_json(char* row, size_t cap, const portal_net_t* net) {
+    char esc[sizeof(net->ssid) * 6];
+    json_escape(net->ssid, esc, sizeof(esc));
+    int m = snprintf(row, cap, "{\"ssid\":\"%s\",\"rssi\":%ld,\"sec\":%s}",
+                     esc, (long)net->rssi, net->sec ? "true" : "false");
+    if (m < 0) return 0;
+    return ((size_t)m < cap) ? (size_t)m : cap - 1;
+}
+
+// Drop any tracked scan state. Called from every radio teardown path so the
+// next portal session starts clean (WIFI_OFF aborts a scan anyway).
+static void scan_reset(void) {
+    if (s_scan_started_ms) WiFi.scanDelete();
+    s_scan_started_ms = 0;
+}
 
 // ---- HTTP handlers (run on the loop task via portal_tick) -------------------
 
@@ -144,9 +286,10 @@ static void handle_root(void) {
         char codebuf[16];
         format_pair_code(code, codebuf, sizeof(codebuf));
         int n = snprintf(block, sizeof(block),
-            "<div class=\"pc\"><div class=\"k\">Pairing code</div>"
+            "<div class=\"pc\"><div class=\"k\">C&oacute;digo de emparejamiento</div>"
             "<div class=\"c\">%s</div>"
-            "<p class=\"e\">Enter this code with the owner tool to pair this device.</p>"
+            "<p class=\"e\">Introduce este c&oacute;digo con la herramienta del "
+            "propietario para emparejar el dispositivo.</p>"
             "</div>", codebuf);
         if (n > 0) block_len = ((size_t)n < sizeof(block)) ? (size_t)n : sizeof(block) - 1;
     }
@@ -173,6 +316,86 @@ static void handle_save(void) {
     Serial.printf("PORTAL: saved creds ssid=%s\n", ssid.c_str());
     s_http.send_P(200, "text/html", SAVED_HTML);
     s_stop_at = millis() + PORTAL_SAVE_LINGER_MS;
+}
+
+// GET /scan?start=1 — start an async scan unless one is already running. Async
+// (W1) so the blocking 2-4 s scan never stalls DNS/HTTP service.
+static void handle_scan_start(void) {
+    if (WiFi.scanComplete() != WIFI_SCAN_RUNNING) {
+        WiFi.scanNetworks(true, /*show_hidden=*/false);
+        s_scan_started_ms = millis();
+    }
+    s_http.send(200, "application/json", "{\"state\":\"scanning\"}");
+}
+
+// GET /scan — poll the async scan. When it finishes, build the deduped,
+// RSSI-sorted list, release the driver's copy and stream the JSON. 200 all the
+// way: "scanning" and "done" are both normal states for the poller.
+static void handle_scan_poll(void) {
+    int16_t found = WiFi.scanComplete();
+    if (found < 0) {
+        // Running, never started, or failed. If it overran its budget, drop it
+        // and report an empty list rather than polling forever.
+        if (s_scan_started_ms &&
+            (uint32_t)(millis() - s_scan_started_ms) > PORTAL_SCAN_STALE_MS) {
+            scan_reset();
+            s_http.send(200, "application/json", "{\"state\":\"done\",\"nets\":[]}");
+            return;
+        }
+        s_http.send(200, "application/json", "{\"state\":\"scanning\"}");
+        return;
+    }
+
+    portal_net_t nets[PORTAL_SCAN_MAX_NETS];
+    size_t n = 0;
+    for (int16_t i = 0; i < found; ++i) {
+        // Read the raw record: no per-network heap String (WIFI-SCAN.md §7).
+        wifi_ap_record_t* rec = (wifi_ap_record_t*)WiFiScanClass::getScanInfoByIndex(i);
+        if (!rec || rec->ssid[0] == '\0') continue;  // hidden/empty: not selectable
+        n = scan_insert(nets, n, (const char*)rec->ssid, rec->rssi,
+                        rec->authmode != WIFI_AUTH_OPEN);
+    }
+
+    // Strongest first; bounded selection sort (n <= 24).
+    for (size_t i = 0; i + 1 < n; ++i) {
+        size_t m = i;
+        for (size_t j = i + 1; j < n; ++j)
+            if (nets[j].rssi > nets[m].rssi) m = j;
+        if (m != i) { portal_net_t t = nets[i]; nets[i] = nets[m]; nets[m] = t; }
+    }
+
+    // `nets` is a private copy, so the driver's results can be released before
+    // streaming. Compute the exact Content-Length up front, then re-render each
+    // row into the same small stack buffer.
+    WiFi.scanDelete();
+    s_scan_started_ms = 0;
+
+    char row[256];
+    size_t row_len[PORTAL_SCAN_MAX_NETS];
+    size_t total = strlen_P(PORTAL_SCAN_JSON_PREFIX) +
+                   strlen_P(PORTAL_SCAN_JSON_SUFFIX);
+    for (size_t i = 0; i < n; ++i) {
+        row_len[i] = scan_row_json(row, sizeof(row), &nets[i]);
+        total += row_len[i];
+        if (i) total += 1;  // comma between objects
+    }
+
+    s_http.setContentLength(total);
+    s_http.send(200, "application/json", "");
+    s_http.sendContent_P(PORTAL_SCAN_JSON_PREFIX);
+    for (size_t i = 0; i < n; ++i) {
+        if (i) s_http.sendContent(",", 1);
+        scan_row_json(row, sizeof(row), &nets[i]);
+        s_http.sendContent(row, row_len[i]);
+    }
+    s_http.sendContent_P(PORTAL_SCAN_JSON_SUFFIX);
+}
+
+// The WebServer matches by path only, so GET /scan and GET /scan?start=1 share
+// this route; the presence of the query arg picks the start vs. poll behavior.
+static void handle_scan(void) {
+    if (s_http.hasArg("start")) handle_scan_start();
+    else                        handle_scan_poll();
 }
 
 // Every unknown path — including the OS captive-portal probes
@@ -207,7 +430,9 @@ static void portal_start_now(void) {
     const char* ssid = portal_ssid();
     IPAddress ip(192, 168, 4, 1);
 
-    WiFi.mode(WIFI_AP);
+    // AP_STA, not AP: the SoftAP stays up, and the STA interface lets the
+    // driver scan nearby networks for the portal list (WIFI-SCAN.md W2).
+    WiFi.mode(WIFI_AP_STA);
     WiFi.softAPConfig(ip, ip, IPAddress(255, 255, 255, 0));
     if (!WiFi.softAP(ssid)) {
         Serial.println("PORTAL: softAP failed");
@@ -225,6 +450,7 @@ static void portal_start_now(void) {
 }
 
 static void portal_stop_now(void) {
+    scan_reset();
     s_http.stop();
     s_dns.stop();
     // Only drop the radio if no OTA owner took it over in the meantime.
@@ -244,6 +470,7 @@ void portal_init(void) {
     // Register the handlers once; WebServer persists them across begin()/stop(),
     // so a later portal session only has to call begin() again.
     s_http.on("/", HTTP_GET, handle_root);
+    s_http.on("/scan", HTTP_GET, handle_scan);
     s_http.on("/save", HTTP_POST, handle_save);
     s_http.onNotFound(handle_probe);
     Serial.printf("PORTAL: init ssid=%s creds=%s\n",
@@ -286,6 +513,7 @@ void portal_tick(void) {
     // alone — the OTA owner tears it down itself.
     if (ota_is_active() || ota_pull_is_active()) {
         Serial.println("PORTAL: OTA active — closing portal");
+        scan_reset();
         s_http.stop();
         s_dns.stop();
         s_active = false;

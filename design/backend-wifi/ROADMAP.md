@@ -73,6 +73,9 @@ which requires physical proximity.
 - **SoftAP + captive portal**, triggered automatically when no credentials are
   stored (and on demand afterwards). The device advertises `Clawdmeter-XXXX` and
   serves a page to pick the network and enter the password.
+- The page **scans and lists the nearby networks** so the owner taps one instead
+  of typing the SSID, with manual entry kept as a fallback. Contract:
+  [`WIFI-SCAN.md`](WIFI-SCAN.md).
 - The portal also relays the pairing code.
 - iOS does not reliably auto-open the portal; the device screen must show the
   manual `http://192.168.4.1` fallback.
