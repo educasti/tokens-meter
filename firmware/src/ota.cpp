@@ -68,6 +68,15 @@ static bool     s_boot_confirmed = false;
 
 const char* ota_version(void) { return FW_VERSION; }
 
+const char* ota_stored_ssid(void) { return s_ssid; }
+
+bool ota_wifi_connected(void) { return WiFi.status() == WL_CONNECTED; }
+
+int ota_wifi_rssi(void) {
+    if (WiFi.status() != WL_CONNECTED) return 0;
+    return WiFi.RSSI();
+}
+
 // ---- NVS: credenciales de WiFi ---------------------------------------------
 
 static void load_creds(void) {

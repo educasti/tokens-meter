@@ -2,6 +2,7 @@
 #include "splash.h"
 #include "ui_opencode.h"
 #include "ui_portfolio.h"
+#include "ui_sys.h"
 #include "oc_splash.h"
 #include "ota.h"
 #include "ota_pull.h"
@@ -407,6 +408,7 @@ static void format_reset_time(int mins, char* buf, size_t len) {
 
 // Declaraciones adelantadas: los callbacks se definen junto a ui_show_screen, abajo
 static void global_click_cb(lv_event_t* e);
+static void sys_gesture_cb(lv_event_t* e);   // Command Center: gestos a nivel de ciclo
 
 // ======== Indicador de página ========
 // Una franja transparente de ancho completo abajo; los puntos nunca se quedan
@@ -783,6 +785,7 @@ static void init_usage_screen(lv_obj_t* scr) {
 
 void ui_init(void) {
     compute_layout(board_caps());
+    sys_init_lazy();   // Command Center: barato, sin LVGL (SPEC §9)
 
     lv_obj_t* scr = lv_screen_active();
     lv_obj_set_style_bg_color(scr, COL_BG, 0);
@@ -797,7 +800,12 @@ void ui_init(void) {
 
     init_usage_screen(scr);
     splash_init(scr);
-    oc_usage_init(scr);
+    // La pantalla de uso de OpenCode se construye de forma perezosa, en el primer
+    // ui_show_screen, igual que el portfolio de abajo: construirla aquí con todo
+    // lo demás agota el heap LVGL y no deja sitio al overlay del Command Center
+    // (seis pantallas de objetos de golpe en 480x480). La pantalla solo entra al
+    // ciclo cuando llega un payload, que es justo cuando el usuario la encendió;
+    // mientras tanto oc_usage_update() guarda la copia y redraw() no hace nada.
     // La pantalla del portfolio se construye de forma perezosa, en el primer
     // ui_show_screen, y no aquí: cinco pantallas de objetos LVGL de golpe agotan
     // el heap interno en las placas de 480x480, y el siguiente malloc dentro de
@@ -806,9 +814,6 @@ void ui_init(void) {
 
     if (splash_get_root()) {
         lv_obj_add_event_cb(splash_get_root(), global_click_cb, LV_EVENT_CLICKED, NULL);
-    }
-    if (oc_usage_get_root()) {
-        lv_obj_add_event_cb(oc_usage_get_root(), global_click_cb, LV_EVENT_CLICKED, NULL);
     }
 
     // Mascota de la esquina en la vieja ranura del logo. El Clawd quieto es más
@@ -831,6 +836,9 @@ void ui_init(void) {
     battery_img = lv_image_create(scr);
     lv_image_set_src(battery_img, &battery_dscs[0]);
     lv_obj_set_pos(battery_img, L.scr_w - L.batt_w - L.margin, L.batt_y);
+    // El tap sobre la batería también burbujea a la pantalla: con el overlay
+    // abierto cierra (está al frente con él), sin overlay no hace nada.
+    lv_obj_add_flag(battery_img, LV_OBJ_FLAG_EVENT_BUBBLE);
     // Las placas sin telemetría de batería nunca muestran el indicador (según el
     // contrato del HAL; antes todas las placas dibujaban el glifo de batería
     // vacía).
@@ -843,6 +851,11 @@ void ui_init(void) {
     // se mantengan legibles sobre lo que cada pantalla dibuja en su borde inferior.
     build_page_dots(scr);
     lv_obj_move_foreground(dots_root);
+
+    // Command Center: escucha de gestos a nivel de ciclo (§3.1), no por pantalla.
+    lv_obj_add_event_cb(scr, sys_gesture_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(scr, sys_gesture_cb, LV_EVENT_GESTURE, NULL);
+    lv_obj_add_event_cb(scr, sys_gesture_cb, LV_EVENT_CLICKED, NULL);
 }
 
 static void ui_update_impl(const UsageData* data, bool external);
@@ -996,6 +1009,16 @@ void ui_tick_anim(void) {
     // pantallas de OpenCode, y las de OpenCode y del portfolio mantienen sus
     // propias líneas de estado andando mientras están visibles.
     tick_page_dots();
+    sys_tick();   // Command Center: lectura en vivo en cualquier pantalla
+    // La batería es de ui.cpp y se conserva arriba a la derecha con el overlay
+    // abierto (§3.3): el overlay opaco la taparía, así que al abrir vuelve al
+    // frente (cubre la apertura por gesto y la programática del sim).
+    {
+        static bool sys_open_seen = false;
+        bool open = sys_is_open();
+        if (open && !sys_open_seen && battery_img) lv_obj_move_foreground(battery_img);
+        sys_open_seen = open;
+    }
     if (current_screen == SCREEN_OC_USAGE) oc_usage_tick();
     if (current_screen == SCREEN_PORTFOLIO) pf_usage_tick();
     if (current_screen != SCREEN_USAGE) return;
@@ -1136,9 +1159,43 @@ static void apply_battery_visibility(void) {
     else                                        lv_obj_clear_flag(battery_img, LV_OBJ_FLAG_HIDDEN);
 }
 
+// ---- Command Center (design/command-center/SPEC.md §3) ----
+// Overlay fuera del ciclo: no entra a screen_t, no llama show_page_dots() y no
+// cambia la navegación. Un solo handler a nivel de ciclo (no uno por pantalla):
+// en PRESSED guarda la y, en GESTURE abre (borde superior hacia abajo) o cierra
+// (hacia arriba en cualquier y). Los gestos suben hasta la pantalla por el
+// gesture_bubble que LVGL activa por defecto en cada hijo, así que basta con
+// escuchar en lv_screen_active().
+#define SYS_EDGE_Y 60   // el gesto de apertura empieza en el borde superior
+static int16_t sys_press_y = -1;   // y del último PRESSED, -1 = ninguno aún
+
+static void sys_gesture_cb(lv_event_t* e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    lv_indev_t* indev = lv_event_get_indev(e);
+    if (!indev) return;
+    if (code == LV_EVENT_PRESSED) {
+        lv_point_t p;
+        lv_indev_get_point(indev, &p);
+        sys_press_y = p.y;
+    } else if (code == LV_EVENT_GESTURE) {
+        lv_dir_t dir = lv_indev_get_gesture_dir(indev);
+        if (!sys_is_open() && dir == LV_DIR_BOTTOM &&
+            sys_press_y >= 0 && sys_press_y < SYS_EDGE_Y) {
+            sys_show();   // abre sobre la pantalla activa, la de abajo intacta
+        } else if (sys_is_open() && dir == LV_DIR_TOP) {
+            sys_hide();
+        }
+    } else if (code == LV_EVENT_CLICKED) {
+        // El tap sobre el overlay solo cierra, sin burbuja a global_click_cb.
+        if (sys_is_open()) sys_hide();
+    }
+}
+
 // SPEC.md §6: un toque en cualquier lugar avanza un paso en el ciclo.
 static void global_click_cb(lv_event_t* e) {
     (void)e;
+    // Con el overlay abierto el tap solo cierra, no navega (§3.2).
+    if (sys_is_open()) { sys_hide(); return; }
     ui_next_screen();
 }
 
@@ -1231,6 +1288,13 @@ void ui_show_screen(screen_t screen) {
         oc_splash_start();
         break;
     case SCREEN_OC_USAGE:
+        // Primera visita: construye la pantalla (perezosa, ver ui_init) y la muestra.
+        if (!oc_usage_get_root()) {
+            oc_usage_init(lv_screen_active());
+            if (oc_usage_get_root()) {
+                lv_obj_add_event_cb(oc_usage_get_root(), global_click_cb, LV_EVENT_CLICKED, NULL);
+            }
+        }
         oc_usage_show();
         break;
     case SCREEN_PORTFOLIO:

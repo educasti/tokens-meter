@@ -42,3 +42,8 @@ void ota_confirm(void);
 
 // Firmware version string baked in at build time (-DFW_VERSION="...").
 const char* ota_version(void);
+
+// Command Center live radios (design/command-center/SPEC.md section 7).
+const char* ota_stored_ssid(void);  // NVS "otah" credential, "" if none
+bool ota_wifi_connected(void);      // STA associated right now
+int  ota_wifi_rssi(void);           // dBm, 0 when down

@@ -6,6 +6,7 @@
 #include "../../oc_data.h"
 #include "../../pf_data.h"
 #include "../../ui.h"
+#include "../../ui_sys.h"
 #include "sim_platform.h"
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -100,6 +101,7 @@ static void refresh_title(void) {
 // one), or after 1500 ms so a single-kind scenario still starts.
 static screen_t start_target = SCREEN_COUNT;
 static bool start_screen_done = false;
+static bool start_sys = false;   // SIM_START_SCREEN=sys: abre el overlay tras los payloads
 
 static void init_start_screen(void) {
     const char* want = getenv("SIM_START_SCREEN");
@@ -110,6 +112,7 @@ static void init_start_screen(void) {
     else if (!strcmp(want, "oc_splash")) start_target = SCREEN_OC_SPLASH;
     else if (!strcmp(want, "oc_usage"))  start_target = SCREEN_OC_USAGE;
     else if (!strcmp(want, "portfolio")) start_target = SCREEN_PORTFOLIO;
+    else if (!strcmp(want, "sys"))       start_sys = true;
     else {
         printf("[sim] SIM_START_SCREEN: unknown screen '%s'\n", want);
         start_screen_done = true;
@@ -120,6 +123,14 @@ static void start_screen_tick(void) {
     if (start_screen_done) return;
     if ((seen_claude && seen_oc && seen_pf) || millis() >= 1500) {
         start_screen_done = true;
+        if (start_sys) {
+            // El overlay no es una pantalla del ciclo: se abre sobre una
+            // pantalla de datos (la batería de ui.cpp solo vive en ellas).
+            printf("[sim] SIM_START_SCREEN -> sys\n");
+            ui_show_screen(SCREEN_USAGE);
+            sys_show();
+            return;
+        }
         printf("[sim] SIM_START_SCREEN -> %d\n", (int)start_target);
         ui_show_screen(start_target);
         // The dots are the only on-screen proof of where we are in the cycle

@@ -1,5 +1,6 @@
 #pragma once
 #include <stdbool.h>
+#include <stdint.h>
 
 // Pull-based automatic OTA engine. Contract: design/ota-pull/DESIGN.md section
 // 7 (state machine) and design/ota-pull/IMPL.md section 2.3.
@@ -31,3 +32,31 @@ bool ota_pull_is_active(void);
 // State name for logs/UI: "idle" | "join" | "sntp" | "manifest" | "download" |
 // "verify" | "activate" | "reboot".
 const char* ota_pull_state_name(void);
+
+// Command Center UI snapshot (design/command-center/SPEC.md section 7).
+// Transport-free: shared UI code includes this header on every board.
+enum ota_ui_result_t {
+    OTA_UI_UNKNOWN,
+    OTA_UI_UP_TO_DATE,
+    OTA_UI_AVAILABLE,
+    OTA_UI_ERROR,
+    OTA_UI_REBOOTING,
+};
+
+struct OtaUiSnapshot {
+    uint8_t  result;      // ota_ui_result_t
+    char     ver[16];     // available version, "" if none
+    long     size;        // image bytes
+    int      pct;         // last %, -1 if none
+    uint32_t rate_bps;    // last measured rate, 0 unknown
+    uint32_t eta_s;       // seconds remaining, 0 unknown
+    char     err[16];     // short code, "" if none
+    uint32_t ms;          // millis() of last update, 0 = never
+};
+
+// Copy the snapshot under the mux. Call from the loop task.
+void ota_pull_ui_snapshot(OtaUiSnapshot* out);
+
+// Enqueue a check / apply with from_ble=false. Call from the loop task.
+void ota_pull_request_check(void);
+void ota_pull_request_apply(void);

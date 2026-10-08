@@ -10,6 +10,9 @@
 // primer payload de OpenCode, y el portfolio hasta el primero de "k":"pf", así
 // que un dispositivo que nunca recibe ninguno de los dos se comporta igual que
 // antes.
+// Pantallas del ciclo de navegación. El Command Center NO está aquí: es un
+// overlay fuera del ciclo (ver ui_sys.h) que se abre con gesto desde cualquier
+// pantalla y se cierra con gesto o toque, sin tocar ciclo, dots ni navegación.
 enum screen_t {
     SCREEN_SPLASH,
     SCREEN_USAGE,

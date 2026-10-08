@@ -9,6 +9,7 @@
 
 #include "data.h"
 #include "ui.h"
+#include "ui_sys.h"
 #include "ble.h"
 #include "ota.h"
 #include "ota_pull.h"
@@ -195,9 +196,14 @@ static void check_serial_cmd() {
             // update triggered) when the Bluetooth link is unavailable.
             else if (cmd_buf[0] == '{') ota_handle_ctrl(cmd_buf);
             else if (strcmp(cmd_buf, "heap") == 0) {
+#ifndef BOARD_SIM
                 Serial.printf("HEAP free=%u max=%u psram_free=%u psram_max=%u\n",
                     (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap(),
                     (unsigned)ESP.getFreePsram(), (unsigned)ESP.getMaxAllocPsram());
+#else
+                // El sim nativo no tiene ESP ni PSRAM: el comando existe pero no informa.
+                Serial.println("HEAP unsupported in sim");
+#endif
             }
             else if (strcmp(cmd_buf, "lvmem") == 0) {
                 lv_mem_monitor_t mon;
@@ -477,8 +483,10 @@ void loop() {
                     if (b.hid_sent) {
                         ble_keyboard_release();
                     } else if (!b.wake_swallowed) {
-                        if (b.nav_dir < 0) ui_prev_screen();
-                        else               ui_next_screen();
+                        // Con el overlay abierto el tap solo cierra, no navega.
+                        if (sys_is_open()) sys_hide();
+                        else if (b.nav_dir < 0) ui_prev_screen();
+                        else                    ui_next_screen();
                     }
                 }
                 b.down = now;
@@ -501,9 +509,10 @@ void loop() {
 
         if (power_hal_pwr_pressed()) {
             if (!idle_consume_wake_press()) {
-                // Each screen with something of its own cycles it; the rest get
-                // the brightness, which is global and persistent anyway.
-                switch (ui_get_current_screen()) {
+                // Con el overlay abierto PWR acciona el Command Center (§3.4);
+                // nunca brillo aquí. El resto queda intacto.
+                if (sys_is_open()) sys_pwr_action();
+                else switch (ui_get_current_screen()) {
                 case SCREEN_SPLASH:     splash_next(); break;
                 case SCREEN_OC_SPLASH:  oc_splash_next_scene(); break;
                 case SCREEN_PORTFOLIO:  pf_privacy_toggle(); break;

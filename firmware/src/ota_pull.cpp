@@ -182,6 +182,13 @@ static uint8_t  s_chk_fail = 0;   // comprobaciones fallidas consecutivas
 static char     s_etag[ETAG_MAX + 1] = { 0 };
 static uint32_t s_next_sched_ms = 0;   // regulación del sondeo de planificación NVS/hora
 
+// ---- Espejo de UI para el Command Center (command-center/SPEC.md §7) --------
+// Solo lectura para la interfaz: cada pull_send_* refleja el resultado en s_ui
+// bajo s_ui_mux; la tarea del loop lo copia con ota_pull_ui_snapshot().
+// `busy`/`bad_json` son respuestas de protocolo, no resultados: no se reflejan.
+static OtaUiSnapshot s_ui = { 0, "", 0, -1, 0, 0, "", 0 };
+static portMUX_TYPE  s_ui_mux = portMUX_INITIALIZER_UNLOCKED;
+
 // ---- Ayudas pequeñas -------------------------------------------------------
 
 static void pull_send(const char* json) {
@@ -193,17 +200,45 @@ static void pull_send_err(const char* err) {
     char buf[96];
     snprintf(buf, sizeof(buf), "{\"ok\":false,\"err\":\"%s\"}", err ? err : "unknown");
     pull_send(buf);
+    // Espejo §7: busy/bad_json son respuestas de protocolo, no resultados.
+    if (err && (strcmp(err, "busy") == 0 || strcmp(err, "bad_json") == 0)) return;
+    portENTER_CRITICAL(&s_ui_mux);
+    s_ui.result = OTA_UI_ERROR;
+    strlcpy(s_ui.err, err ? err : "unknown", sizeof(s_ui.err));
+    s_ui.rate_bps = 0;
+    s_ui.eta_s = 0;
+    s_ui.ms = millis();
+    portEXIT_CRITICAL(&s_ui_mux);
 }
 
 static void pull_send_checking(void) {
     pull_send("{\"ok\":true,\"cmd\":\"update\",\"state\":\"checking\"}");
+    // Espejo §7: limpia pct/tasa/err y conserva el resultado previo.
+    portENTER_CRITICAL(&s_ui_mux);
+    s_ui.pct = -1;
+    s_ui.rate_bps = 0;
+    s_ui.eta_s = 0;
+    s_ui.err[0] = '\0';
+    s_ui.ms = millis();
+    portEXIT_CRITICAL(&s_ui_mux);
 }
 
 static void pull_send_up_to_date(const char* ver) {
+    (void)ver;
     char buf[128];
     snprintf(buf, sizeof(buf),
              "{\"ok\":true,\"cmd\":\"update\",\"state\":\"up_to_date\",\"version\":\"%s\"}", ver);
     pull_send(buf);
+    portENTER_CRITICAL(&s_ui_mux);
+    s_ui.result = OTA_UI_UP_TO_DATE;
+    s_ui.ver[0] = '\0';
+    s_ui.size = 0;
+    s_ui.pct = -1;
+    s_ui.rate_bps = 0;
+    s_ui.eta_s = 0;
+    s_ui.err[0] = '\0';
+    s_ui.ms = millis();
+    portEXIT_CRITICAL(&s_ui_mux);
 }
 
 static void pull_send_available(const char* ver, long size) {
@@ -212,6 +247,16 @@ static void pull_send_available(const char* ver, long size) {
              "{\"ok\":true,\"cmd\":\"update\",\"state\":\"available\",\"version\":\"%s\",\"size\":%ld}",
              ver, size);
     pull_send(buf);
+    portENTER_CRITICAL(&s_ui_mux);
+    s_ui.result = OTA_UI_AVAILABLE;
+    strlcpy(s_ui.ver, ver ? ver : "", sizeof(s_ui.ver));
+    s_ui.size = size;
+    s_ui.pct = -1;
+    s_ui.rate_bps = 0;
+    s_ui.eta_s = 0;
+    s_ui.err[0] = '\0';
+    s_ui.ms = millis();
+    portEXIT_CRITICAL(&s_ui_mux);
 }
 
 // "Actualización <versión>" en la línea transitoria de la interfaz cuando hay
@@ -225,14 +270,43 @@ static void pull_ui_available(const char* ver) {
 
 static void pull_send_downloading(int pct) {
     ui_ota_status("Actualizando", pct);   // línea transitoria; nunca bloquea al worker
+    portENTER_CRITICAL(&s_ui_mux);
+    s_ui.pct = pct;
+    s_ui.ms = millis();
+    portEXIT_CRITICAL(&s_ui_mux);
     char buf[96];
     snprintf(buf, sizeof(buf),
              "{\"ok\":true,\"cmd\":\"update\",\"state\":\"downloading\",\"pct\":%d}", pct);
     pull_send(buf);
 }
 
+// Tasa/ETA del Command Center (SPEC §7): bps = total*1000/elapsed en uint64_t,
+// eta = restante/bps. Se llama junto a pull_send_downloading(pct).
+static void pull_mirror_rate(long total, long size, uint32_t started) {
+    uint32_t now = millis();
+    uint32_t elapsed = now - started;
+    uint32_t bps = 0, eta = 0;
+    if (elapsed > 0 && total > 0) {
+        uint64_t b = (uint64_t)(uint32_t)total * 1000u / (uint64_t)elapsed;
+        if (b > 0) {
+            bps = (b > (uint64_t)0xFFFFFFFFu) ? 0xFFFFFFFFu : (uint32_t)b;
+            eta = (uint32_t)((uint64_t)(uint32_t)(size - total) / b);
+        }
+    }
+    portENTER_CRITICAL(&s_ui_mux);
+    s_ui.rate_bps = bps;
+    s_ui.eta_s = eta;
+    s_ui.ms = now;
+    portEXIT_CRITICAL(&s_ui_mux);
+}
+
 static void pull_send_verifying(void) {
     pull_send("{\"ok\":true,\"cmd\":\"update\",\"state\":\"verifying\"}");
+    portENTER_CRITICAL(&s_ui_mux);
+    s_ui.rate_bps = 0;
+    s_ui.eta_s = 0;
+    s_ui.ms = millis();
+    portEXIT_CRITICAL(&s_ui_mux);
 }
 
 static void pull_send_rebooting(const char* ver) {
@@ -240,6 +314,15 @@ static void pull_send_rebooting(const char* ver) {
     snprintf(buf, sizeof(buf),
              "{\"ok\":true,\"cmd\":\"update\",\"state\":\"rebooting\",\"version\":\"%s\"}", ver);
     pull_send(buf);
+    portENTER_CRITICAL(&s_ui_mux);
+    s_ui.result = OTA_UI_REBOOTING;
+    strlcpy(s_ui.ver, ver ? ver : "", sizeof(s_ui.ver));
+    s_ui.pct = 100;
+    s_ui.rate_bps = 0;
+    s_ui.eta_s = 0;
+    s_ui.err[0] = '\0';
+    s_ui.ms = millis();
+    portEXIT_CRITICAL(&s_ui_mux);
 }
 
 static bool pull_load_creds(char* ssid, size_t sn, char* pass, size_t pn) {
@@ -650,6 +733,7 @@ static bool pull_download_once(dl_ctx* c, const OtaManifest& mf) {
         int pct = (int)((total * 100) / (mf.size > 0 ? mf.size : 1));
         if (pct != last_pct && (pct == 100 || pct - last_pct >= 5)) {
             last_pct = pct;
+            pull_mirror_rate(total, mf.size, started);
             pull_send_downloading(pct);
         }
     }
@@ -1110,3 +1194,27 @@ const char* ota_pull_state_name(void) {
     default:          return "idle";
     }
 }
+
+void ota_pull_ui_snapshot(OtaUiSnapshot* out) {
+    if (!out) return;
+    portENTER_CRITICAL(&s_ui_mux);
+    *out = s_ui;
+    portEXIT_CRITICAL(&s_ui_mux);
+}
+
+// Petición local del Command Center (SPEC §7): encola check/apply con
+// from_ble=false. Corre en la tarea del loop; el mux cubre a la tarea BLE.
+static void pull_request_local(bool apply) {
+    pull_req_t req = {};
+    req.apply = apply;
+    req.force = false;
+    req.from_ble = false;
+    req.to[0] = '\0';
+    portENTER_CRITICAL(&s_ctrl_mux);
+    s_ctrl_req = req;
+    s_ctrl_pending = true;
+    portEXIT_CRITICAL(&s_ctrl_mux);
+}
+
+void ota_pull_request_check(void) { pull_request_local(false); }
+void ota_pull_request_apply(void) { pull_request_local(true); }
