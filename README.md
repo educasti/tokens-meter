@@ -462,6 +462,44 @@ See
 [`design/ota-pull/deploy/RUNBOOK.md`](design/ota-pull/deploy/RUNBOOK.md) §4–§5
 for setting the secrets and verifying a release.
 
+### Releasing a new version (maintainer)
+
+The CI is the only path that produces a signed, installable image. A local
+`pio run` does **not** have the operator material (see the note below) and would
+ship a fail-closed image, so a release is always a tag push:
+
+1. Merge the change into `main` and push it.
+2. Tag the commit and push the tag (the next `X.Y.Z`):
+
+   ```bash
+   git tag -a v0.2.11 -m "…"
+   git push origin main v0.2.11
+   ```
+
+3. `Publish OTA` builds with the real cert + manifest URL + backend base, signs
+   the manifest and publishes it to the VM. The tag's version must equal the
+   version `firmware/scripts/version.py` stamps, or the workflow fails
+   (`version mismatch`).
+4. A device on WiFi pulls the new image on its next boot, or within 24 h. The
+   [hybrid path](#firmware-updates-hybrid-ota) stays the manual fallback.
+
+Verify a publish by fetching the manifest and comparing hashes:
+
+```bash
+curl -s https://<host>/firmware/waveshare_amoled_216/manifest.json
+# then sha256sum the <url> binary and compare to "sha256"
+```
+
+**Operator material is untracked and per worktree.** `firmware/certs/`
+(`pinned_server.pem`, `signing_pubkey.pem`, `usage_backend.json`) is gitignored,
+so it exists only where it was created — typically the `main` worktree, not a
+fresh branch worktree. A fresh worktree therefore builds with the fail-closed
+placeholder certificate and the `https://ota.invalid/firmware` default: no pull
+OTA and no WiFi usage pull. **Do not flash such a build.** Either copy
+`firmware/certs/` in and pass
+`-DOTA_PULL_MANIFEST_URL="https://<host>/firmware"` (as the CI does), or let the
+CI build and publish it.
+
 ## Development
 
 <img src="assets/readme/crab.gif" width="120" align="right" alt="">
