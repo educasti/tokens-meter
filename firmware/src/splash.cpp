@@ -9,31 +9,33 @@
 #include <string.h>
 #include <esp_heap_caps.h>
 
-// 60×60 stage. CELL sized so the canvas fits the smaller display dimension —
-// the canvas is square and centered, so on portrait or letterboxed panels
-// it leaves vertical margin rather than cropping. On PSRAM-less boards the
-// buffer is rendered tiny (cell == 1) and LVGL scales it up to fill the panel;
-// the geometry decision lives in splash_compute_geometry() (splash_geometry.h).
+// Escenario de 60×60. cell se dimensiona para que el lienzo quepa en la
+// dimensión menor de la pantalla — el lienzo es cuadrado y está centrado, así
+// que en paneles verticales o con bandas negras deja margen vertical en lugar
+// de recortar. En placas sin PSRAM el búfer se renderiza diminuto (cell == 1)
+// y LVGL lo escala para llenar el panel; la decisión de geometría vive en
+// splash_compute_geometry() (splash_geometry.h).
 //
-// Animations are stored as bounding-box crops of the official 55×37 art stage
-// (see tools/convert_official_clawd.js); compose_stage() places the current
-// frame centered on the 60×60 stage. The oversized stage leaves room to later
-// translate animations across the screen (walks, lurking).
+// Las animaciones se guardan como recortes de su caja envolvente sobre el
+// escenario de arte oficial de 55×37 (ver tools/convert_official_clawd.js);
+// compose_stage() coloca el fotograma actual centrado en el escenario de 60×60.
+// El escenario sobredimensionado deja sitio para después desplazar las
+// animaciones por la pantalla (paseos, asomadas).
 #define GRID         SPLASH_GRID
-static int  cell      = 8;         // recomputed in splash_init()
+static int  cell      = 8;         // se recalcula en splash_init()
 static int  canvas_w  = GRID * 8;
 static int  canvas_h  = GRID * 8;
 
-// Splash background: true black (matches THEME_BG and palette index 0
-// emitted by tools/convert_official_clawd.js). Used for the stage margins
-// and as palette fallback.
+// Fondo del splash: negro puro (coincide con THEME_BG y con el índice 0 de
+// paleta que emite tools/convert_official_clawd.js). Se usa para los márgenes
+// del escenario y como paleta de reserva.
 #define COL_EMPTY    0x0000
 
 LV_FONT_DECLARE(font_styrene_28);
 
 static lv_obj_t *splash_container = NULL;
 static lv_obj_t *canvas = NULL;
-static lv_obj_t *label_status = NULL;     // shown only when no animations loaded
+static lv_obj_t *label_status = NULL;     // solo visible si no hay animaciones cargadas
 static uint16_t *canvas_buf = NULL;        // 480x480 RGB565 (PSRAM)
 
 static uint16_t cur_anim = 0;
@@ -42,17 +44,19 @@ static uint32_t frame_started_ms = 0;
 static uint32_t last_pick_ms = 0;
 static bool active = false;
 
-// Another module owns the canvas right now (oc_splash). Clawd's state is left
-// untouched — only the advance is gated — so it resumes mid-pose afterwards.
+// Otro módulo es dueño del lienzo ahora mismo (oc_splash). El estado de Clawd
+// se deja intacto — solo se bloquea el avance — así que después continúa desde
+// la pose en la que se quedó.
 static bool external = false;
 
-// While splash is showing, auto-cycle to the next animation in the current
-// rate-driven group every this many ms.
+// Mientras el splash está visible, pasar automáticamente a la siguiente
+// animación del grupo actual (el que dicta el ritmo de consumo) cada estos ms.
 #define SPLASH_ROTATE_INTERVAL_MS 20000
 
-// Usage-rate animation groups: 4 groups × up to 4 animations each.
-// Filled at init by matching literal names from splash_anims[].
-// (jumping is the only unassigned animation — still reachable via splash_next.)
+// Grupos de animación por ritmo de consumo: 4 grupos × hasta 4 animaciones
+// cada uno. Se rellenan al iniciar emparejando los nombres literales de
+// splash_anims[]. (jumping es la única animación sin asignar — sigue
+// alcanzable mediante splash_next.)
 #define GROUP_COUNT 4
 #define GROUP_MAX   4
 static int8_t  group_lists[GROUP_COUNT][GROUP_MAX];
@@ -60,77 +64,85 @@ static uint8_t group_size[GROUP_COUNT] = {0};
 static uint8_t group_rotation[GROUP_COUNT] = {0};
 
 static const char* GROUP_NAMES[GROUP_COUNT][GROUP_MAX] = {
-    // Group 0 — idle / sleepy (calm, investigative). Magnifier first: it's
-    // the boot pick, and lurking-first would boot to a near-empty screen.
+    // Grupo 0 — reposo / adormilado (tranquilo, curioso). Magnifier primero:
+    // es la elección de arranque, y empezar por lurking dejaría la pantalla
+    // casi vacía al encender.
     { "magnifier", "walking", "pointing", "lurking" },
-    // Group 1 — normal pace
+    // Grupo 1 — ritmo normal
     { "crab walking", "waving", "trumpet", "basketball" },
-    // Group 2 — active (typing along with you)
+    // Grupo 2 — activo (tecleando contigo)
     { "laptop", "dancing", "skateboard", "soccer" },
-    // Group 3 — heavy burn (high-energy rides + the most exuberant jump)
+    // Grupo 3 — consumo fuerte (escenas de mucha energía + el salto más
+    // expansivo)
     { "racing car", "cloud", "sailing scene", "jumping happy" },
 };
 
-// Scratch stage: the current animation frame composed centered onto the full
-// 60×60 grid (index 0 = background elsewhere). 3.6 KB of static RAM.
+// Escenario de trabajo: el fotograma actual de la animación compuesto y
+// centrado sobre la rejilla completa de 60×60 (índice 0 = fondo). 3,6 KB de RAM
+// estática.
 static uint8_t stage_cells[GRID * GRID];
 
-// The official 55×37 art stage sits at a fixed anchor on the 60×60 grid, and
-// every animation is placed at its authored stage offset (ox/oy) — never
-// centered per-animation. All animations share one idle-Clawd position
-// (x 15..38, y 21..36 in stage cells), so transitions between them are
-// seamless; centering per-crop would make the still pose jump around.
+// El escenario de arte oficial de 55×37 se ancla en una posición fija de la
+// rejilla de 60×60, y cada animación se coloca en su desplazamiento original
+// dentro del escenario (ox/oy) — nunca centrada una por una. Todas las
+// animaciones comparten la misma posición de reposo de Clawd (x 15..38,
+// y 21..36 en celdas del escenario), así que las transiciones entre ellas son
+// continuas; centrar cada recorte haría saltar la pose de reposo.
 #define STAGE_ANCHOR_X ((GRID - 55) / 2)
 #define STAGE_ANCHOR_Y ((GRID - 37) / 2)
 
-// ─── Playback: intro → loop → outro ─────────────────────────────────────────
-// Every animation carries a loop region (converter-detected gait cycles and
-// scene middles; whole file when nothing repeats). Playback holds the loop
-// until released — walkers release on arrival at their target x, scenes after
-// SCENE_LOOP_MS — then the outro (pack-away, gait exit) plays and the
-// animation completes on its idle bookend. Rotation never hard-cuts: it
-// releases the loop and switches after the outro, so transitions always
-// happen from the shared idle pose.
-static bool     pb_done = false;        // completed; holding idle frame 0
+// ─── Reproducción: intro → bucle → outro ───────────────────────────────────
+// Cada animación trae una región de bucle (ciclos de paso detectados por el
+// conversor y tramos medios de escena; el archivo entero cuando nada se
+// repite). La reproducción mantiene el bucle hasta que se libera — los
+// caminantes lo liberan al llegar a su x destino, las escenas tras
+// SCENE_LOOP_MS — y entonces suena el outro (recogida, salida del paso) y la
+// animación termina en su pose de reposo. La rotación nunca corta en seco:
+// libera el bucle y cambia después del outro, así que las transiciones ocurren
+// siempre desde la pose de reposo compartida.
+static bool     pb_done = false;        // terminada; mantiene el fotograma 0 de reposo
 static bool     in_loop = false;
 static bool     loop_release = false;
 static uint32_t loop_entered_ms = 0;
-static bool     pending_pick = false;   // rotate requested; honor at completion
+static bool     pending_pick = false;   // rotación pedida; se aplica al terminar
 #define SCENE_LOOP_MS 6000
 
-// ─── Walk translation ────────────────────────────────────────────────────────
-// The walk gaits animate in place; screen travel is ours, locked to the feet:
-// per-frame movement equals the measured backward drift of the planted feet,
-// so planted feet stay put on screen.
-//   crab walking (8-frame scuttle loop [1..8]): surges of 1 cell entering
-//     frames 4, 5, 8 and the cycle wrap — 4 cells / 640 ms (6.25 cells/s).
-//   walking (5-frame waddle loop [2..6]): 1,1,1,1,2 cells → 6 cells / 450 ms
-//     (~13.3 cells/s).
-// walk_begin(target) plays intro → gait loop, clamps to land exactly on the
-// target, then releases the loop so the gait exits and Clawd stands. When
-// walking left the frame is mirrored (eyes lead); facing persists standing.
-// DEMO: until the BLE-driven state machine exists, a choreography loops
-// stand → right edge → off-screen left → re-enter home.
+// ─── Desplazamiento al caminar ──────────────────────────────────────────────
+// Las marchas animan en el sitio; el recorrido por pantalla es nuestro,
+// anclado a los pies: el movimiento por fotograma equivale a la deriva hacia
+// atrás medida en los pies apoyados, así los pies apoyados no se mueven en
+// pantalla.
+//   crab walking (bucle de 8 fotogramas [1..8]): impulsos de 1 celda al entrar
+//     en los fotogramas 4, 5, 8 y al cerrar el ciclo — 4 celdas / 640 ms
+//     (6,25 celdas/s).
+//   walking (bucle de 5 fotogramas [2..6]): 1,1,1,1,2 celdas → 6 celdas /
+//     450 ms (~13,3 celdas/s).
+// walk_begin(target) reproduce intro → bucle de marcha, se ajusta para caer
+// exactamente en el destino y luego libera el bucle para que la marcha salga y
+// Clawd se quede de pie. Al caminar hacia la izquierda el fotograma se espeja
+// (los ojos van delante); la orientación se mantiene al estar de pie.
+// DEMO: hasta que exista la máquina de estados por BLE, una coreografía repite
+// de pie → borde derecho → fuera de pantalla por la izquierda → volver a casa.
 enum WalkKind { WALK_NONE, WALK_CRAB, WALK_FRONT };
 static WalkKind walk_kind = WALK_NONE;
 static bool    walk_active = false;
-static int     walk_x = 0;         // stage x of the frame origin, may be < 0
-static int     walk_dir = 0;       // -1 left, +1 right, 0 standing
+static int     walk_x = 0;         // x del origen del fotograma en el escenario, puede ser < 0
+static int     walk_dir = 0;       // -1 izquierda, +1 derecha, 0 de pie
 static int     walk_target = 0;
 static uint8_t walk_phase = 0;
 static uint32_t walk_phase_started = 0;
-static int     walk_home_x = 0;    // authored position to return to
-static int     walk_face = +1;     // facing, kept while standing (-1 = left)
+static int     walk_home_x = 0;    // posición original a la que volver
+static int     walk_face = +1;     // orientación, se conserva de pie (-1 = izquierda)
 
-// Cells the body moves when the gait advances INTO `frame` (see banner).
+// Celdas que avanza el cuerpo cuando la marcha entra EN `frame` (ver cabecera).
 static int walk_gait_cells_k(WalkKind kind, uint16_t frame, bool from_loop) {
     if (kind == WALK_CRAB) {
-        if (frame == 1) return from_loop ? 1 : 0;     // cycle wrap, mid-surge
+        if (frame == 1) return from_loop ? 1 : 0;     // cierre del ciclo, a impulso
         return (frame == 4 || frame == 5 || frame == 8) ? 1 : 0;
     }
     if (kind == WALK_FRONT) {
-        if (frame < 2 || frame > 6) return 0;         // idle / wind-up / outro
-        if (frame == 2 && !from_loop) return 0;       // first plant
+        if (frame < 2 || frame > 6) return 0;         // reposo / preparación / outro
+        if (frame == 2 && !from_loop) return 0;       // primer apoyo
         return (frame == 6) ? 2 : 1;
     }
     return 0;
@@ -156,15 +168,15 @@ static void anim_reset(const splash_anim_def_t *a) {
     walk_face = +1;
     walk_phase = 0;
     walk_phase_started = millis();
-    pb_done = true;    // walkers start standing; the choreography sets off
+    pb_done = true;    // los caminantes empiezan de pie; la coreografía arranla
 }
 
 static const uint8_t* compose_stage(const splash_anim_def_t *a, uint16_t frame);
 static void render_frame(const uint8_t *cells, const uint16_t *palette);
 
-// Start walking toward `target` (stage x of the frame origin).
+// Empieza a caminar hacia target (x del origen del fotograma en el escenario).
 static void walk_begin(int target) {
-    if (target == walk_x) return;          // already there; stay standing
+    if (target == walk_x) return;          // ya está ahí; se queda de pie
     walk_target = target;
     walk_dir = (target > walk_x) ? +1 : -1;
     walk_face = walk_dir;
@@ -175,27 +187,27 @@ static void walk_begin(int target) {
     in_loop = false;
 }
 
-// Demo choreography: advance phases whenever the current walk has completed.
+// Coreografía de demo: avanza de fase cada vez que termina la caminata actual.
 static void walk_choreo(const splash_anim_def_t *a) {
     if (!pb_done) return;
     const uint32_t now = millis();
     switch (walk_phase) {
-        case 0:  // standing at home
+        case 0:  // de pie en casa
             if (now - walk_phase_started > 1200) { walk_phase = 1; walk_begin(GRID - a->w); }
             break;
-        case 1:  // arrived at the right edge
+        case 1:  // llegado al borde derecho
             walk_phase = 2; walk_phase_started = now;
             break;
-        case 2:  // standing at the edge
+        case 2:  // de pie en el borde
             if (now - walk_phase_started > 1200) { walk_phase = 3; walk_begin(-a->w); }
             break;
-        case 3:  // fully off-screen left
+        case 3:  // fuera de pantalla por la izquierda
             walk_phase = 4; walk_phase_started = now;
             break;
-        case 4:  // hold off-screen (empty stage)
+        case 4:  // pausa fuera de pantalla (escenario vacío)
             if (now - walk_phase_started > 800) { walk_phase = 5; walk_begin(walk_home_x); }
             break;
-        case 5:  // back home
+        case 5:  // de vuelta en casa
             walk_phase = 0; walk_phase_started = now;
             break;
     }
@@ -203,11 +215,12 @@ static void walk_choreo(const splash_anim_def_t *a) {
 
 static const uint8_t* compose_stage(const splash_anim_def_t *a, uint16_t frame) {
     memset(stage_cells, 0, sizeof(stage_cells));
-    // Horizontal edge snap: art touching its canvas's left/right edge was
-    // designed to hang off that edge (lurking peeks in from the left), so it
-    // goes to the true screen edge instead of the anchored stage edge. Not
-    // applied vertically — every animation touches the stage bottom, and
-    // vertical placement should stay anchored (rounded panel corners).
+    // Ajuste al borde horizontal: el arte que toca el borde izquierdo o derecho
+    // de su lienzo está pensado para colgarse de ese borde (lurking asoma desde
+    // la izquierda), así que va al borde real de la pantalla en lugar del borde
+    // anclado del escenario. No se aplica en vertical — todas las animaciones
+    // tocan el suelo del escenario, y la colocación vertical debe seguir
+    // anclada (esquinas redondeadas del panel).
     int ax = STAGE_ANCHOR_X + a->ox;
     if (a->ox == 0)           ax = 0;
     if (a->ox + a->w == 55)   ax = GRID - a->w;
@@ -218,7 +231,7 @@ static const uint8_t* compose_stage(const splash_anim_def_t *a, uint16_t frame) 
     for (int r = 0; r < a->h; r++) {
         const int dy = ay + r;
         if (dy < 0 || dy >= GRID) continue;
-        int c0 = 0, c1 = a->w;                 // clip for partial off-screen x
+        int c0 = 0, c1 = a->w;                 // recorte para x parcialmente fuera de pantalla
         if (ax + c0 < 0)     c0 = -ax;
         if (ax + c1 > GRID)  c1 = GRID - ax;
         if (c0 >= c1) continue;
@@ -249,21 +262,24 @@ static void resolve_group_lists(void) {
     }
 }
 
-static uint16_t *row_buf = NULL;   // scratch row, sized to canvas_w (PSRAM path)
+static uint16_t *row_buf = NULL;   // fila de trabajo, del tamaño de canvas_w (ruta PSRAM)
 
-// ─── Two render paths ────────────────────────────────────────────────────────
-// PSRAM boards (S3) draw the pixel art into an LVGL canvas at native size and
-// let LVGL flush it — they have the RAM and cores to spare, no transform needed.
+// ─── Dos rutas de renderizado ──────────────────────────────────────────────
+// Las placas con PSRAM (S3) dibujan el pixel art en un lienzo LVGL a tamaño
+// real y dejan que LVGL lo vuelque a la pantalla — tienen RAM y núcleos de
+// sobra, no hace falta ninguna transformación.
 //
-// PSRAM-less boards (C6) can't hold a 480×480 canvas. The prior approach (tiny
-// 20×20 canvas + LVGL image-scale) made LVGL software-transform the whole
-// upscaled frame on every redraw — measured ~0.76 µs/output-px, i.e. 100–220 ms
-// per frame on the single-core C6, and partial invalidation of a transformed
-// image both fails to clip the transform and smears. Instead we upscale the
-// stage cells ourselves with trivial nearest-neighbour replication and push only
-// the *changed* cells straight to the panel via the display HAL, bypassing LVGL.
-// That removes the transform cost (leaving just the QSPI flush) and the
-// dirty-rect is exact, so no smearing.
+// Las placas sin PSRAM (C6) no pueden albergar un lienzo de 480×480. El
+// enfoque anterior (lienzo diminuto de 20×20 + image-scale de LVGL) obligaba a
+// LVGL a transformar por software el fotograma completo escalado en cada
+// redibujado — medido en ~0,76 µs/px de salida, es decir 100–220 ms por
+// fotograma en el C6 de un solo núcleo, y la invalidación parcial de una imagen
+// transformada ni recorta la transformación ni evita el arrastre. En su lugar
+// escalamos nosotros las celdas del escenario con una replicación simple al
+// vecino más próximo y enviamos solo las celdas *cambiadas* directamente al
+// panel por el HAL de pantalla, sin pasar por LVGL. Eso elimina el coste de la
+// transformación (queda solo el volcado QSPI) y el rectángulo sucio es exacto,
+// así que no hay arrastre.
 #ifndef BOARD_HAS_PSRAM
 #  define SPLASH_DIRECT_DRAW 1
 #else
@@ -271,25 +287,26 @@ static uint16_t *row_buf = NULL;   // scratch row, sized to canvas_w (PSRAM path
 #endif
 
 #if SPLASH_DIRECT_DRAW
-static uint16_t*       strip_buf = NULL;   // one grid-row band: (GRID*scr_cell)×scr_cell
-static int             scr_cell  = 24;     // on-screen px per grid cell
-static int             scr_offx  = 0;      // centering offsets (square art on panel)
+static uint16_t*       strip_buf = NULL;   // una banda de fila de la rejilla: (GRID*scr_cell)×scr_cell
+static int             scr_cell  = 24;     // px en pantalla por celda de la rejilla
+static int             scr_offx  = 0;      // desplazamientos de centrado (arte cuadrado en el panel)
 static int             scr_offy  = 0;
 static uint8_t         prev_cells[GRID * GRID];
 static const uint16_t* prev_palette = NULL;
-static uint16_t        prev_pal[SPLASH_PALETTE_MAX];   // last palette seen, by value
+static uint16_t        prev_pal[SPLASH_PALETTE_MAX];   // última paleta vista, valor a valor
 static bool            prev_valid   = false;
-static bool            force_full   = false;  // repaint everything on the next render
-// External frame waiting for the deferred repaint below (see
-// splash_render_external); the caller's buffers stay alive between ticks.
+static bool            force_full   = false;  // repinta todo en el siguiente render
+// Fotograma externo esperando el repintado diferido de más abajo (ver
+// splash_render_external); los búferes del emisor siguen vivos entre ticks.
 static const uint8_t*  ext_cells    = NULL;
 static const uint16_t* ext_palette  = NULL;
 static bool            ext_pending  = false;
 
-// The dirty rect below compares cell *values*, which is only meaningful while an
-// index keeps its colour. An external owner may rewrite its palette in place
-// between frames (it owns the buffer), so a changed palette forces a full
-// repaint. 64 bytes of shadow, compared per frame.
+// El rectángulo sucio de abajo compara los *valores* de las celdas, lo que solo
+// tiene sentido mientras un índice conserva su color. Un dueño externo puede
+// reescribir su paleta en el sitio entre fotogramas (el búfer es suyo), así que
+// una paleta que cambia fuerza un repintado completo. 64 bytes de sombra,
+// comparados en cada fotograma.
 static bool palette_remapped(const uint16_t* palette) {
     if (!palette) return false;
     for (int i = 0; i < SPLASH_PALETTE_MAX; i++)
@@ -297,22 +314,23 @@ static bool palette_remapped(const uint16_t* palette) {
     return false;
 }
 
-// Upscale grid cells [gx0..gx1]×[gy0..gy1] and push them to the panel, one
-// grid-row band at a time so the scratch buffer stays (GRID*scr_cell × scr_cell).
+// Escala las celdas de la rejilla [gx0..gx1]×[gy0..gy1] y las envía al panel,
+// una banda de fila de cada vez, para que el búfer de trabajo siga siendo
+// (GRID*scr_cell × scr_cell).
 static void blit_cells(const uint8_t* cells, const uint16_t* palette,
                        int gx0, int gy0, int gx1, int gy1) {
     if (!strip_buf) return;
     const int spc = scr_cell;
-    const int bw  = (gx1 - gx0 + 1) * spc;          // band width, px
+    const int bw  = (gx1 - gx0 + 1) * spc;          // ancho de la banda, px
     const int px  = scr_offx + gx0 * spc;
     for (int gy = gy0; gy <= gy1; gy++) {
-        for (int gx = gx0; gx <= gx1; gx++) {       // expand one source row across
+        for (int gx = gx0; gx <= gx1; gx++) {       // expande una fila de origen hacia los lados
             uint8_t code = cells[gy * GRID + gx];
             uint16_t color = (palette && code < SPLASH_PALETTE_MAX) ? palette[code] : COL_EMPTY;
             uint16_t* p = &strip_buf[(gx - gx0) * spc];
             for (int i = 0; i < spc; i++) p[i] = color;
         }
-        for (int dy = 1; dy < spc; dy++)             // replicate that row down
+        for (int dy = 1; dy < spc; dy++)             // replica esa fila hacia abajo
             memcpy(&strip_buf[dy * bw], strip_buf, bw * 2);
         display_hal_draw_bitmap(px, scr_offy + gy * spc, bw, spc, strip_buf);
     }
@@ -320,13 +338,13 @@ static void blit_cells(const uint8_t* cells, const uint16_t* palette,
 
 static void render_frame(const uint8_t *cells, const uint16_t *palette) {
     if (!strip_buf) return;
-    if (!active) return;          // never draw to the panel while not shown
+    if (!active) return;          // nunca dibuja en el panel mientras no se muestra
     bool full = force_full || !prev_valid ||
                 palette != prev_palette || palette_remapped(palette);
     force_full = false;
 
     int gx0 = 0, gy0 = 0, gx1 = GRID - 1, gy1 = GRID - 1;
-    if (!full) {                                     // bounding box of changed cells
+    if (!full) {                                     // caja envolvente de las celdas que cambiaron
         gx0 = GRID; gy0 = GRID; gx1 = -1; gy1 = -1;
         for (int gy = 0; gy < GRID; gy++)
             for (int gx = 0; gx < GRID; gx++)
@@ -336,7 +354,7 @@ static void render_frame(const uint8_t *cells, const uint16_t *palette) {
                     if (gy < gy0) gy0 = gy;
                     if (gy > gy1) gy1 = gy;
                 }
-        if (gx1 < 0) return;                         // identical frame, nothing to do
+        if (gx1 < 0) return;                         // fotograma idéntico, nada que hacer
     }
 
     blit_cells(cells, palette, gx0, gy0, gx1, gy1);
@@ -347,7 +365,7 @@ static void render_frame(const uint8_t *cells, const uint16_t *palette) {
     prev_valid   = true;
 }
 
-#else  // ── PSRAM: LVGL canvas render (unchanged) ──
+#else  // ── PSRAM: render en lienzo LVGL (sin cambios) ──
 
 static void render_frame(const uint8_t *cells, const uint16_t *palette) {
     if (!row_buf || !canvas_buf) return;
@@ -366,13 +384,14 @@ static void render_frame(const uint8_t *cells, const uint16_t *palette) {
 }
 #endif
 
-// ---- Mini creature: a small animated creature for embedding in other screens
-//      (e.g. the idle "sleeping" indicator). Self-contained — its own canvas and
-//      buffer, independent of the full-screen splash above. ----
+// ---- Criatura mini: una criatura animada pequeña para incrustar en otras
+//      pantallas (p. ej. el indicador de reposo). Es autónoma — su propio lienzo
+//      y su propio búfer, independiente del splash de pantalla completa de
+//      arriba. ----
 static lv_obj_t  *mini_canvas = NULL;
 static uint16_t  *mini_buf = NULL;
 static int        mini_cell = 0;
-static int        mini_w = 0;      // canvas px, mini_anim->w * mini_cell
+static int        mini_w = 0;      // px del lienzo, mini_anim->w * mini_cell
 static int        mini_h = 0;
 static const splash_anim_def_t *mini_anim = NULL;
 static uint16_t   mini_frame = 0;
@@ -430,21 +449,22 @@ void splash_mini_tick(void) {
     mini_render();
 }
 
-// ─── Corner mascot (usage screen) ────────────────────────────────────────────
-// The corner logo slot, alive: the still Clawd idles, occasionally does a
-// small act (waving, dancing, pointing) in place, and every few acts walks
-// off the left edge, does the full-size lurking animation over the screen,
-// and walks back into the slot. PSRAM boards only (ui.cpp falls back to the
-// static clawd_still.h icon on the C6); driven by splash_mascot_tick() from
-// the main loop, independent of the splash screen itself.
+// ─── Mascota de esquina (pantalla de consumo) ───────────────────────────────
+// El hueco del logo de la esquina, con vida: el Clawd quieto espera, de vez en
+// cuando hace un gesto pequeño (saludar, bailar, señalar) en su sitio, y cada
+// unos cuantos gestos se sale por el borde izquierdo, hace la animación lurking
+// a tamaño completo sobre la pantalla y vuelve andando a su hueco. Solo en
+// placas con PSRAM (ui.cpp usa el icono estático clawd_still.h en la C6); la
+// mueve splash_mascot_tick() desde el bucle principal, con independencia del
+// propio splash.
 static lv_obj_t *mas_img = NULL;
 static lv_obj_t *mas_lurk_img = NULL;
-static uint8_t  *mas_buf = NULL;       // planar RGB565A8, sized for largest act
+static uint8_t  *mas_buf = NULL;       // RGB565A8 planar, del tamaño del gesto más grande
 static uint8_t  *mas_lurk_buf = NULL;
 static lv_image_dsc_t mas_dsc, mas_lurk_dsc;
 static int  mas_cell = 3;
-static int  mas_slot_x = 0;            // px of the slot (walk-in target)
-static int  mas_feet_y = 0;            // px feet line (all art is bottom-anchored)
+static int  mas_slot_x = 0;            // px del hueco (destino de la vuelta andando)
+static int  mas_feet_y = 0;            // px de la línea de pies (todo el arte se apoya en el suelo)
 static int  mas_lurk_cell = 8;
 static int  mas_screen_w = 480;
 static bool mas_visible = false;
@@ -455,20 +475,21 @@ static const splash_anim_def_t *mas_anim = NULL;
 static uint16_t mas_frame = 0;
 static uint32_t mas_frame_started = 0;
 static uint32_t mas_mode_started = 0;
-static int  mas_x = 0;                 // widget x, px (may be off-screen)
+static int  mas_x = 0;                 // x del widget, px (puede quedar fuera de pantalla)
 static int  mas_face = +1;
 static uint8_t mas_act_idx = 0;
 static bool mas_from_loop = false;
 
-// The corner mascot mirrors the splash's excitement: per usage-rate group,
-// how long he idles between acts and which acts he does. "lurking" means the
-// walk-off / full-size-lurk / walk-back trip. Acts must fit the 28×21-cell
-// buffer (jumps are too tall for the corner).
+// La mascota de esquina refleja el ánimo del splash: por cada grupo de ritmo de
+// consumo, cuánto espera entre gestos y qué gestos hace. lurking es el viaje de
+// salir andando / asomar a tamaño completo / volver andando. Los gestos tienen
+// que caber en el búfer de 28×21 celdas (los saltos son demasiado altos para la
+// esquina).
 static const char* MAS_ACTS_BY_RATE[4][4] = {
-    { "pointing", "lurking", NULL,       NULL      },   // idle: sparse, sneaky
+    { "pointing", "lurking", NULL,       NULL      },   // reposo: espaciado y furtivo
     { "waving",   "lurking", "pointing", NULL      },   // normal
-    { "waving",   "dancing", "lurking",  NULL      },   // active
-    { "dancing",  "waving",  "dancing",  "lurking" },   // heavy: can't sit still
+    { "waving",   "dancing", "lurking",  NULL      },   // activo
+    { "dancing",  "waving",  "dancing",  "lurking" },   // consumo fuerte: no puede estarse quieto
 };
 static const uint16_t MAS_STILL_MS_BY_RATE[4] = { 10000, 7000, 5000, 3500 };
 
@@ -478,8 +499,8 @@ static const splash_anim_def_t* anim_by_name(const char *n) {
     return NULL;
 }
 
-// Render one frame into a planar RGB565A8 image (alpha 0 outside the art) and
-// anchor the widget on the shared feet line.
+// Renderiza un fotograma en una imagen planar RGB565A8 (alfa 0 fuera del arte) y
+// ancla el widget en la línea de pies compartida.
 static void mas_render(const splash_anim_def_t *a, uint16_t frame, bool mirror,
                        lv_image_dsc_t *dsc, uint8_t *buf, lv_obj_t *img,
                        int cell, int x, int feet_y) {
@@ -511,7 +532,7 @@ static void mas_render(const splash_anim_def_t *a, uint16_t frame, bool mirror,
 }
 
 static void mas_show_still(void) {
-    mas_anim = anim_by_name("walking");     // frame 0 == the official still pose
+    mas_anim = anim_by_name("walking");     // el fotograma 0 es la pose oficial de reposo
     mas_frame = 0;
     mas_mode = MAS_STILL;
     mas_mode_started = millis();
@@ -527,7 +548,7 @@ lv_obj_t* splash_mascot_create(lv_obj_t *parent, int slot_x, int feet_y, int cel
     mas_slot_x = slot_x;
     mas_feet_y = feet_y;
     mas_screen_w = board_caps().width;
-    // Buffer for the largest act bbox (pointing, 28×21 cells).
+    // Búfer para la caja envolvente del gesto más grande (pointing, 28×21 celdas).
     const size_t mas_bytes = (size_t)(28 * cell) * (21 * cell) * 3;
     const splash_anim_def_t *lurk = anim_by_name("lurking");
     const BoardCaps& c = board_caps();
@@ -553,11 +574,12 @@ void splash_mascot_set_visible(bool v) {
     if (!mas_img) return;
     if (v) {
         lv_obj_clear_flag(mas_img, LV_OBJ_FLAG_HIDDEN);
-        // The mascot walks over everything — keep him above later-created
-        // siblings (battery icon, labels) whenever he's shown.
+        // La mascota pasa por encima de todo — déjala por delante de sus
+        // hermanas creadas después (icono de batería, etiquetas) siempre que se
+        // muestre.
         lv_obj_move_foreground(mas_img);
         if (mas_lurk_img) lv_obj_move_foreground(mas_lurk_img);
-        mas_show_still();                       // restart clean at the slot
+        mas_show_still();                       // reinicio limpio en su hueco
     } else {
         lv_obj_add_flag(mas_img, LV_OBJ_FLAG_HIDDEN);
         if (mas_lurk_img) lv_obj_add_flag(mas_lurk_img, LV_OBJ_FLAG_HIDDEN);
@@ -565,8 +587,9 @@ void splash_mascot_set_visible(bool v) {
 }
 
 void splash_mascot_tick(void) {
-    // While an external owner has the splash canvas, the corner slot is off the
-    // Clawd splash anyway — stay put rather than animate over it.
+    // Mientras un dueño externo tiene el lienzo del splash, el hueco de la
+    // esquina queda fuera del splash de Clawd — mejor quedarse quieta que
+    // animar por encima.
     if (external) return;
     if (!mas_img || !mas_visible || !mas_anim) return;
     const uint32_t now = millis();
@@ -582,7 +605,7 @@ void splash_mascot_tick(void) {
         mas_frame = 0;
         mas_frame_started = now;
         mas_from_loop = false;
-        if (strcmp(act, "lurking") == 0 && mas_lurk_img) {   // the lurk trip
+        if (strcmp(act, "lurking") == 0 && mas_lurk_img) {   // el viaje de asomarse
             mas_anim = anim_by_name("walking");
             mas_face = -1;
             mas_mode = MAS_WALK_OFF;
@@ -603,21 +626,21 @@ void splash_mascot_tick(void) {
     uint16_t next = mas_frame + 1;
     const bool walking_mode = (mas_mode == MAS_WALK_OFF || mas_mode == MAS_WALK_IN);
     if (walking_mode && mas_frame == a->loop_end)
-        next = a->loop_start;                       // walk: hold the gait loop
+        next = a->loop_start;                       // al caminar: mantén el bucle de la marcha
 
-    if (next >= a->frame_count) {                   // act / lurk finished
+    if (next >= a->frame_count) {                   // gesto / asomada terminada
         if (mas_mode == MAS_LURK) {
             lv_obj_add_flag(mas_lurk_img, LV_OBJ_FLAG_HIDDEN);
             mas_anim = anim_by_name("walking");
             mas_frame = 0;
             mas_from_loop = false;
-            mas_face = -1;                          // he lurked on the right,
-            mas_x = mas_screen_w;                   // so he re-enters from it
+            mas_face = -1;                          // se asomó por la derecha,
+            mas_x = mas_screen_w;                   // así que vuelve desde ahí
             mas_mode = MAS_WALK_IN;
             lv_obj_clear_flag(mas_img, LV_OBJ_FLAG_HIDDEN);
             return;
         }
-        mas_show_still();                           // acts end on the idle pose
+        mas_show_still();                           // los gestos acaban en la pose de reposo
         return;
     }
 
@@ -628,14 +651,15 @@ void splash_mascot_tick(void) {
 
     if (walking_mode && mas_from_loop) {
         const int step = walk_gait_cells_k(WALK_FRONT, mas_frame, from_loop) * mas_cell;
-        // Walk-off always exits left; walk-in heads toward the slot from
-        // whichever side he's on (right, after the lurk trip).
+        // La salida siempre se va por la izquierda; la vuelta se dirige al hueco
+        // desde el lado en el que esté (la derecha, tras la asomada).
         const int dir = (mas_mode == MAS_WALK_OFF) ? -1
                         : (mas_x < mas_slot_x ? +1 : -1);
         mas_face = (mas_mode == MAS_WALK_OFF) ? -1 : dir;
         mas_x += dir * step;
         if (mas_mode == MAS_WALK_OFF && mas_x <= -a->w * mas_cell) {
-            // Fully off: hide the corner sprite, run the full-size lurk.
+            // Fuera del todo: oculta el sprite de la esquina y lanza la asomada a
+            // tamaño completo.
             lv_obj_add_flag(mas_img, LV_OBJ_FLAG_HIDDEN);
             const splash_anim_def_t *lurk = anim_by_name("lurking");
             if (lurk && mas_lurk_img && mas_lurk_buf) {
@@ -644,21 +668,22 @@ void splash_mascot_tick(void) {
                 mas_mode = MAS_LURK;
                 lv_obj_clear_flag(mas_lurk_img, LV_OBJ_FLAG_HIDDEN);
                 lv_obj_move_foreground(mas_lurk_img);
-                // He left stage left, so he peeks in from the RIGHT edge —
-                // mirrored at render time (the art is authored left-edge).
+                // Salió por la izquierda, así que asoma por el borde DERECHO —
+                // espejado al renderizar (el arte está dibujado para el borde
+                // izquierdo).
                 mas_render(lurk, 0, true, &mas_lurk_dsc, mas_lurk_buf,
                            mas_lurk_img, mas_lurk_cell,
                            mas_screen_w - lurk->w * mas_lurk_cell,
                            (STAGE_ANCHOR_Y + lurk->oy + lurk->h) * mas_lurk_cell);
             } else {
-                mas_mode = MAS_WALK_IN;             // no lurk asset: turn back
+                mas_mode = MAS_WALK_IN;             // no hay material de lurking: dar la vuelta
                 mas_face = +1;
             }
             return;
         }
         if (mas_mode == MAS_WALK_IN &&
             ((dir > 0 && mas_x >= mas_slot_x) || (dir < 0 && mas_x <= mas_slot_x))) {
-            mas_show_still();                       // arrived: settle in the slot
+            mas_show_still();                       // llegó: se acomoda en su hueco
             return;
         }
     }
@@ -674,9 +699,9 @@ void splash_mascot_tick(void) {
 }
 
 static void show_placeholder() {
-    // Solid dark background + centered status label. On the direct-draw path
-    // there's no canvas; the black container is the background and the LVGL
-    // label shows over it.
+    // Fondo oscuro sólido + etiqueta de estado centrada. En la ruta de dibujo
+    // directo no hay lienzo; el contenedor negro es el fondo y la etiqueta LVGL
+    // se dibuja encima.
 #if !SPLASH_DIRECT_DRAW
     if (canvas_buf) {
         for (int i = 0; i < canvas_w * canvas_h; i++) canvas_buf[i] = COL_EMPTY;
@@ -689,7 +714,7 @@ static void show_placeholder() {
 void splash_init(lv_obj_t *parent) {
     const BoardCaps& c = board_caps();
 
-    // Shared full-screen black container — the splash background.
+    // Contenedor negro compartido a pantalla completa — el fondo del splash.
     splash_container = lv_obj_create(parent);
     lv_obj_set_size(splash_container, c.width, c.height);
     lv_obj_set_pos(splash_container, 0, 0);
@@ -700,10 +725,10 @@ void splash_init(lv_obj_t *parent) {
     lv_obj_clear_flag(splash_container, LV_OBJ_FLAG_SCROLLABLE);
 
 #if SPLASH_DIRECT_DRAW
-    // Direct-to-panel path (no PSRAM): no LVGL canvas. Compute on-screen cell
-    // size + centering, and a scratch band buffer sized for one grid-row strip
-    // across the square art (GRID*scr_cell × scr_cell). On the C6 that's
-    // 480×24×2 ≈ 23 KB of internal SRAM.
+    // Ruta directa al panel (sin PSRAM): sin lienzo LVGL. Calcula el tamaño de
+    // celda en pantalla + el centrado, y un búfer de banda de trabajo del ancho
+    // de una tira de fila de la rejilla sobre el arte cuadrado
+    // (GRID*scr_cell × scr_cell). En la C6 son 480×24×2 ≈ 23 KB de SRAM interna.
     int mind = (c.width < c.height) ? c.width : c.height;
     scr_cell = mind / GRID;
     int side = GRID * scr_cell;
@@ -716,7 +741,7 @@ void splash_init(lv_obj_t *parent) {
         return;
     }
 #else
-    // PSRAM path: render into an LVGL canvas at native size (no transform).
+    // Ruta PSRAM: renderiza en un lienzo LVGL a tamaño real (sin transformación).
     SplashGeometry geo = splash_compute_geometry(c.width, c.height, true);
     cell                = geo.cell;
     canvas_w            = geo.canvas_dim;
@@ -740,11 +765,12 @@ void splash_init(lv_obj_t *parent) {
     lv_obj_center(canvas);
 #endif
 
-    // Placeholder label (visible only when no animations are loaded)
+    // Etiqueta de marcador de posición (visible solo si no hay animaciones
+    // cargadas)
     label_status = lv_label_create(splash_container);
     lv_label_set_text(label_status,
-        "no animations loaded\n\n"
-        "run tools/convert_official_clawd.js");
+        "sin animaciones cargadas\n\n"
+        "ejecuta tools/convert_official_clawd.js");
     lv_obj_set_style_text_font(label_status, &font_styrene_28, 0);
     lv_obj_set_style_text_color(label_status, lv_color_hex(0xb0aea5), 0);
     lv_obj_set_style_text_align(label_status, LV_TEXT_ALIGN_CENTER, 0);
@@ -757,9 +783,10 @@ void splash_init(lv_obj_t *parent) {
     } else {
         lv_obj_add_flag(label_status, LV_OBJ_FLAG_HIDDEN);
 #if !SPLASH_DIRECT_DRAW
-        // PSRAM path pre-renders frame 0 into the canvas buffer. The direct
-        // path draws nothing here — render_frame() bails while inactive, so the
-        // splash never paints to the panel before it's actually shown.
+        // La ruta PSRAM prerrenderiza el fotograma 0 en el búfer del lienzo. La
+        // ruta directa no dibuja nada aquí — render_frame() se sale mientras está
+        // inactiva, así que el splash nunca pinta en el panel antes de mostrarse
+        // de verdad.
         const splash_anim_def_t *a = &splash_anims[0];
         render_frame(compose_stage(a, 0), a->palette);
 #endif
@@ -771,9 +798,10 @@ void splash_init(lv_obj_t *parent) {
 
 void splash_tick(void) {
 #if SPLASH_DIRECT_DRAW
-    // Deferred full repaint after a (re)show — runs now that LVGL has drawn the
-    // black background this loop iteration. An external owner delivers its own
-    // frame here; otherwise Clawd repaints its current pose.
+    // Repintado completo diferido tras (volver a) mostrar — se ejecuta ahora
+    // que LVGL ha dibujado el fondo negro en esta iteración del bucle. Un dueño
+    // externo entrega aquí su propio fotograma; si no, Clawd repinta su pose
+    // actual.
     if (force_full || ext_pending) {
         if (external) {
             if (ext_pending) render_frame(ext_cells, ext_palette);
@@ -785,7 +813,7 @@ void splash_tick(void) {
     }
 #endif
 
-    if (external) return;          // canvas is owned elsewhere; Clawd is frozen
+    if (external) return;          // el lienzo es de otro; Clawd se congela
     if (!active || SPLASH_ANIM_COUNT == 0) return;
     const uint32_t now = millis();
 
@@ -794,46 +822,47 @@ void splash_tick(void) {
 
     if (walk_active) walk_choreo(a);
 
-    // Scenes: hold the loop for SCENE_LOOP_MS, then let the outro play.
+    // Escenas: mantiene el bucle SCENE_LOOP_MS y luego deja sonar el outro.
     if (!walk_active && in_loop && !loop_release &&
         now - loop_entered_ms >= SCENE_LOOP_MS)
         loop_release = true;
 
-    // Auto-rotate — never a hard cut. Walkers switch only while standing at
-    // home; everything else releases its loop and switches after the outro.
+    // Rotación automática — nunca un corte seco. Los caminantes cambian solo
+    // estando de pie en casa; todo lo demás libera su bucle y cambia después del
+    // outro.
     if (now - last_pick_ms >= SPLASH_ROTATE_INTERVAL_MS) {
         if (walk_active) {
             if (walk_phase == 0 && pb_done) splash_pick_for_current_rate();
         } else {
             loop_release = true;
             pending_pick = true;
-            last_pick_ms = now;    // don't re-fire while the outro plays
+            last_pick_ms = now;    // no vuelvas a disparar mientras suena el outro
         }
     }
 
-    if (pb_done) return;                       // holding the idle frame
+    if (pb_done) return;                       // mantiene el fotograma de reposo
     if (now - frame_started_ms < a->holds[cur_frame]) return;
 
-    // Advance one frame through intro → loop → outro.
+    // Avanza un fotograma por intro → bucle → outro.
     const bool from_loop = in_loop;
     uint16_t next = cur_frame + 1;
     if (cur_frame == a->loop_end && !loop_release)
         next = a->loop_start;
 
-    if (next >= a->frame_count) {              // completed the file
+    if (next >= a->frame_count) {              // se completó el archivo
         if (pending_pick) {
             pending_pick = false;
             splash_pick_for_current_rate();
             return;
         }
-        if (walk_active) {                     // walk finished: stand
+        if (walk_active) {                     // caminata terminada: quedarse de pie
             cur_frame = 0;
             frame_started_ms = now;
             pb_done = true;
             render_frame(compose_stage(a, 0), a->palette);
             return;
         }
-        next = 0;                              // replay from the intro
+        next = 0;                              // repetir desde la intro
         loop_release = false;
     }
 
@@ -843,8 +872,9 @@ void splash_tick(void) {
     if (now_in && !from_loop) loop_entered_ms = now;
     in_loop = now_in;
 
-    // Walk translation, locked to gait frames; clamp to land exactly on the
-    // target, then release the loop so the gait exits.
+    // Desplazamiento al caminar, anclado a los fotogramas de marcha; se ajusta
+    // para caer exactamente en el destino y luego libera el bucle para que la
+    // marcha salga.
     if (walk_active && walk_dir != 0 && in_loop) {
         walk_x += walk_dir * walk_gait_cells(cur_frame, from_loop);
         if ((walk_dir > 0 && walk_x >= walk_target) ||
@@ -893,13 +923,14 @@ void splash_pick_for_current_rate(void) {
 bool splash_is_active(void) { return active; }
 
 void splash_show(void) {
-    if (!external) splash_pick_for_current_rate();  // direct path defers the draw
+    if (!external) splash_pick_for_current_rate();  // la ruta directa difiere el dibujo
     if (splash_container) lv_obj_clear_flag(splash_container, LV_OBJ_FLAG_HIDDEN);
     active = true;
 #if SPLASH_DIRECT_DRAW
-    // LVGL fills the container black once on unhide; that would erase a creature
-    // drawn now. Defer the full repaint to the next splash_tick(), which runs
-    // after lv_timer_handler() in the main loop.
+    // LVGL rellena el contenedor de negro una sola vez al mostrarlo; eso borraría
+    // una criatura dibujada ahora. Difiere el repintado completo al siguiente
+    // splash_tick(), que se ejecuta después de lv_timer_handler() en el bucle
+    // principal.
     force_full = true;
 #endif
 }
@@ -918,8 +949,8 @@ void splash_set_external(bool on) {
     external = on;
     if (external) {
 #if SPLASH_DIRECT_DRAW
-        // The owner's first frame is a full repaint, which also wipes the
-        // Clawd art and the margins it left behind.
+        // El primer fotograma del dueño es un repintado completo, que además
+        // borra el arte de Clawd y los márgenes que dejaba.
         force_full  = true;
         prev_valid  = false;
         ext_cells   = NULL;
@@ -928,9 +959,9 @@ void splash_set_external(bool on) {
 #endif
         return;
     }
-    // Hand the canvas back: repaint Clawd from scratch and restart its clocks,
-    // so a long external takeover doesn't look like a burst of frames or a
-    // rate rotation the moment the splash returns.
+    // Devolver el lienzo: repinta a Clawd desde cero y reinicia sus relojes, para
+    // que una toma externa larga no parezca una ráfaga de fotogramas o una
+    // rotación de ritmo en el momento en que vuelve el splash.
     frame_started_ms = millis();
     last_pick_ms     = frame_started_ms;
 #if SPLASH_DIRECT_DRAW
@@ -945,10 +976,10 @@ void splash_set_external(bool on) {
 void splash_render_external(const uint8_t *cells, const uint16_t *palette) {
     if (!cells) return;
 #if SPLASH_DIRECT_DRAW
-    // LVGL repaints the container background when it is unhidden, which would
-    // erase a frame drawn in the same loop pass. While that repaint is still
-    // pending, hold the frame for the next splash_tick() (after
-    // lv_timer_handler()).
+    // LVGL repinta el fondo del contenedor cuando se muestra, lo que borraría un
+    // fotograma dibujado en la misma pasada del bucle. Mientras ese repintado
+    // siga pendiente, guarda el fotograma para el siguiente splash_tick()
+    // (después de lv_timer_handler()).
     if (force_full) {
         ext_cells   = cells;
         ext_palette = palette;

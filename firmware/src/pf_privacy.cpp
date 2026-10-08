@@ -2,17 +2,20 @@
 #include <Preferences.h>
 #include <Arduino.h>
 
-// Same NVS namespace and the same key style as brightness.cpp's `brt_idx`:
-// both are local user preferences that must outlive a reflash-free reboot.
+// El mismo espacio de nombres NVS y el mismo estilo de clave que el `brt_idx` de
+// brightness.cpp: las dos son preferencias locales del usuario que tienen que
+// sobrevivir a un reinicio sin reflasheo.
 #define PF_NVS_NS   "clawdmeter"
 #define PF_NVS_KEY  "pf_priv"
 
-// The transient "modo privado" / "modo normal" line lasts exactly as long as
-// the page dots, for the same reason: the user has a "PWR = brightness"
-// habit, and this is what tells them in the act why the screen changed.
+// La línea transitoria de "Modo privado" / "Modo normal" dura exactamente lo
+// mismo que los puntos de página, y por el mismo motivo: el usuario tiene el
+// hábito de "PWR = brillo", y esto es lo que le explica en el acto por qué la
+// pantalla acaba de cambiar.
 #define PF_NOTICE_MS 1500u
 
-// Default off: the first boot has to look like every other boot.
+// Por defecto desactivado: el primer arranque tiene que parecerse a cualquier
+// otro.
 static bool     pf_private = false;
 static uint32_t notice_ms  = 0;
 

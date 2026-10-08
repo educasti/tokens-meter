@@ -12,32 +12,36 @@ LV_FONT_DECLARE(font_plex_18);
 LV_FONT_DECLARE(font_plex_16);
 LV_FONT_DECLARE(font_plex_12);
 
-// OpenCode design tokens (SPEC.md §3). Local to this file on purpose: the
-// Claude screens keep the palette in theme.h and must not change.
-#define OC_ELEMENT   lv_color_hex(0x1e1e1e)   // bar track + chip fill
-#define OC_BORDER    lv_color_hex(0x3c3c3c)   // 1 px panel outline
+// Tokens de diseño de OpenCode (SPEC.md §3). Son locales a este archivo a
+// propósito: las pantallas de Claude guardan la paleta en theme.h y no deben
+// cambiar.
+#define OC_ELEMENT   lv_color_hex(0x1e1e1e)   // relleno de la barra y de los chips
+#define OC_BORDER    lv_color_hex(0x3c3c3c)   // contorno de 1 px de los paneles
 #define OC_TEXT      lv_color_hex(0xeeeeee)
-#define OC_MUTED     lv_color_hex(0x808080)   // labels and secondary lines
-#define OC_PRIMARY   lv_color_hex(0xfab283)   // brand peach: bars and chips
-#define OC_ERROR     lv_color_hex(0xe06c75)   // >= 85%, limited, no data, link down
-#define OC_SUCCESS   lv_color_hex(0x7fd88f)   // active-session square
+#define OC_MUTED     lv_color_hex(0x808080)   // etiquetas y líneas secundarias
+#define OC_PRIMARY   lv_color_hex(0xfab283)   // melocotón de marca: barras y chips
+#define OC_ERROR     lv_color_hex(0xe06c75)   // >= 85 %, limitado, sin datos, enlace caído
+#define OC_SUCCESS   lv_color_hex(0x7fd88f)   // cuadrado de sesión activa
 
-// Glyphs, always written with the surrounding spaces spelled out at the call
-// site: " · " and "o " are part of the text, not decoration.
+// Glifos, siempre escritos con sus espacios alrededor en el punto de uso:
+// " · " y "o " forman parte del texto, no son decoración.
 #define OC_MIDDOT    "\xC2\xB7"              // ·
 #define OC_ELLIPSIS  "\xE2\x80\xA6"          // …
-// U+25CB (○) is not part of IBM Plex Mono — the generated fonts cover
-// 0x20-0x7E plus U+00B7 and U+2026 — so the stale/offline status lines fall
-// back to a plain "o" (SPEC.md §7, IMPL.md WP1).
+// U+25CB (○) no está en IBM Plex Mono, tampoco tras regenerar los fonts: los
+// fonts generados cubren 0x20-0x7E, los acentos del español (á é í ó ú ü ñ
+// ¡ ¿) y U+00B7 y U+2026, pero no ese glifo. Por eso las líneas de estado
+// "desactualizado" y "sin conexión" usan una "o" sencilla (SPEC.md §7,
+// IMPL.md WP1).
 #define OC_CIRCLE    "o"
 
-#define OC_FRESH_MS  300000u     // payload older than this = stale
-#define OC_BLINK_MS  500u        // 1 Hz blink on the active-session square
-#define OC_SEG_MAX   34          // most segments of any layout (480 breakpoint)
+#define OC_FRESH_MS  300000u     // un payload más antiguo que esto está desactualizado
+#define OC_BLINK_MS  500u        // parpadeo de 1 Hz en el cuadrado de sesión activa
+#define OC_SEG_MAX   34          // máximo de segmentos de cualquier diseño (corte de 480)
 #define OC_PANELS    2
 
-// Screen geometry, picked once from the active board. Pixel values come from
-// SPEC.md Annex A; the same three breakpoints ui.cpp uses.
+// Geometría de la pantalla, elegida una vez según la placa activa. Los valores
+// en píxeles vienen del anexo A de SPEC.md; son los mismos tres cortes que usa
+// ui.cpp.
 struct OcLayout {
     int16_t scr_w, scr_h;
 
@@ -61,7 +65,7 @@ struct OcLayout {
 
     const lv_font_t *hero_font;
     const lv_font_t *chip_font;
-    const lv_font_t *line_font;    // reset / cost line + status line
+    const lv_font_t *line_font;    // línea de reinicio / coste + línea de estado
     const lv_font_t *stats_font;
     const lv_image_dsc_t *mark_dsc;
     const lv_image_dsc_t *wordmark_dsc;
@@ -73,7 +77,7 @@ static void compute_layout(const BoardCaps &c) {
     L.scr_h = c.height;
 
     if (c.height >= 460) {
-        // Large — tuned for 480x480 (AMOLED-2.16).
+        // Grande — ajustado para 480x480 (AMOLED-2.16).
         L.mark_x = 20; L.mark_y = 24;
         L.wordmark_y = 32;
         L.mark_dsc = &oc_mark_l;
@@ -94,7 +98,7 @@ static void compute_layout(const BoardCaps &c) {
         L.line_font = &font_plex_18;
         L.stats_font = &font_plex_18;
     } else if (c.height >= 300) {
-        // Compact — tuned for 368x448 (AMOLED-1.8).
+        // Compacto — ajustado para 368x448 (AMOLED-1.8).
         L.mark_x = 20; L.mark_y = 22;
         L.wordmark_y = 30;
         L.mark_dsc = &oc_mark_m;
@@ -115,7 +119,7 @@ static void compute_layout(const BoardCaps &c) {
         L.line_font = &font_plex_16;
         L.stats_font = &font_plex_16;
     } else {
-        // Small — tuned for 240x240 (LCD-1.54): no stats block at all.
+        // Pequeño — ajustado para 240x240 (LCD-1.54): sin bloque de estadísticas.
         L.mark_x = 8; L.mark_y = 6;
         L.wordmark_y = 10;
         L.mark_dsc = &oc_mark_s;
@@ -134,22 +138,24 @@ static void compute_layout(const BoardCaps &c) {
         L.stats_font = &font_plex_12;
     }
 
-    // Panels span the screen minus both margins, and the wordmark is centred
-    // whatever the board's width is (the generated images are 195/156/117 px).
+    // Los paneles ocupan la pantalla menos los dos márgenes, y el wordmark se
+    // centra sea cual sea el ancho de la placa (las imágenes generadas son de
+    // 195/156/117 px).
     L.panel_w = L.scr_w - 2 * L.panel_x;
     L.wordmark_x = (L.scr_w - L.wordmark_dsc->header.w) / 2;
 
-    // Boards that land on the large breakpoint with a narrower panel than
-    // 480 px (e.g. the 410x502 AMOLED-2.06) keep the segment count and let
-    // the blocks shrink instead of running off the panel.
+    // Las placas que caen en el corte grande con un panel más estrecho que
+    // 480 px (p. ej. la AMOLED-2.06 de 410x502) mantienen el número de
+    // segmentos y dejan que los bloques se encojan en lugar de salirse del
+    // panel.
     int16_t avail = L.panel_w - 2 * L.pad_x;
     int16_t fits = (avail - (L.bar_segs - 1) * L.bar_gap) / L.bar_segs;
     if (fits > 0 && L.bar_seg_w > fits) L.bar_seg_w = fits;
 }
 
-// ---- Widgets ----
-static lv_obj_t *root;                                    // the screen container
-static lv_obj_t *dim_group;                               // panels + stats: dimmed when stale
+// ---- Controles ----
+static lv_obj_t *root;                                    // el contenedor de la pantalla
+static lv_obj_t *dim_group;                               // paneles + estadísticas: se atenúan al desactualizarse
 static lv_obj_t *panel[OC_PANELS];
 static lv_obj_t *hero[OC_PANELS];
 static lv_obj_t *chip[OC_PANELS];
@@ -157,22 +163,23 @@ static lv_obj_t *seg[OC_PANELS][OC_SEG_MAX];
 static lv_obj_t *reset_lbl[OC_PANELS];
 static lv_obj_t *stats_title[3];
 static lv_obj_t *stats_val[3];
-static lv_obj_t *status_sq;                               // blinking "session active" square
+static lv_obj_t *status_sq;                               // cuadrado parpadeante de "sesión activa"
 static lv_obj_t *status_lbl;
 
-// ---- State ----
-static OcData   cur;                 // last payload, copied by value
-static bool     have_data = false;   // a valid payload arrived since boot
-static uint32_t data_ms = 0;         // millis() of that payload
+// ---- Estado ----
+static OcData   cur;                 // último payload, copiado por valor
+static bool     have_data = false;   // llegó un payload válido desde el arranque
+static uint32_t data_ms = 0;         // millis() de ese payload
 static bool     ble_on = false;
-static bool     dimmed = false;      // current opacity of dim_group
+static bool     dimmed = false;      // opacidad actual de dim_group
 static bool     bar_vis[OC_PANELS] = { false, false };
-static bool     sq_shown = false;    // square currently visible
+static bool     sq_shown = false;    // cuadrado visible actualmente
 static bool     blink_on = true;
 static uint32_t blink_ms = 0;
-static char     status_text[48] = "";
-// Both start out "unset" (black is never a status colour, -1 is no x) so the
-// first draw always pushes them; after that only real changes reach LVGL.
+static char     status_text[64] = "";
+// Ambos empiezan "sin definir" (el negro nunca es un color de estado y -1 es
+// "sin x") para que el primer dibujo siempre los envíe; después solo los
+// cambios reales llegan a LVGL.
 static lv_color_t status_color;
 static int16_t  status_x = -1;
 
@@ -180,29 +187,30 @@ static void draw_status(uint32_t now);
 static void apply_dim(bool stale);
 static void redraw(void);
 
-// ---- Formatting (mirrors the prototype's helpers) ----
+// ---- Formato (refleja los ayudantes del prototipo) ----
 
-// "42m" / "2h 14m" / "6d 13h"; an unknown countdown shows the ellipsis.
+// "42 min" / "2 h 14 min" / "6 d 13 h"; una cuenta atrás desconocida muestra
+// los puntos suspensivos.
 static const char *fmt_mins(int mins) {
-    static char buf[12];
+    static char buf[16];
     if (mins < 0) return OC_ELLIPSIS;
-    if (mins >= 1440)      snprintf(buf, sizeof(buf), "%dd %dh", mins / 1440, (mins % 1440) / 60);
-    else if (mins >= 60)   snprintf(buf, sizeof(buf), "%dh %dm", mins / 60, mins % 60);
-    else                   snprintf(buf, sizeof(buf), "%dm", mins);
+    if (mins >= 1440)      snprintf(buf, sizeof(buf), "%d d %d h", mins / 1440, (mins % 1440) / 60);
+    else if (mins >= 60)   snprintf(buf, sizeof(buf), "%d h %d min", mins / 60, mins % 60);
+    else                   snprintf(buf, sizeof(buf), "%d min", mins);
     return buf;
 }
 
-// "35s" / "21m" / "3h 4m" — the "… ago" suffix of the status line.
+// "35 s" / "21 min" / "3 h 4 min" — el sufijo "hace …" de la línea de estado.
 static const char *fmt_age(long secs) {
-    static char buf[12];
+    static char buf[16];
     if (secs < 0) secs = 0;
-    if (secs < 60)        snprintf(buf, sizeof(buf), "%lds", secs);
-    else if (secs < 3600) snprintf(buf, sizeof(buf), "%ldm", secs / 60);
-    else                  snprintf(buf, sizeof(buf), "%ldh %ldm", secs / 3600, (secs % 3600) / 60);
+    if (secs < 60)        snprintf(buf, sizeof(buf), "%ld s", secs);
+    else if (secs < 3600) snprintf(buf, sizeof(buf), "%ld min", secs / 60);
+    else                  snprintf(buf, sizeof(buf), "%ld h %ld min", secs / 3600, (secs % 3600) / 60);
     return buf;
 }
 
-// Tokens arrive in thousands: 812 -> "812k", 3200 -> "3.2M", 106969 -> "107.0M".
+// Los tokens llegan en miles: 812 -> "812k", 3200 -> "3.2M", 106969 -> "107.0M".
 static const char *fmt_tokens(long thousands) {
     static char buf[12];
     if (thousands < 0) thousands = 0;
@@ -212,7 +220,7 @@ static const char *fmt_tokens(long thousands) {
     return buf;
 }
 
-// "ds-v4.1-flash" -> "ds-v4.1-fl…" so the columns never collide (Annex A).
+// "ds-v4.1-flash" -> "ds-v4.1-fl…" para que las columnas nunca choquen (anexo A).
 static void fmt_model(char *out, size_t len) {
     if ((int)strlen(cur.m) > L.stats_trunc)
         snprintf(out, len, "%.*s" OC_ELLIPSIS, L.stats_trunc, cur.m);
@@ -224,10 +232,11 @@ static bool is_stale(uint32_t now) {
     return have_data && (now - data_ms) > OC_FRESH_MS;
 }
 
-// ---- Builders ----
+// ---- Constructores ----
 
-// Transparent, borderless, click-through group. EVENT_BUBBLE on every widget
-// so a tap anywhere reaches the screen root, where ui.cpp listens.
+// Grupo transparente, sin borde y permeable al tacto. EVENT_BUBBLE en cada
+// control para que un toque en cualquier parte llegue a la raíz de la pantalla,
+// donde escucha ui.cpp.
 static lv_obj_t *make_group(lv_obj_t *parent) {
     lv_obj_t *g = lv_obj_create(parent);
     lv_obj_set_size(g, L.scr_w, L.scr_h);
@@ -240,7 +249,7 @@ static lv_obj_t *make_group(lv_obj_t *parent) {
     return g;
 }
 
-// Thin square-cornered outline; children are positioned by hand.
+// Contorno fino de esquinas cuadradas; los hijos se posicionan a mano.
 static lv_obj_t *make_panel(lv_obj_t *parent, int16_t y) {
     lv_obj_t *p = lv_obj_create(parent);
     lv_obj_set_pos(p, L.panel_x, y);
@@ -262,14 +271,14 @@ static lv_obj_t *make_label(lv_obj_t *parent, int16_t x, int16_t y,
     lv_obj_set_style_text_font(l, font, 0);
     lv_obj_set_style_text_color(l, color, 0);
     lv_obj_set_style_pad_all(l, 0, 0);
-    // One line, like the prototype's white-space: nowrap.
+    // Una sola línea, como el white-space: nowrap del prototipo.
     lv_label_set_long_mode(l, LV_LABEL_LONG_MODE_CLIP);
     lv_obj_add_flag(l, LV_OBJ_FLAG_EVENT_BUBBLE);
     return l;
 }
 
-// Terminal-style chip: flat fill, horizontal padding, fixed height, pinned to
-// the panel's right padding.
+// Chip estilo terminal: relleno plano, relleno horizontal, altura fija y
+// anclado al padding derecho del panel.
 static lv_obj_t *make_chip(lv_obj_t *parent, int16_t y) {
     lv_obj_t *c = make_label(parent, 0, y, L.chip_font, OC_PRIMARY);
     int16_t text_h = lv_font_get_line_height(L.chip_font);
@@ -281,8 +290,8 @@ static lv_obj_t *make_chip(lv_obj_t *parent, int16_t y) {
     lv_obj_set_style_pad_top(c, (L.chip_h - text_h) / 2, 0);
     lv_obj_set_style_pad_bottom(c, L.chip_h - text_h - (L.chip_h - text_h) / 2, 0);
     lv_obj_set_height(c, L.chip_h);
-    // Width follows the text, so the right alignment is recomputed by LVGL
-    // whenever the label's text changes.
+    // El ancho sigue al texto, así que LVGL recalcula la alineación a la
+    // derecha cada vez que cambia el texto de la etiqueta.
     lv_obj_align(c, LV_ALIGN_TOP_RIGHT, -L.pad_x, y);
     return c;
 }
@@ -314,8 +323,8 @@ void oc_usage_init(lv_obj_t *parent) {
     compute_layout(board_caps());
 
     root = make_group(parent);
-    // The mark and the wordmark stay at full opacity even when the numbers
-    // below are dimmed. The battery widget is ui.cpp's and stays on top.
+    // La marca y el wordmark se quedan a opacidad completa aunque las cifras de
+    // abajo se atenúen. El widget de batería es de ui.cpp y se mantiene encima.
     lv_obj_t *mark = lv_image_create(root);
     lv_image_set_src(mark, L.mark_dsc);
     lv_obj_set_pos(mark, L.mark_x, L.mark_y);
@@ -337,8 +346,9 @@ void oc_usage_init(lv_obj_t *parent) {
         }
     }
 
-    // Status line (outside dim_group). The square sits on the screen margin
-    // and is centred on the text line; see draw_status() for the text x.
+    // Línea de estado (fuera de dim_group). El cuadrado va en el margen de la
+    // pantalla y se centra en la línea de texto; la x del texto está en
+    // draw_status().
     status_sq = lv_obj_create(root);
     lv_obj_set_pos(status_sq, L.panel_x,
                    L.status_y + (lv_font_get_line_height(L.line_font) - L.status_sq) / 2);
@@ -355,8 +365,9 @@ void oc_usage_init(lv_obj_t *parent) {
     status_lbl = make_label(root, L.panel_x, L.status_y, L.line_font, OC_MUTED);
     lv_label_set_text(status_lbl, "");
 
-    // Neutral state, so the screen is never blank if it is shown before the
-    // first payload (ui.cpp keeps the OC screens out of the cycle until then).
+    // Estado neutro, para que la pantalla nunca quede vacía si se muestra antes
+    // del primer payload (ui.cpp mantiene las pantallas OC fuera del ciclo
+    // hasta entonces).
     memset(&cur, 0, sizeof(cur));
     strlcpy(cur.src, "api", sizeof(cur.src));
     cur.r5 = cur.rw = -1;
@@ -365,7 +376,7 @@ void oc_usage_init(lv_obj_t *parent) {
     lv_obj_add_flag(root, LV_OBJ_FLAG_HIDDEN);
 }
 
-// ---- Drawing ----
+// ---- Dibujo ----
 
 static void set_bar_visible(int i, bool on) {
     if (bar_vis[i] == on) return;
@@ -396,16 +407,16 @@ static void draw_panels(bool solo) {
         if (solo) lv_label_set_text(hero[i], fmt_tokens(tok[i]));
         else       lv_label_set_text_fmt(hero[i], "%d%%", pct[i]);
 
-        // Consumption-only mode swaps the window chip for what the hero shows.
+        // El modo de solo consumo cambia el chip de ventana por lo que muestra el héroe.
         char cbuf[24];
         if (solo) {
-            snprintf(cbuf, sizeof(cbuf), "%s", i == 0 ? "today" : "7 days");
+            snprintf(cbuf, sizeof(cbuf), "%s", i == 0 ? "hoy" : "7 días");
         } else if (cur.limited && pct[i] >= 100) {
-            snprintf(cbuf, sizeof(cbuf), "limit");
+            snprintf(cbuf, sizeof(cbuf), "límite");
         } else if (strcmp(cur.src, "est") == 0) {
-            snprintf(cbuf, sizeof(cbuf), "%s " OC_MIDDOT " est.", i == 0 ? "5h" : "week");
+            snprintf(cbuf, sizeof(cbuf), "%s " OC_MIDDOT " est.", i == 0 ? "5 h" : "semana");
         } else {
-            snprintf(cbuf, sizeof(cbuf), "%s", i == 0 ? "5h" : "week");
+            snprintf(cbuf, sizeof(cbuf), "%s", i == 0 ? "5 h" : "semana");
         }
         lv_label_set_text(chip[i], cbuf);
         lv_obj_set_style_text_color(chip[i],
@@ -414,16 +425,16 @@ static void draw_panels(bool solo) {
         set_bar_visible(i, !solo);
         if (!solo) draw_bar(i, pct[i]);
 
-        // Money goes through snprintf: lv_label_set_text_fmt() runs LVGL's own
-        // printf, which has no float support (LV_USE_FLOAT is off).
+        // El dinero pasa por snprintf: lv_label_set_text_fmt() ejecuta el printf
+        // propio de LVGL, que no admite decimales (LV_USE_FLOAT está apagado).
         char mbuf[24];
         if (solo) {
-            snprintf(mbuf, sizeof(mbuf), "$%.2f spent", money[i]);
+            snprintf(mbuf, sizeof(mbuf), "$%.2f gastado", money[i]);
             lv_label_set_text(reset_lbl[i], mbuf);
         } else if (i == 0 && cur.r5 == -1) {
-            lv_label_set_text(reset_lbl[i], "No active window");
+            lv_label_set_text(reset_lbl[i], "Sin ventana activa");
         } else {
-            lv_label_set_text_fmt(reset_lbl[i], "Resets in %s", fmt_mins(rst[i]));
+            lv_label_set_text_fmt(reset_lbl[i], "Se renueva en %s", fmt_mins(rst[i]));
         }
     }
 }
@@ -435,9 +446,9 @@ static void draw_stats(bool solo) {
     char val[24];
     fmt_model(model, sizeof(model));
 
-    lv_label_set_text(stats_title[0], "7d tokens");
-    lv_label_set_text(stats_title[1], "top model");
-    lv_label_set_text(stats_title[2], solo ? "7d cost" : "month");
+    lv_label_set_text(stats_title[0], "Tokens 7 d");
+    lv_label_set_text(stats_title[1], "Modelo principal");
+    lv_label_set_text(stats_title[2], solo ? "Gasto 7 d" : "mes");
 
     lv_label_set_text(stats_val[0], fmt_tokens(cur.t7));
     snprintf(val, sizeof(val), "%s %d%%", model, cur.ms);
@@ -445,40 +456,41 @@ static void draw_stats(bool solo) {
     if (solo) {
         snprintf(val, sizeof(val), "$%.2f", cur.c7);
     } else {
-        // Month percentage + whole days left in the billing period.
-        snprintf(val, sizeof(val), "%d%% " OC_MIDDOT " %dd", cur.pm, (cur.rm + 720) / 1440);
+        // Porcentaje del mes + días completos que quedan del periodo de facturación.
+        snprintf(val, sizeof(val), "%d%% " OC_MIDDOT " %d d", cur.pm, (cur.rm + 720) / 1440);
     }
     lv_label_set_text(stats_val[2], val);
 }
 
-// SPEC.md §7. The line lives outside dim_group: it is how the user learns the
-// numbers above are stale or the link is down. oc_usage_tick() runs this every
-// loop, so only what actually changed is pushed to LVGL.
+// SPEC.md §7. La línea vive fuera de dim_group: es así como el usuario se
+// entera de que las cifras de arriba están desactualizadas o de que el enlace
+// cayó. oc_usage_tick() la ejecuta en cada vuelta del bucle, así que solo lo
+// que realmente cambió se envía a LVGL.
 static void draw_status(uint32_t now) {
-    char buf[48];
+    char buf[64];
     const char *text;
     lv_color_t color;
     bool dot;
 
     if (!ble_on) {
-        text = OC_CIRCLE " bluetooth disconnected";
+        text = OC_CIRCLE " Bluetooth desconectado";
         color = OC_ERROR;
         dot = false;
     } else if (is_stale(now)) {
-        snprintf(buf, sizeof(buf), OC_CIRCLE " stale " OC_MIDDOT " updated %s ago",
+        snprintf(buf, sizeof(buf), OC_CIRCLE " desactualizado " OC_MIDDOT " hace %s",
                  fmt_age((long)((now - data_ms) / 1000)));
         text = buf;
         color = OC_ERROR;
         dot = false;
     } else if (cur.a >= 1) {
-        if (cur.ag[0]) snprintf(buf, sizeof(buf), "%s " OC_MIDDOT " working", cur.ag);
-        else           snprintf(buf, sizeof(buf), "working");
+        if (cur.ag[0]) snprintf(buf, sizeof(buf), "%s " OC_MIDDOT " trabajando", cur.ag);
+        else           snprintf(buf, sizeof(buf), "trabajando");
         text = buf;
         color = OC_TEXT;
         dot = true;
     } else {
         long age = cur.la + (have_data ? (long)((now - data_ms) / 1000) : 0);
-        snprintf(buf, sizeof(buf), "idle " OC_MIDDOT " last activity %s ago", fmt_age(age));
+        snprintf(buf, sizeof(buf), "inactivo " OC_MIDDOT " última actividad hace %s", fmt_age(age));
         text = buf;
         color = OC_MUTED;
         dot = false;
@@ -492,8 +504,9 @@ static void draw_status(uint32_t now) {
         status_color = color;
         lv_obj_set_style_text_color(status_lbl, color, 0);
     }
-    // The active state indents the text to clear the blinking square; the
-    // other three states start on the screen margin (Annex A).
+    // El estado activo sangra el texto para dejar libre el cuadrado
+    // parpadeante; los otros tres estados empiezan en el margen de la pantalla
+    // (anexo A).
     int16_t x = dot ? L.status_text_x : L.panel_x;
     if (x != status_x) {
         status_x = x;
@@ -517,8 +530,9 @@ static void apply_dim(bool stale) {
     bool dim = stale || !ble_on;
     if (dim == dimmed) return;
     dimmed = dim;
-    // opa is inherited, so the panels and the stats fade as one block while
-    // the header and the status line keep full opacity.
+    // La opacidad se hereda, así que los paneles y las estadísticas se atenúan
+    // como un solo bloque mientras la cabecera y la línea de estado mantienen
+    // la opacidad completa.
     lv_obj_set_style_opa(dim_group, dim ? LV_OPA_40 : LV_OPA_COVER, 0);
 }
 
@@ -532,12 +546,12 @@ static void redraw(void) {
     apply_dim(is_stale(now));
 }
 
-// ======== Public API ========
+// ======== API pública ========
 
 void oc_usage_show(void) {
     if (!root) return;
     lv_obj_clear_flag(root, LV_OBJ_FLAG_HIDDEN);
-    redraw();               // the countdown and the "ago" suffix moved while hidden
+    redraw();               // la cuenta atrás y el sufijo "hace" avanzaron mientras estaba oculta
 }
 
 void oc_usage_hide(void) {
@@ -566,8 +580,8 @@ void oc_usage_tick(void) {
     if (!root) return;
     uint32_t now = millis();
 
-    // Both the stale switch and the "… ago" counters are time-based, so they
-    // keep running between the ~60 s payloads.
+    // Tanto el cambio a desactualizado como los contadores "hace …" dependen
+    // del tiempo, así que siguen corriendo entre los payloads de ~60 s.
     apply_dim(is_stale(now));
     draw_status(now);
 

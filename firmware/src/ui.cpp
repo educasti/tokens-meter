@@ -14,14 +14,15 @@
 #include "icons.h"
 #include "hal/board_caps.h"
 
-// The OTA status handoff below uses a critical section on hardware; the native
-// sim is single-threaded and has no FreeRTOS, so the lock compiles away there.
+// El traspaso del estado de OTA de abajo usa una sección crítica sobre el
+// hardware; el simulador nativo es de un solo hilo y no tiene FreeRTOS, así que
+// el bloqueo se compila allí.
 #ifndef BOARD_SIM
 #include <freertos/FreeRTOS.h>
 #include <freertos/portmacro.h>
 #endif
 
-// Custom fonts (scaled for 314 PPI, ~1.9x from original 165 PPI)
+// Fuentes propias (escaladas a 314 PPI, ~1,9x desde las 165 PPI originales)
 LV_FONT_DECLARE(font_tiempos_56);
 LV_FONT_DECLARE(font_tiempos_34);
 LV_FONT_DECLARE(font_styrene_48);
@@ -34,10 +35,11 @@ LV_FONT_DECLARE(font_styrene_12);
 LV_FONT_DECLARE(font_mono_32);
 LV_FONT_DECLARE(font_mono_18);
 
-// Layout values computed from the active board's geometry. Populated once
-// in ui_init() and treated as const for the rest of the program. Adding a
-// new display size means extending compute_layout() with another
-// breakpoint — never editing the screen-builder functions below.
+// Valores de diseño calculados a partir de la geometría de la placa activa. Se
+// rellenan una sola vez en ui_init() y se tratan como constantes durante el resto
+// del programa. Añadir un tamaño de pantalla nuevo significa extender
+// compute_layout() con otro punto de ruptura, nunca editar las funciones de abajo
+// que construyen las pantallas.
 struct Layout {
     int16_t scr_w, scr_h;
     int16_t margin;
@@ -45,7 +47,7 @@ struct Layout {
     int16_t content_y;
     int16_t content_w;
 
-    // Usage screen
+    // Pantalla de uso
     int16_t usage_panel_h;
     int16_t usage_panel_gap;
     int16_t usage_bar_y;
@@ -53,33 +55,34 @@ struct Layout {
     int16_t bar_h;
     int16_t panel_pad_x, panel_pad_y;
     int16_t pill_pad_x, pill_pad_y;
-    const lv_font_t* title_font;     // screen title / clock
-    const lv_font_t* pct_font;       // big percentage number
-    const lv_font_t* ent_pct_font;   // enterprise spending number
-    const lv_font_t* pill_font;      // "Current" / "Weekly" pill
-    const lv_font_t* reset_font;     // "Resets in ..." line
-    const lv_font_t* pace_font;      // enterprise "Under/On/Over pace" line
-    const lv_font_t* anim_font;      // animated status line
-    int16_t anim_y;                  // status line offset from bottom
-    bool    small_icons;             // 40px logo + 24px battery (vs 80/48) on small screens
-    int16_t title_nudge;             // title x-shift balancing the corner logo
-    int16_t logo_y;                  // logo top edge
-    int16_t batt_y;                  // battery icon top edge
-    int16_t batt_w;                  // battery icon width, for position math
+    const lv_font_t* title_font;     // título de pantalla / reloj
+    const lv_font_t* pct_font;       // número grande de porcentaje
+    const lv_font_t* ent_pct_font;   // número de gasto (enterprise)
+    const lv_font_t* pill_font;      // píldora de "Actual" / "Semanal"
+    const lv_font_t* reset_font;     // línea "Se renueva en ..."
+    const lv_font_t* pace_font;      // línea de ritmo enterprise ("Ritmo bajo/En ritmo/Ritmo alto")
+    const lv_font_t* anim_font;      // línea de estado animada
+    int16_t anim_y;                  // desplazamiento de la línea de estado desde abajo
+    bool    small_icons;             // logo de 40 px + batería de 24 px (frente a 80/48) en pantallas pequeñas
+    int16_t title_nudge;             // desplazamiento en x del título que compensa el logo de la esquina
+    int16_t logo_y;                  // borde superior del logo
+    int16_t batt_y;                  // borde superior del icono de batería
+    int16_t batt_w;                  // ancho del icono de batería, para las cuentas de posición
 
-    // Pairing hint / idle screen
+    // Pantalla de emparejamiento / de reposo
     int16_t pair_y1, pair_y2, pair_y3;
-    int16_t idle_px;                 // sleeping-creature size on the idle screen
+    int16_t idle_px;                 // tamaño de la criatura dormida en la pantalla de reposo
 
-    // Backend pairing-code view (phase 2): heading / code / hint offsets from
-    // the top of the content area, plus the big code font.
+    // Vista de código de emparejamiento del backend (fase 2): desplazamientos de
+    // título / código / pista desde arriba del área de contenido, más la fuente
+    // grande del código.
     int16_t paircode_y1, paircode_y2, paircode_y3;
     const lv_font_t* paircode_code_font;
 
-    // Page indicator (one dot per screen in the current cycle)
-    int16_t dots_y;                  // centre row of the dots
+    // Indicador de página (un punto por pantalla del ciclo actual)
+    int16_t dots_y;                  // fila central de los puntos
 
-    // Bluetooth screen
+    // Pantalla de Bluetooth
     int16_t bt_info_panel_h;
     int16_t bt_reset_zone_h;
     const lv_font_t* bt_title_font;
@@ -90,18 +93,19 @@ struct Layout {
 };
 static Layout L = {};
 
-// Pick layout values from the active board's pixel dimensions. The two
-// existing boards happen to land on the two breakpoints below; new ports
-// inherit the closer one — visually OK, may need a polish pass for
-// pixel-perfect alignment but never blocks the port from booting.
+// Elige los valores de diseño a partir de las dimensiones en píxeles de la placa
+// activa. Las dos placas existentes caen justo en los dos puntos de ruptura de
+// abajo; los portes nuevos heredan el más cercano: se ve bien, puede necesitar
+// una pasada de pulido para la alineación perfecta al píxel, pero nunca impide
+// que el porte arranque.
 static void compute_layout(const BoardCaps& c) {
     L.scr_w = c.width;
     L.scr_h = c.height;
     L.margin = 20;
     L.title_y = 30;
 
-    // Values shared by the two original breakpoints; the small branch below
-    // overrides them wholesale.
+    // Valores compartidos por los dos puntos de ruptura originales; la rama
+    // pequeña de abajo los sobrescribe por completo.
     L.bar_h = 24;
     L.panel_pad_x = 16;
     L.panel_pad_y = 12;
@@ -130,7 +134,7 @@ static void compute_layout(const BoardCaps& c) {
     L.paircode_code_font = &font_styrene_48;
 
     if (c.height >= 460) {
-        // Large layout — tuned for 480x480 (AMOLED-2.16).
+        // Diseño grande, ajustado para 480x480 (AMOLED-2.16).
         L.content_y = 100;
         L.usage_panel_h = 150;
         L.usage_panel_gap = 16;
@@ -143,9 +147,9 @@ static void compute_layout(const BoardCaps& c) {
         L.bt_device_font   = &font_styrene_28;
         L.bt_credit_1_font = &font_styrene_24;
         L.bt_credit_2_font = &font_styrene_20;
-        L.dots_y = 472;   // SPEC.md Annex A
+        L.dots_y = 472;   // Anexo A de SPEC.md
     } else if (c.height >= 300) {
-        // Compact layout — tuned for 368x448 (AMOLED-1.8).
+        // Diseño compacto, ajustado para 368x448 (AMOLED-1.8).
         L.content_y = 85;
         L.usage_panel_h = 130;
         L.usage_panel_gap = 12;
@@ -164,9 +168,10 @@ static void compute_layout(const BoardCaps& c) {
         L.paircode_y3 = 182;
         L.paircode_code_font = &font_styrene_28;
     } else {
-        // Small layout — tuned for 240x240 (LCD-1.54 and similar square TFTs).
-        // Everything shrinks: fonts two steps down, panels ~half height, and
-        // the corner logo/battery switch to the 40px/24px small assets.
+        // Diseño pequeño, ajustado para 240x240 (LCD-1.54 y TFT cuadrados
+        // similares). Todo se encoge: fuentes dos pasos más chicas, paneles a
+        // media altura y el logo y la batería de la esquina pasan a los recursos
+        // pequeños de 40/24 px.
         L.margin = 8;
         L.title_y = 4;
         L.content_y = 44;
@@ -186,8 +191,8 @@ static void compute_layout(const BoardCaps& c) {
         L.reset_font   = &font_styrene_14;
         L.pace_font    = &font_styrene_12;
         L.anim_font    = &font_mono_18;
-        // Center the status line in the strip below the weekly panel; flush
-        // against the bottom edge it reads as unevenly spaced.
+        // Centrar la línea de estado en la franja bajo el panel semanal; pegada
+        // al borde inferior se lee como un espaciado disparejo.
         L.anim_y = -10;
         L.small_icons = true;
         L.title_nudge = 8;
@@ -215,7 +220,7 @@ static void compute_layout(const BoardCaps& c) {
     L.content_w = L.scr_w - 2 * L.margin;
 }
 
-// Anthropic brand palette — design tokens live in theme.h
+// Paleta de marca de Anthropic; los tokens de diseño viven en theme.h
 #include "theme.h"
 #define COL_BG        THEME_BG
 #define COL_PANEL     THEME_PANEL
@@ -227,18 +232,18 @@ static void compute_layout(const BoardCaps& c) {
 #define COL_RED       THEME_RED
 #define COL_BAR_BG    THEME_BAR_BG
 
-// ---- Usage screen widgets (single non-splash view) ----
+// ---- Widgets de la pantalla de uso (la única vista que no es splash) ----
 static lv_obj_t* usage_container;
 static lv_obj_t* lbl_title;
-// Clock fed by the daemon: base epoch (local wall-clock seconds) + the lv_tick at
-// which it landed, so the title ticks forward locally between 60s payloads.
+// Reloj alimentado por el daemon: época base (segundos del reloj local) + el
+// lv_tick en el que llegó, para que el título avance solo entre payloads de 60 s.
 static long     clock_base_epoch = 0;
 static uint32_t clock_base_ms = 0;
-static int      clock_fmt = 24;   // 12 or 24, set from the daemon payload
-static int      clock_last_min = -1;   // last rendered minute; avoids redrawing the title every tick
-static lv_obj_t* usage_group;   // the two usage panels — shown when connected
-static lv_obj_t* pair_group;    // pairing hint — shown when disconnected
-static lv_obj_t* paircode_group; // backend pairing code — shown while unpaired
+static int      clock_fmt = 24;   // 12 o 24, tomado del payload del daemon
+static int      clock_last_min = -1;   // último minuto dibujado; evita redibujar el título en cada tick
+static lv_obj_t* usage_group;   // los dos paneles de uso, visibles con conexión
+static lv_obj_t* pair_group;    // aviso de emparejamiento, visible sin conexión
+static lv_obj_t* paircode_group; // código de emparejamiento del backend, visible sin vincular
 static lv_obj_t* bar_session;
 static lv_obj_t* lbl_session_pct;
 static lv_obj_t* lbl_session_label;
@@ -249,25 +254,27 @@ static lv_obj_t* lbl_weekly_label;
 static lv_obj_t* lbl_weekly_reset;
 static lv_obj_t* panel_session = nullptr;
 static lv_obj_t* panel_weekly = nullptr;
-// Enterprise-only widgets inside panel_session
-static lv_obj_t* lbl_session_pct_sym = nullptr;  // "%" in smaller font
-static lv_obj_t* lbl_spending_desc = nullptr;     // "of your monthly budget"
-static lv_obj_t* lbl_spending_status = nullptr;   // "Under pace" / "On pace" / "Over pace"
-static lv_obj_t* lbl_anim;      // status line: connection state + whimsical idle
+// Widgets solo para enterprise dentro de panel_session
+static lv_obj_t* lbl_session_pct_sym = nullptr;  // "%" en una fuente más chica
+static lv_obj_t* lbl_spending_desc = nullptr;     // "de tu presupuesto mensual"
+static lv_obj_t* lbl_spending_status = nullptr;   // "Ritmo bajo" / "En ritmo" / "Ritmo alto"
+static lv_obj_t* lbl_anim;      // línea de estado: estado de conexión + reposo fantasioso
 
-// Backend pairing-code view (phase 2) — the big code + a one-line hint.
+// Vista de código de emparejamiento del backend (fase 2): el código grande y
+// una pista de una sola línea.
 static lv_obj_t* lbl_paircode_code;
 static lv_obj_t* lbl_paircode_hint;
 
-// ---- Battery indicator (shared, on top) ----
+// ---- Indicador de batería (compartido, encima) ----
 static lv_obj_t* battery_img;
 static lv_obj_t* logo_img;
-static lv_image_dsc_t battery_dscs[5];  // empty, low, medium, full, charging
+static lv_image_dsc_t battery_dscs[5];  // vacía, baja, media, llena, cargando
 
-// ---- Page indicator (SPEC.md §6) ----
-// One 6 px dot per screen in the current cycle (2, 4 once the OpenCode screens
-// are in, 5 once the portfolio is too), 8 px apart, centred on L.dots_y. Shown
-// for 1.5 s after every screen change, on top of everything, then hidden again.
+// ---- Indicador de página (SPEC.md §6) ----
+// Un punto de 6 px por pantalla del ciclo actual (2, y 4 cuando entran las
+// pantallas de OpenCode, 5 cuando entra también el portfolio), separados 8 px y
+// centrados en L.dots_y. Se muestran 1,5 s después de cada cambio de pantalla,
+// por encima de todo, y se vuelven a ocultar.
 #define PAGE_DOT_D     6
 #define PAGE_DOT_GAP   8
 #define PAGE_DOT_MAX   5
@@ -276,35 +283,37 @@ static lv_image_dsc_t battery_dscs[5];  // empty, low, medium, full, charging
 #define COL_DOT_OFF    lv_color_hex(0x484848)
 static lv_obj_t* dots_root;
 static lv_obj_t* dots[PAGE_DOT_MAX];
-static int       dots_lit = -1;       // index of the highlighted dot (-1 = never shown)
-static uint32_t  dots_until_ms = 0;   // lv_tick when the row hides itself
+static int       dots_lit = -1;       // índice del punto resaltado (-1 = nunca se mostró)
+static uint32_t  dots_until_ms = 0;   // lv_tick en el que la fila se oculta sola
 
-// ---- Live-data freshness → which usage sub-view to show ----
-// usage panels when data is flowing, an idle "Zzz" screen when the host is
-// connected but no usage update landed within DATA_FRESH_MS, the pairing hint
-// when BLE is down. Re-evaluated every loop in ui_tick_anim().
-static lv_obj_t* idle_group;            // the "Zzz" idle screen
-static uint32_t  last_data_ms = 0;      // lv_tick when the last valid usage update landed
-static bool      data_received = false; // any valid update since boot
-static bool      data_ok = true;        // last payload's ok flag; a {"ok":false} beat = "no fresh data"
-// Usage that did NOT arrive over the BLE daemon link (the WiFi backend pull,
-// usage_pull.cpp). It refreshes every USAGE_POLL_S (300 s by default), far
-// slower than the 90 s BLE window, and it exists precisely when BLE is down or
-// idle — so it gets its own, longer freshness window: three default poll
-// intervals, enough to ride out a couple of failed pulls.
-static uint32_t  ext_data_ms = 0;       // lv_tick when the last external update landed
-static bool      ext_received = false;  // any external update since boot
+// ---- Frescura de los datos en vivo y qué subvista de uso mostrar ----
+// los paneles de uso cuando los datos fluyen, una pantalla de reposo "Zzz"
+// cuando el host está conectado pero no llegó ninguna actualización de uso
+// dentro de DATA_FRESH_MS, y el aviso de emparejamiento cuando BLE está caído.
+// Se reevalúa en cada vuelta de ui_tick_anim().
+static lv_obj_t* idle_group;            // la pantalla de reposo "Zzz"
+static uint32_t  last_data_ms = 0;      // lv_tick de la última actualización de uso válida
+static bool      data_received = false; // alguna actualización válida desde el arranque
+static bool      data_ok = true;        // indicador ok del último payload; un latido {"ok":false} = "sin datos frescos"
+// Uso que NO llegó por el enlace del daemon BLE (sino por el pull del backend
+// WiFi, usage_pull.cpp). Se refresca cada USAGE_POLL_S (300 s por defecto), mucho
+// más lento que la ventana BLE de 90 s, y existe justamente cuando BLE está
+// caído o en reposo, así que recibe su propia ventana de frescura, más larga:
+// tres intervalos de pull por defecto, suficientes para capear un par de pulls
+// fallidos.
+static uint32_t  ext_data_ms = 0;       // lv_tick de la última actualización externa
+static bool      ext_received = false;  // alguna actualización externa desde el arranque
 static const uint32_t EXT_FRESH_MS = 900000;   // 15 min
-static int       view_state = -1;       // -1 unknown / 0 pair / 1 idle / 2 usage
-static const uint32_t DATA_FRESH_MS = 90000;  // usage counts as "live" within this window (daemon sends ~60s)
+static int       view_state = -1;       // -1 desconocido / 0 emparejando / 1 reposo / 2 uso
+static const uint32_t DATA_FRESH_MS = 90000;  // el uso cuenta como "en vivo" dentro de esta ventana (el daemon envía ~60 s)
 
-// ---- Shared ----
+// ---- Compartido ----
 static lv_image_dsc_t logo_dsc;
 static screen_t current_screen = SCREEN_USAGE;
-static bool     s_ble_connected = false;   // cached BLE connection state
-static uint32_t connected_at_ms = 0;       // when we last entered CONNECTED ("Connected" dwell)
+static bool     s_ble_connected = false;   // estado de conexión BLE en caché
+static uint32_t connected_at_ms = 0;       // cuándo entramos por última vez en CONNECTED (pausa de "Conectado")
 
-// Animation state
+// Estado de la animación
 static uint32_t anim_last_ms = 0;
 static uint8_t anim_spinner_idx = 0;
 static uint8_t anim_phase = 0;
@@ -312,16 +321,16 @@ static uint8_t anim_msg_idx = 0;
 static uint32_t anim_msg_start = 0;
 #define ANIM_MSG_MS     4000
 
-// ---- Transient pull-OTA line (DESIGN §12) ----
-// ui_ota_status() is called from the OTA pull worker, which must never touch
-// LVGL. It only copies the text + pct and stamps a deadline here; ui_tick_anim()
-// (loop task) performs the lv_label_set_text. The line auto-clears after a few
-// seconds, so a dark panel never holds the engine back.
+// ---- Línea transitoria de OTA por pull (DESIGN §12) ----
+// ui_ota_status() la llama el worker del pull de OTA, que nunca debe tocar LVGL.
+// Solo copia el texto + el porcentaje y estampa aquí una fecha límite; el
+// lv_label_set_text lo hace ui_tick_anim() (tarea del loop). La línea se borra
+// sola tras unos segundos, así que un panel oscuro nunca frena el motor.
 #define OTA_STATUS_MAX   32
 #define OTA_STATUS_MS    3000
 static char     ota_status_text[OTA_STATUS_MAX];
 static int      ota_status_pct   = -1;
-static uint32_t ota_status_until = 0;       // lv_tick deadline
+static uint32_t ota_status_until = 0;       // fecha límite en lv_tick
 static bool     ota_status_valid = false;
 #ifndef BOARD_SIM
 static portMUX_TYPE ota_status_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -337,44 +346,44 @@ static const char* const spinner_frames[] = {
     "\xE2\x9C\xB6", "\xE2\x9C\xB3", "\xE2\x9C\xA2",
 };
 #define SPINNER_COUNT 6
-#define SPINNER_PHASES (2 * (SPINNER_COUNT - 1))  // 10: ping-pong 0..5..0
+#define SPINNER_PHASES (2 * (SPINNER_COUNT - 1))  // 10: ida y vuelta 0..5..0
 
 static const uint16_t spinner_ms[SPINNER_COUNT] = {
     260, 130, 130, 130, 130, 260,
 };
 
 static const char* const anim_messages[] = {
-    "Accomplishing", "Elucidating", "Perusing",
-    "Actioning", "Enchanting", "Philosophising",
-    "Actualizing", "Envisioning", "Pondering",
-    "Baking", "Finagling", "Pontificating",
-    "Booping", "Flibbertigibbeting", "Processing",
-    "Brewing", "Forging", "Puttering",
-    "Calculating", "Forming", "Puzzling",
-    "Cerebrating", "Frolicking", "Reticulating",
-    "Channelling", "Generating", "Ruminating",
-    "Churning", "Germinating", "Scheming",
-    "Clauding", "Hatching", "Schlepping",
-    "Coalescing", "Herding", "Shimmying",
-    "Cogitating", "Honking", "Shucking",
-    "Combobulating", "Hustling", "Simmering",
-    "Computing", "Ideating", "Smooshing",
-    "Concocting", "Imagining", "Spelunking",
-    "Conjuring", "Incubating", "Spinning",
-    "Considering", "Inferring", "Stewing",
-    "Contemplating", "Jiving", "Sussing",
-    "Cooking", "Manifesting", "Synthesizing",
-    "Crafting", "Marinating", "Thinking",
-    "Creating", "Meandering", "Tinkering",
-    "Crunching", "Moseying", "Transmuting",
-    "Deciphering", "Mulling", "Unfurling",
-    "Deliberating", "Mustering", "Unravelling",
-    "Determining", "Musing", "Vibing",
-    "Discombobulating", "Noodling", "Wandering",
-    "Divining", "Percolating", "Whirring",
-    "Doing", "Wibbling",
-    "Effecting", "Wizarding",
-    "Working", "Wrangling",
+    "Logrando", "Esclareciendo", "Hojeando",
+    "Accionando", "Encantando", "Filosofando",
+    "Actualizando", "Vislumbrando", "Elucubrando",
+    "Horneando", "Ingeniándoselas", "Pontificando",
+    "Boopeando", "Paroleando", "Procesando",
+    "Infusionando", "Forjando", "Pululando",
+    "Calculando", "Formando", "Barajando",
+    "Cerebreando", "Retozando", "Reticulando",
+    "Canalizando", "Generando", "Rumiando",
+    "Batiendo", "Germinando", "Maquinando",
+    "Claudeando", "Eclosionando", "Arrastrando",
+    "Aglutinando", "Arreando", "Meneándose",
+    "Cavilando", "Graznando", "Desvainando",
+    "Combobulando", "Trajinando", "Burbujeando",
+    "Computando", "Ideando", "Chafando",
+    "Preparando", "Imaginando", "Espeleando",
+    "Conjurando", "Incubando", "Girando",
+    "Considerando", "Infiriendo", "Guisando",
+    "Contemplando", "Bailoteando", "Desentrañando",
+    "Cocinando", "Manifestando", "Sintetizando",
+    "Elaborando", "Marinando", "Pensando",
+    "Creando", "Deambulando", "Cacharreando",
+    "Masticando", "Paseando", "Transmutando",
+    "Descifrando", "Ponderando", "Desplegando",
+    "Deliberando", "Reuniendo", "Desenredando",
+    "Determinando", "Meditando", "Vibrando",
+    "Descombobulando", "Trasteando", "Vagando",
+    "Adivinando", "Filtrando", "Zumbando",
+    "Haciendo", "Bamboleándose",
+    "Efectuando", "Hechizando",
+    "Trabajando", "Forcejeando",
 };
 #define ANIM_MSG_COUNT (sizeof(anim_messages) / sizeof(anim_messages[0]))
 
@@ -388,22 +397,23 @@ static void format_reset_time(int mins, char* buf, size_t len) {
     if (mins < 0) {
         snprintf(buf, len, "---");
     } else if (mins < 60) {
-        snprintf(buf, len, "Resets in %dm", mins);
+        snprintf(buf, len, "Se renueva en %d min", mins);
     } else if (mins < 1440) {
-        snprintf(buf, len, "Resets in %dh %dm", mins / 60, mins % 60);
+        snprintf(buf, len, "Se renueva en %d h %d min", mins / 60, mins % 60);
     } else {
-        snprintf(buf, len, "Resets in %dd %dh", mins / 1440, (mins % 1440) / 60);
+        snprintf(buf, len, "Se renueva en %d d %d h", mins / 1440, (mins % 1440) / 60);
     }
 }
 
-// Forward decls — callbacks defined near ui_show_screen below
+// Declaraciones adelantadas: los callbacks se definen junto a ui_show_screen, abajo
 static void global_click_cb(lv_event_t* e);
 
-// ======== Page indicator ========
-// A transparent full-width row at the bottom; the dots themselves never take
-// the click, so a tap lands here and navigates exactly like a tap anywhere
-// else. Created last so it sits on top of every screen's widgets (and the
-// battery), which matters because the row overlaps their bottom margins.
+// ======== Indicador de página ========
+// Una franja transparente de ancho completo abajo; los puntos nunca se quedan
+// con el clic, así que un toque aquí llega y navega igual que un toque en
+// cualquier otro lado. Se crea al final para que quede por encima de los
+// widgets de todas las pantallas (y de la batería), lo que importa porque la
+// franja se superpone con sus márgenes inferiores.
 static void build_page_dots(lv_obj_t* parent) {
     dots_root = lv_obj_create(parent);
     lv_obj_set_size(dots_root, L.scr_w, PAGE_DOT_D);
@@ -425,15 +435,16 @@ static void build_page_dots(lv_obj_t* parent) {
         lv_obj_clear_flag(d, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_clear_flag(d, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_flag(d, LV_OBJ_FLAG_EVENT_BUBBLE);
-        lv_obj_add_flag(d, LV_OBJ_FLAG_HIDDEN);   // set_page_dots() reveals them
+        lv_obj_add_flag(d, LV_OBJ_FLAG_HIDDEN);   // set_page_dots() los revela
         dots[i] = d;
     }
-    lv_obj_add_flag(dots_root, LV_OBJ_FLAG_HIDDEN);   // ui_show_screen() reveals it
+    lv_obj_add_flag(dots_root, LV_OBJ_FLAG_HIDDEN);   // ui_show_screen() lo revela
 }
 
-// Centre the row on the screen's midpoint, then colour it: `n` dots visible,
-// dot `lit` highlighted. The x of every dot moves when the cycle grows from 2
-// to 4 to 5 screens, so both are recomputed here rather than once at build time.
+// Centra la franja en el punto medio de la pantalla y luego la colorea: `n`
+// puntos visibles, el punto `lit` resaltado. La x de cada punto se mueve cuando
+// el ciclo crece de 2 a 4 a 5 pantallas, así que ambas cosas se recalculan aquí
+// en lugar de una sola vez al construir.
 static void set_page_dots(int n, int lit) {
     int step = PAGE_DOT_D + PAGE_DOT_GAP;
     int total = n * PAGE_DOT_D + (n - 1) * PAGE_DOT_GAP;
@@ -450,8 +461,9 @@ static void set_page_dots(int n, int lit) {
     dots_lit = lit;
 }
 
-// Hide the row once its 1.5 s window is over. Runs from ui_tick_anim() before
-// the per-screen early return, so it expires on every screen.
+// Oculta la franja cuando se termina su ventana de 1,5 s. Corre desde
+// ui_tick_anim() antes del retorno temprano de cada pantalla, así que caduca en
+// todas.
 static void tick_page_dots(void) {
     if (!dots_root || dots_lit < 0) return;
     if (lv_obj_has_flag(dots_root, LV_OBJ_FLAG_HIDDEN)) return;
@@ -531,7 +543,7 @@ static void init_battery_icons(void) {
     init_icon_dsc_rgb565a8(&battery_dscs[4], ICON_BATTERY_CHARGING_W, ICON_BATTERY_CHARGING_H, icon_battery_charging_data);
 }
 
-// ======== Usage Screen ========
+// ======== Pantalla de uso ========
 
 static lv_obj_t* make_usage_panel(lv_obj_t* parent, int y, const char* pill_text,
                                   lv_obj_t** out_pct, lv_obj_t** out_pill,
@@ -559,8 +571,9 @@ static lv_obj_t* make_usage_panel(lv_obj_t* parent, int y, const char* pill_text
     return panel;
 }
 
-// Pairing hint — shown when disconnected so the screen isn't empty and the
-// user knows how to (re)pair. Wording matches the 3-second release gesture.
+// Aviso de emparejamiento: se muestra sin conexión para que la pantalla no quede
+// vacía y el usuario sepa cómo (re)emparejar. La redacción acompaña el gesto de
+// soltar a los 3 segundos.
 static void build_pair_group(lv_obj_t* parent) {
     pair_group = lv_obj_create(parent);
     lv_obj_set_size(pair_group, L.scr_w, L.scr_h - L.content_y);
@@ -572,41 +585,43 @@ static void build_pair_group(lv_obj_t* parent) {
     lv_obj_add_flag(pair_group, LV_OBJ_FLAG_EVENT_BUBBLE);
 
     lv_obj_t* l1 = lv_label_create(pair_group);
-    lv_label_set_text(l1, "To pair");
+    lv_label_set_text(l1, "Para emparejar");
     lv_obj_set_style_text_font(l1, L.bt_status_font, 0);
     lv_obj_set_style_text_color(l1, COL_TEXT, 0);
     lv_obj_align(l1, LV_ALIGN_TOP_MID, 0, L.pair_y1);
 
     lv_obj_t* l2 = lv_label_create(pair_group);
-    lv_label_set_text(l2, "hold the power button");
+    lv_label_set_text(l2, "mantén pulsado el botón");
     lv_obj_set_style_text_font(l2, L.bt_device_font, 0);
     lv_obj_set_style_text_color(l2, COL_DIM, 0);
     lv_obj_align(l2, LV_ALIGN_TOP_MID, 0, L.pair_y2);
 
     lv_obj_t* l3 = lv_label_create(pair_group);
-    lv_label_set_text(l3, "for 3 seconds, then release");
+    lv_label_set_text(l3, "central durante 3 s y suéltalo");
     lv_obj_set_style_text_font(l3, L.bt_device_font, 0);
     lv_obj_set_style_text_color(l3, COL_DIM, 0);
     lv_obj_align(l3, LV_ALIGN_TOP_MID, 0, L.pair_y3);
 
-    lv_obj_add_flag(pair_group, LV_OBJ_FLAG_HIDDEN);  // ui_update_ble_status decides
+    lv_obj_add_flag(pair_group, LV_OBJ_FLAG_HIDDEN);  // ui_update_ble_status decide
 }
 
-// Format the 8-char pairing code as "ABCD-2345" for readability. The alphabet
-// (PHASE2-CONTRACT.md §2) has no HTML/LVGL-special characters, so the result is
-// safe to drop straight into a label or the portal page.
+// Da formato al código de 8 caracteres como "ABCD-2345" para que se lea mejor. El
+// alfabeto (PHASE2-CONTRACT.md §2) no tiene caracteres especiales de HTML ni de
+// LVGL, así que el resultado se puede poner tal cual en una etiqueta o en el
+// portal.
 static void format_pair_code(const char* code, char* buf, size_t len) {
     if (!code || !code[0]) { buf[0] = '\0'; return; }
     if (strlen(code) == 8) snprintf(buf, len, "%.4s-%.4s", code, code + 4);
     else                   snprintf(buf, len, "%s", code);
 }
 
-// Backend pairing-code view (phase 2, PHASE2-CONTRACT.md §7). Shown while the
-// device has no device token but a code has been generated; once a token is
-// stored the normal usage view returns (see update_view_state()). Mirrors
-// build_pair_group()'s full-content-area layout so the code is readable at arm's
-// length, and deliberately shows a code — not the BLE hint — so onboarding has a
-// single, unambiguous next step.
+// Vista de código de emparejamiento del backend (fase 2, PHASE2-CONTRACT.md §7).
+// Se muestra mientras el dispositivo no tiene token de dispositivo pero ya se
+// generó un código; en cuanto se guarda un token vuelve la vista de uso normal
+// (ver update_view_state()). Copia el diseño de área de contenido completa de
+// build_pair_group() para que el código se lea a un brazo de distancia, y a
+// propósito muestra un código —no el aviso BLE— para que el primer paso de la
+// puesta en marcha sea único y sin ambigüedades.
 static void build_pair_code_group(lv_obj_t* parent) {
     paircode_group = lv_obj_create(parent);
     lv_obj_set_size(paircode_group, L.scr_w, L.scr_h - L.content_y);
@@ -618,7 +633,7 @@ static void build_pair_code_group(lv_obj_t* parent) {
     lv_obj_add_flag(paircode_group, LV_OBJ_FLAG_EVENT_BUBBLE);
 
     lv_obj_t* l1 = lv_label_create(paircode_group);
-    lv_label_set_text(l1, "Pairing code");
+    lv_label_set_text(l1, "Código");
     lv_obj_set_style_text_font(l1, L.bt_status_font, 0);
     lv_obj_set_style_text_color(l1, COL_TEXT, 0);
     lv_obj_align(l1, LV_ALIGN_TOP_MID, 0, L.paircode_y1);
@@ -640,9 +655,10 @@ static void build_pair_code_group(lv_obj_t* parent) {
     lv_obj_add_flag(paircode_group, LV_OBJ_FLAG_HIDDEN);
 }
 
-// The pairing code is runtime state and may appear or change after the group is
-// built, so refresh the two labels from usage_pair_*() on every tick while the
-// view is visible. Only writes when a value actually changed.
+// El código de emparejamiento es estado de runtime y puede aparecer o cambiar
+// después de construir el grupo, así que las dos etiquetas se refrescan desde
+// usage_pair_*() en cada tick mientras la vista está visible. Solo escribe cuando
+// un valor cambió de verdad.
 static void tick_pair_code(void) {
     if (!paircode_group || !lbl_paircode_code || !lbl_paircode_hint) return;
 
@@ -651,11 +667,11 @@ static void tick_pair_code(void) {
 
     const char* st = usage_pair_state();
     const char* hint = (st && strcmp(st, "error") == 0)
-        ? "Can't reach the server - retrying"
-        : "Enter this code in the owner tool to pair";
+        ? "Sin respuesta del servidor - reintentando"
+        : "Introduce este código en la herramienta para vincular";
 
     static char last_code[16];
-    static char last_hint[48];
+    static char last_hint[64];
     if (strcmp(code, last_code) != 0) {
         lv_label_set_text(lbl_paircode_code, code);
         snprintf(last_code, sizeof(last_code), "%s", code);
@@ -666,9 +682,10 @@ static void tick_pair_code(void) {
     }
 }
 
-// Idle "Zzz" screen — shown when the host is connected but no usage update has
-// landed recently (token expired, daemon down, host asleep…). Full-screen, like
-// the pairing hint, so we never render hours-old numbers as if they were live.
+// Pantalla de reposo "Zzz": se muestra cuando el host está conectado pero no
+// llegó ninguna actualización de uso hace poco (token vencido, daemon caído, host
+// dormido…). Ocupa toda la pantalla, igual que el aviso de emparejamiento, para
+// no dibujar nunca cifras de hace horas como si estuvieran en vivo.
 static void build_idle_group(lv_obj_t* parent) {
     idle_group = lv_obj_create(parent);
     lv_obj_set_size(idle_group, L.scr_w, L.scr_h - L.content_y);
@@ -679,13 +696,13 @@ static void build_idle_group(lv_obj_t* parent) {
     lv_obj_clear_flag(idle_group, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(idle_group, LV_OBJ_FLAG_EVENT_BUBBLE);
 
-    // A shrunk-down resting creature (the official cloud-ride animation)
-    // sits between the header and the status line; the animated "Listening…"
-    // status line carries the words, so no extra text is needed here.
+    // Una criatura descansando, encogida (la animación oficial del paseo en
+    // nube), va entre el encabezado y la línea de estado; la línea animada
+    // "Escuchando…" pone las palabras, así que aquí no hace falta texto extra.
     lv_obj_t* creature = splash_mini_create(idle_group, "cloud", L.idle_px);
     if (creature) lv_obj_align(creature, LV_ALIGN_CENTER, 0, -20);
 
-    lv_obj_add_flag(idle_group, LV_OBJ_FLAG_HIDDEN);  // update_view_state decides
+    lv_obj_add_flag(idle_group, LV_OBJ_FLAG_HIDDEN);  // update_view_state decide
 }
 
 static void init_usage_screen(lv_obj_t* scr) {
@@ -699,15 +716,17 @@ static void init_usage_screen(lv_obj_t* scr) {
     lv_obj_add_event_cb(usage_container, global_click_cb, LV_EVENT_CLICKED, NULL);
 
     lbl_title = lv_label_create(usage_container);
-    lv_label_set_text(lbl_title, "Usage");
+    lv_label_set_text(lbl_title, "Consumo");
     lv_obj_set_style_text_font(lbl_title, L.title_font, 0);
     lv_obj_set_style_text_color(lbl_title, COL_TEXT, 0);
-    // The nudge balances the corner logo on the left; smaller on small
-    // screens where the logo is 40px and the battery icon sits closer.
+    // El desplazamiento compensa el logo de la esquina izquierda; es más chico
+    // en las pantallas pequeñas, donde el logo es de 40 px y el icono de
+    // batería está más cerca.
     lv_obj_align(lbl_title, LV_ALIGN_TOP_MID, L.title_nudge, L.title_y);
 
-    // Usage panels (shown when connected) live in a transparent full-size group
-    // so they can be toggled against the pairing hint as one unit.
+    // Los paneles de uso (visibles con conexión) viven en un grupo transparente
+    // de tamaño completo para poder mostrarlos u ocultarlos contra el aviso de
+    // emparejamiento como una sola unidad.
     usage_group = lv_obj_create(usage_container);
     lv_obj_set_size(usage_group, L.scr_w, L.scr_h);
     lv_obj_set_pos(usage_group, 0, 0);
@@ -717,11 +736,11 @@ static void init_usage_screen(lv_obj_t* scr) {
     lv_obj_clear_flag(usage_group, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(usage_group, LV_OBJ_FLAG_EVENT_BUBBLE);
 
-    panel_session = make_usage_panel(usage_group, L.content_y, "Current",
+    panel_session = make_usage_panel(usage_group, L.content_y, "Actual",
                      &lbl_session_pct, &lbl_session_label,
                      &bar_session, &lbl_session_reset);
 
-    // Enterprise-only overlays inside panel_session — hidden until enterprise data arrives
+    // Superposiciones solo para enterprise dentro de panel_session; ocultas hasta que lleguen datos enterprise
     lbl_session_pct_sym = lv_label_create(panel_session);
     lv_label_set_text(lbl_session_pct_sym, "%");
     lv_obj_set_style_text_font(lbl_session_pct_sym, L.reset_font, 0);
@@ -729,7 +748,7 @@ static void init_usage_screen(lv_obj_t* scr) {
     lv_obj_add_flag(lbl_session_pct_sym, LV_OBJ_FLAG_HIDDEN);
 
     lbl_spending_desc = lv_label_create(panel_session);
-    lv_label_set_text(lbl_spending_desc, "of your monthly budget");
+    lv_label_set_text(lbl_spending_desc, "de tu presupuesto mensual");
     lv_obj_set_style_text_font(lbl_spending_desc, L.reset_font, 0);
     lv_obj_set_style_text_color(lbl_spending_desc, COL_DIM, 0);
     lv_obj_set_pos(lbl_spending_desc, 0, L.usage_reset_y);
@@ -742,17 +761,17 @@ static void init_usage_screen(lv_obj_t* scr) {
     lv_obj_add_flag(lbl_spending_status, LV_OBJ_FLAG_HIDDEN);
 
     panel_weekly = make_usage_panel(usage_group,
-                     L.content_y + L.usage_panel_h + L.usage_panel_gap, "Weekly",
+                     L.content_y + L.usage_panel_h + L.usage_panel_gap, "Semanal",
                      &lbl_weekly_pct, &lbl_weekly_label,
                      &bar_weekly, &lbl_weekly_reset);
-    // Recolor enabled so enterprise period box can color pace and reset separately
+    // Recolor activado para que la caja de periodo de enterprise pueda colorear el ritmo y la renovación por separado
     lv_label_set_recolor(lbl_weekly_reset, true);
 
     build_pair_group(usage_container);
     build_idle_group(usage_container);
     build_pair_code_group(usage_container);
 
-    // Status line — always visible on the usage view. Driven by ui_tick_anim().
+    // Línea de estado, siempre visible en la vista de uso. La maneja ui_tick_anim().
     lbl_anim = lv_label_create(usage_container);
     lv_label_set_text(lbl_anim, "");
     lv_obj_set_style_text_font(lbl_anim, L.anim_font, 0);
@@ -760,7 +779,7 @@ static void init_usage_screen(lv_obj_t* scr) {
     lv_obj_align(lbl_anim, LV_ALIGN_BOTTOM_MID, 0, L.anim_y);
 }
 
-// ======== Public API ========
+// ======== API pública ========
 
 void ui_init(void) {
     compute_layout(board_caps());
@@ -770,7 +789,7 @@ void ui_init(void) {
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
 
 #ifndef BOARD_HAS_PSRAM
-    // Static corner mascot (see clawd_still.h) — the animated one needs PSRAM.
+    // Mascota quieta de la esquina (ver clawd_still.h); la animada necesita PSRAM.
     if (L.small_icons) init_icon_dsc_rgb565a8(&logo_dsc, CLAWD_STILL_SMALL_W, CLAWD_STILL_SMALL_H, clawd_still_small_data);
     else               init_icon_dsc_rgb565a8(&logo_dsc, CLAWD_STILL_W, CLAWD_STILL_H, clawd_still_data);
 #endif
@@ -779,11 +798,11 @@ void ui_init(void) {
     init_usage_screen(scr);
     splash_init(scr);
     oc_usage_init(scr);
-    // The portfolio screen is built lazily, on the first ui_show_screen, and
-    // not here: five screens of LVGL objects up front exhaust the internal
-    // heap on the 480x480 boards, and the next malloc inside esp_intr_alloc
-    // trips the stack canary. The screen only enters the cycle when a payload
-    // arrives, which is exactly when the user turned it on.
+    // La pantalla del portfolio se construye de forma perezosa, en el primer
+    // ui_show_screen, y no aquí: cinco pantallas de objetos LVGL de golpe agotan
+    // el heap interno en las placas de 480x480, y el siguiente malloc dentro de
+    // esp_intr_alloc hace saltar el canario de pila. La pantalla solo entra al
+    // ciclo cuando llega un payload, que es justo cuando el usuario la encendió.
 
     if (splash_get_root()) {
         lv_obj_add_event_cb(splash_get_root(), global_click_cb, LV_EVENT_CLICKED, NULL);
@@ -792,14 +811,15 @@ void ui_init(void) {
         lv_obj_add_event_cb(oc_usage_get_root(), global_click_cb, LV_EVENT_CLICKED, NULL);
     }
 
-    // Corner mascot in the old logo slot. The still Clawd is shorter than the
-    // 80/40 px slot the spark logo used; center it vertically in that slot.
+    // Mascota de la esquina en la vieja ranura del logo. El Clawd quieto es más
+    // bajo que la ranura de 80/40 px que usaba el logo de la chispa; hay que
+    // centrarlo verticalmente en esa ranura.
     {
         const int slot  = L.small_icons ? LOGO_SMALL_HEIGHT : LOGO_HEIGHT;
         const int art_h = L.small_icons ? CLAWD_STILL_SMALL_H : CLAWD_STILL_H;
         const int top   = L.logo_y + (slot - art_h) / 2;
 #ifdef BOARD_HAS_PSRAM
-        // Animated: idles, does acts, and takes walk-off/lurk trips.
+        // Animado: reposa, hace gracias y sale a pasear o a acechar.
         splash_mascot_create(scr, L.margin, top + art_h, L.small_icons ? 2 : 3);
 #else
         logo_img = lv_image_create(scr);
@@ -811,30 +831,32 @@ void ui_init(void) {
     battery_img = lv_image_create(scr);
     lv_image_set_src(battery_img, &battery_dscs[0]);
     lv_obj_set_pos(battery_img, L.scr_w - L.batt_w - L.margin, L.batt_y);
-    // Boards without battery telemetry never show the indicator (per the HAL
-    // contract; previously every board drew the empty-battery glyph).
+    // Las placas sin telemetría de batería nunca muestran el indicador (según el
+    // contrato del HAL; antes todas las placas dibujaban el glifo de batería
+    // vacía).
     if (!board_caps().has_battery) {
         lv_obj_del(battery_img);
         battery_img = nullptr;
     }
 
-    // Last, so the dots are the frontmost children of the screen and stay
-    // readable over whatever each screen draws along its bottom edge.
+    // Al final, para que los puntos sean los hijos más al frente de la pantalla y
+    // se mantengan legibles sobre lo que cada pantalla dibuja en su borde inferior.
     build_page_dots(scr);
     lv_obj_move_foreground(dots_root);
 }
 
 static void ui_update_impl(const UsageData* data, bool external);
 
-// BLE path (main.cpp) and, today, the WiFi pull too. With no BLE link the only
-// possible source is the WiFi pull, so an update that lands while disconnected
-// is classified external automatically.
+// El camino BLE (main.cpp) y, hoy por hoy, también el pull WiFi. Sin enlace BLE
+// la única fuente posible es el pull WiFi, así que una actualización que llega
+// desconectado se clasifica como externa automáticamente.
 void ui_update(const UsageData* data) {
     ui_update_impl(data, !s_ble_connected);
 }
 
-// Explicit WiFi-pull entry point: counts as external even while BLE is
-// connected (e.g. only the OS HID link is up and no daemon is feeding us).
+// Punto de entrada explícito del pull WiFi: cuenta como externo incluso con BLE
+// conectado (p. ej. si solo está arriba el enlace HID del sistema operativo y
+// ningún daemon nos alimenta).
 void ui_update_external(const UsageData* data) {
     ui_update_impl(data, true);
 }
@@ -842,30 +864,30 @@ void ui_update_external(const UsageData* data) {
 static void ui_update_impl(const UsageData* data, bool external) {
     if (!data->valid) return;
     data_ok = data->ok;
-    if (!data->ok) return;          // a {"ok":false} "no data" beat → fall through to idle, keep last numbers
-    last_data_ms = lv_tick_get();   // a real usage update just landed
+    if (!data->ok) return;          // un latido {"ok":false} de "sin datos": caer al reposo conservando las últimas cifras
+    last_data_ms = lv_tick_get();   // acaba de llegar una actualización real de uso
     data_received = true;
     if (external) {
         ext_data_ms = last_data_ms;
         ext_received = true;
     }
 
-    if (data->clock_epoch > 0) {    // daemon supplied wall-clock time → drive the title clock
+    if (data->clock_epoch > 0) {    // el daemon trajo hora de pared → alimentar el reloj del título
         clock_base_epoch = data->clock_epoch;
         clock_base_ms = last_data_ms;
         clock_fmt = data->clock_fmt;
-    } else if (clock_base_epoch != 0) {   // clock turned off daemon-side → revert title to "Usage"
+    } else if (clock_base_epoch != 0) {   // el daemon apagó el reloj → devolver el título a "Consumo"
         clock_base_epoch = 0;
         clock_last_min = -1;
-        lv_label_set_text(lbl_title, "Usage");
+        lv_label_set_text(lbl_title, "Consumo");
     }
 
     int s_pct = (int)(data->session_pct + 0.5f);
 
     if (data->enterprise) {
-        // Spending box: big number-only label + small "%" symbol + desc + pace
+        // Caja de gasto: etiqueta grande solo con el número + símbolo "%" chico + descripción + ritmo
         lv_obj_set_style_text_font(lbl_session_pct, L.ent_pct_font, 0);
-        lv_label_set_text(lbl_session_label, "Spending");
+        lv_label_set_text(lbl_session_label, "Gasto");
         lv_obj_add_flag(lbl_session_reset, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(lbl_session_pct_sym, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(lbl_spending_desc,   LV_OBJ_FLAG_HIDDEN);
@@ -873,7 +895,7 @@ static void ui_update_impl(const UsageData* data, bool external) {
         if (panel_weekly) lv_obj_clear_flag(panel_weekly, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_set_style_text_font(lbl_session_pct, L.pct_font, 0);
-        lv_label_set_text(lbl_session_label, "Current");
+        lv_label_set_text(lbl_session_label, "Actual");
         lv_obj_clear_flag(lbl_session_reset, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(lbl_session_pct_sym, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(lbl_spending_desc,   LV_OBJ_FLAG_HIDDEN);
@@ -881,16 +903,18 @@ static void ui_update_impl(const UsageData* data, bool external) {
         if (panel_weekly) lv_obj_clear_flag(panel_weekly, LV_OBJ_FLAG_HIDDEN);
     }
 
-    char buf[48];
+    char buf[96];
 
-    // Pace vars used in both enterprise blocks below
-    const char* pace_text = "Under pace";
+    // Variables de ritmo que usan los dos bloques enterprise de abajo. Van en la
+    // línea recolorada "ritmo - Renueva <fecha>" del panel semanal, así que
+    // tienen que caber en el ancho del panel junto a la fecha.
+    const char* pace_text = "Ritmo bajo";
     lv_color_t  pace_color = COL_GREEN;
-    const char* pace_hex   = "788c5d";   // matches THEME_GREEN
+    const char* pace_hex   = "788c5d";   // coincide con THEME_GREEN
     if (data->session_pct > (float)data->time_pct + 15.0f) {
-        pace_text = "Over pace";  pace_color = COL_RED;   pace_hex = "c0392b";
+        pace_text = "Ritmo alto";        pace_color = COL_RED;   pace_hex = "c0392b";
     } else if (data->session_pct > (float)data->time_pct - 15.0f) {
-        pace_text = "On pace";    pace_color = COL_AMBER; pace_hex = "d97757";
+        pace_text = "En ritmo";          pace_color = COL_AMBER; pace_hex = "d97757";
     }
 
     if (data->enterprise) {
@@ -907,15 +931,15 @@ static void ui_update_impl(const UsageData* data, bool external) {
     lv_obj_set_style_bg_color(bar_session, pct_color(data->session_pct), LV_PART_INDICATOR);
 
     if (data->enterprise) {
-        // Period box: time % + dynamic pace color + "Resets <date>" label
-        lv_label_set_text(lbl_weekly_label, "Period");
+        // Caja de periodo: % de tiempo + color de ritmo dinámico + etiqueta "Renueva <fecha>"
+        lv_label_set_text(lbl_weekly_label, "Periodo");
         lv_label_set_text_fmt(lbl_weekly_pct, "%d%%", data->time_pct);
         lv_bar_set_value(bar_weekly, data->time_pct, LV_ANIM_ON);
         lv_color_t bar_pace = (data->session_pct <= (float)data->time_pct) ? COL_GREEN :
                               (data->session_pct <= (float)data->time_pct + 15.0f) ? COL_AMBER :
                               COL_RED;
         lv_obj_set_style_bg_color(bar_weekly, bar_pace, LV_PART_INDICATOR);
-        snprintf(buf, sizeof(buf), "#%s %s# - #faf9f5 Resets %s#",
+        snprintf(buf, sizeof(buf), "#%s %s# - #faf9f5 Renueva %s#",
                  pace_hex, pace_text, data->reset_date);
         lv_label_set_text(lbl_weekly_reset, buf);
     } else {
@@ -928,29 +952,32 @@ static void ui_update_impl(const UsageData* data, bool external) {
     }
 }
 
-// Pick the usage-view sub-screen: the backend pairing code (unpaired, phase 2),
-// the BLE pairing hint (BLE down), the idle "Zzz" screen (connected but data has
-// gone stale), or the live usage panels. Only re-lays-out on an actual change.
-// The animated status line stays visible everywhere — it reads "Listening…" on
-// the idle screen and "Pairing…" on the code screen, keeping it alive.
+// Elige la subpantalla de la vista de uso: el código de emparejamiento del
+// backend (sin vincular, fase 2), el aviso de emparejamiento BLE (BLE caído), la
+// pantalla de reposo "Zzz" (conectado pero con datos viejos) o los paneles de uso
+// en vivo. Solo vuelve a armar el layout cuando el estado cambia de verdad. La
+// línea de estado animada se queda visible en todos lados: dice "Escuchando…" en
+// la pantalla de reposo y "Emparejando…" en la del código, para que todo se vea
+// vivo.
 static void update_view_state(void) {
     if (!usage_group || !pair_group || !idle_group || !paircode_group) return;
     int v;
     const uint32_t now = lv_tick_get();
     const char* pcode = usage_pair_code();
     if (!usage_pair_has_token() && pcode && pcode[0]) {
-        // Backend pairing (phase 2): no device token yet but a code has been
-        // generated — show the code until the owner approves it, whatever the
-        // BLE state. Clears itself the moment usage_pair_has_token() flips.
+        // Emparejamiento por backend (fase 2): todavía no hay token de
+        // dispositivo pero ya se generó un código; mostrar el código hasta que el
+        // dueño lo apruebe, pase lo que pase con BLE. Se va solo en cuanto
+        // usage_pair_has_token() cambia a true.
         v = 3;
     } else if (ext_received && data_ok && (now - ext_data_ms) < EXT_FRESH_MS) {
-        v = 2;  // live usage from the WiFi pull — shown whatever the BLE state
+        v = 2;  // uso en vivo desde el pull WiFi; se muestra en cualquier estado de BLE
     } else if (!s_ble_connected) {
-        v = 0;  // pairing hint
+        v = 0;  // aviso de emparejamiento
     } else if (data_received && data_ok && (now - last_data_ms) < DATA_FRESH_MS) {
-        v = 2;  // live usage (BLE daemon, 90 s window — unchanged)
+        v = 2;  // uso en vivo (daemon BLE, ventana de 90 s: sin cambios)
     } else {
-        v = 1;  // idle / Zzz
+        v = 1;  // reposo / Zzz
     }
     if (v == view_state) return;
     view_state = v;
@@ -964,26 +991,28 @@ static void update_view_state(void) {
 }
 
 void ui_tick_anim(void) {
-    // Screen-independent work first: the page indicator's 1.5 s window has to
-    // expire on the splash and both OpenCode screens too, and the OpenCode and
-    // portfolio screens keep their own status lines ticking while visible.
+    // Primero el trabajo que no depende de la pantalla: la ventana de 1,5 s del
+    // indicador de página tiene que caducar también en el splash y en las dos
+    // pantallas de OpenCode, y las de OpenCode y del portfolio mantienen sus
+    // propias líneas de estado andando mientras están visibles.
     tick_page_dots();
     if (current_screen == SCREEN_OC_USAGE) oc_usage_tick();
     if (current_screen == SCREEN_PORTFOLIO) pf_usage_tick();
     if (current_screen != SCREEN_USAGE) return;
     update_view_state();
-    if (view_state == 1) splash_mini_tick();   // animate the sleeping creature on the idle screen
-    else if (view_state == 3) tick_pair_code();  // keep the pairing code/hint current
+    if (view_state == 1) splash_mini_tick();   // animar la criatura dormida en la pantalla de reposo
+    else if (view_state == 3) tick_pair_code();  // mantener el código y la pista al día
 
     uint32_t now = lv_tick_get();
 
-    // Title clock: once the daemon has sent wall-clock time, replace "Usage" with
-    // the live time, advanced locally so it ticks every minute between payloads.
+    // Reloj del título: en cuanto el daemon manda la hora de pared, "Consumo" se
+    // reemplaza por la hora en vivo, avanzada en local para que cambie cada minuto
+    // entre payloads.
     if (clock_base_epoch > 0) {
         time_t cur = (time_t)(clock_base_epoch + (now - clock_base_ms) / 1000);
         struct tm tmv;
-        gmtime_r(&cur, &tmv);   // epoch is already local wall-clock → gmtime keeps it as-is
-        if (tmv.tm_min != clock_last_min) {   // only rewrite the title when the minute changes
+        gmtime_r(&cur, &tmv);   // la época ya es hora local → gmtime la deja tal cual
+        if (tmv.tm_min != clock_last_min) {   // reescribir el título solo cuando cambia el minuto
             clock_last_min = tmv.tm_min;
             char tbuf[12];
             if (clock_fmt == 12) {
@@ -1009,14 +1038,16 @@ void ui_tick_anim(void) {
     anim_spinner_idx = (anim_phase < SPINNER_COUNT) ? anim_phase
                                                     : (SPINNER_PHASES - anim_phase);
 
-    // Status text by priority. Whimsical messages only when connected & settled.
-    // An in-flight OTA borrows this line rather than adding a screen (§5): the
-    // usage path keeps running, so the badge is purely additive. Both
-    // ota_is_active() and ota_pull_is_active() are hard-coded false in the sim.
+    // Texto de estado por prioridad. Los mensajes fantasiosos solo aparecen con
+    // conexión y ya asentados. Una OTA en vuelo se apropia de esta línea en lugar
+    // de agregar una pantalla (§5): el camino de uso sigue andando, así que la
+    // placa es puramente adicional. Tanto ota_is_active() como
+    // ota_pull_is_active() están forzados a false en el simulador.
     //
-    // A transient pull-OTA line, if one is live, wins over the generic badge.
-    // Its text was stashed by ui_ota_status() (possibly on the pull task); the
-    // label is written here, on the loop task, so no LVGL call crosses threads.
+    // Si hay una línea transitoria de OTA por pull viva, le gana a la placa
+    // genérica. Su texto lo guardó ui_ota_status() (posiblemente en la tarea del
+    // pull); la etiqueta se escribe aquí, en la tarea del loop, para que ninguna
+    // llamada a LVGL cruce hilos.
     char sbuf[OTA_STATUS_MAX];
     int  spct = -1;
     bool sactive = false;
@@ -1025,7 +1056,7 @@ void ui_tick_anim(void) {
         for (size_t i = 0; i < sizeof(sbuf); i++) sbuf[i] = ota_status_text[i];
         spct = ota_status_pct;
         sactive = (int32_t)(now - ota_status_until) < 0;
-        if (!sactive) ota_status_valid = false;   // expired → stop re-showing it
+        if (!sactive) ota_status_valid = false;   // caducó → dejar de repetirla
     }
     OTA_STATUS_UNLOCK();
 
@@ -1048,28 +1079,29 @@ void ui_tick_anim(void) {
 
     const char* text;
     if (view_state == 3) {
-        text = "Pairing";              // backend pairing code on screen
+        text = "Emparejando";     // código de emparejamiento del backend en pantalla
     } else if (!s_ble_connected && view_state != 2) {
-        text = "Waiting";              // advertising / waiting for a host connection
-    } else if (view_state == 1) {      // idle — alternate so it reads as alive AND data-less
-        text = (anim_msg_idx & 1) ? "No data" : "Listening";
+        text = "Esperando";       // publicitando / esperando la conexión de un host
+    } else if (view_state == 1) {  // reposo: alternar para que se lea vivo y sin datos a la vez
+        text = (anim_msg_idx & 1) ? "Sin datos" : "Escuchando";
     } else if (s_ble_connected && now - connected_at_ms < 5000) {
-        text = "Connected";
+        text = "Conectado";
     } else {
         text = anim_messages[anim_msg_idx];
     }
 
-    // All states share the whimsical style: "<glyph> <Title-case word>…"
+    // Todos los estados comparten el estilo fantasioso: "<glifo> <palabra con mayúscula inicial>…"
     static char buf[80];
     snprintf(buf, sizeof(buf), "%s %s\xE2\x80\xA6",
              spinner_frames[anim_spinner_idx], text);
     lv_label_set_text(lbl_anim, buf);
 }
 
-// Non-blocking handoff from the OTA pull worker to the UI. Only copies the
-// text + pct and stamps a deadline under a tiny critical section; the actual
-// lv_label_set_text happens in ui_tick_anim() on the loop task, so this is
-// safe to call from any task and never touches LVGL. pct < 0 = no percentage.
+// Traspaso no bloqueante del worker del pull de OTA a la interfaz. Solo copia el
+// texto + el porcentaje y estampa una fecha límite bajo una sección crítica
+// pequeña; el lv_label_set_text de verdad lo hace ui_tick_anim() en la tarea del
+// loop, así que se puede llamar desde cualquier tarea y nunca toca LVGL.
+// pct < 0 = sin porcentaje.
 void ui_ota_status(const char* text, int pct) {
     uint32_t until = lv_tick_get() + OTA_STATUS_MS;
     OTA_STATUS_LOCK();
@@ -1086,11 +1118,11 @@ void ui_ota_status(const char* text, int pct) {
     OTA_STATUS_UNLOCK();
 }
 
-// Both splash screens are wordless (Clawd, or the OpenCode scene on the same
-// shared canvas), so the battery indicator steps aside for them; the three
-// data screens keep it. The corner mascot and the static logo belong to the
-// Claude usage screen only — the OpenCode screens carry their own mark and the
-// portfolio its own header.
+// Las dos pantallas de splash no tienen palabras (Clawd, o la escena de OpenCode
+// en el mismo lienzo compartido), así que el indicador de batería se aparta para
+// ellas; las tres pantallas de datos lo conservan. La mascota de la esquina y el
+// logo quieto son solo de la pantalla de uso de Claude: las de OpenCode llevan su
+// propia marca y el portfolio su propio encabezado.
 static bool screen_is_splash(screen_t s) {
     return s == SCREEN_SPLASH || s == SCREEN_OC_SPLASH;
 }
@@ -1104,16 +1136,16 @@ static void apply_battery_visibility(void) {
     else                                        lv_obj_clear_flag(battery_img, LV_OBJ_FLAG_HIDDEN);
 }
 
-// SPEC.md §6: a tap anywhere advances one step around the cycle.
+// SPEC.md §6: un toque en cualquier lugar avanza un paso en el ciclo.
 static void global_click_cb(lv_event_t* e) {
     (void)e;
     ui_next_screen();
 }
 
-// The cycle order. The two OpenCode screens only join it once a payload has
-// arrived (oc_has_data()), and the portfolio once a "k":"pf" one has
-// (pf_has_data()) — which is what SPEC.md §6 means by "if that data never
-// arrives, the cycle stays Clawd splash ↔ Claude usage".
+// El orden del ciclo. Las dos pantallas de OpenCode se unen recién cuando llega
+// un payload (oc_has_data()), y el portfolio cuando llega uno de "k":"pf"
+// (pf_has_data()); es justo lo que SPEC.md §6 quiere decir con "si esos datos
+// nunca llegan, el ciclo se queda en splash de Clawd ↔ uso de Claude".
 static screen_t cycle_at(int i) {
     switch (i) {
     case 0:  return SCREEN_SPLASH;
@@ -1140,8 +1172,9 @@ static int cycle_index(screen_t s) {
 static void ui_step(int dir) {
     int n = cycle_len();
     int i = cycle_index(current_screen);
-    // Off-cycle (only reachable if a payload kind vanished, which it can't — the
-    // flags are sticky) or n==0: fall back to the Claude usage screen's neighbour.
+    // Fuera del ciclo (solo alcanzable si un tipo de payload desapareciera, lo que
+    // no puede pasar: las banderas son pegajosas) o n==0: caer al vecino de la
+    // pantalla de uso de Claude.
     if (i < 0) i = (n > 0) ? 0 : 1;
     i = ((i + dir) % n + n) % n;
     ui_show_screen(cycle_at(i));
@@ -1155,8 +1188,9 @@ void ui_prev_screen(void) {
     ui_step(-1);
 }
 
-// Reveal the dot row for 1.5 s. Called on every screen change, so the row also
-// grows from 2 to 4 to 5 dots the first time each payload kind lands.
+// Muestra la franja de puntos durante 1,5 s. Se llama en cada cambio de
+// pantalla, así que la franja también crece de 2 a 4 a 5 puntos la primera vez
+// que aterriza cada tipo de payload.
 static void show_page_dots(void) {
     int n = cycle_len();
     int i = cycle_index(current_screen);
@@ -1168,8 +1202,8 @@ static void show_page_dots(void) {
 }
 
 void ui_show_screen(screen_t screen) {
-    // Leave the current screen's resources before switching: the OpenCode
-    // screens own state that has to be released explicitly.
+    // Soltar los recursos de la pantalla actual antes de cambiar: las pantallas de
+    // OpenCode tienen estado propio que hay que liberar a mano.
     if (current_screen == SCREEN_OC_USAGE)  oc_usage_hide();
     if (current_screen == SCREEN_PORTFOLIO) pf_usage_hide();
     if (current_screen == SCREEN_OC_SPLASH) oc_splash_stop();
@@ -1179,19 +1213,20 @@ void ui_show_screen(screen_t screen) {
 
     switch (screen) {
     case SCREEN_SPLASH:
-        // Clawd owns the canvas again, then picks an animation for the rate.
+        // Clawd vuelve a ser dueño del lienzo y después elige una animación según
+        // el ritmo.
         oc_splash_stop();
         splash_show();
         break;
     case SCREEN_USAGE:
         lv_obj_clear_flag(usage_container, LV_OBJ_FLAG_HIDDEN);
-        // The clock label doubles as this screen's title; the OpenCode screen
-        // brings its own header, so it must not linger behind it.
+        // La etiqueta del reloj hace de título de esta pantalla; la pantalla de
+        // OpenCode trae su propio encabezado, así que no debe quedar detrás.
         lv_obj_clear_flag(lbl_title, LV_OBJ_FLAG_HIDDEN);
         break;
     case SCREEN_OC_SPLASH:
-        // Same shared canvas as Clawd, different owner: show it first (which
-        // skips the Clawd pick, see splash.h), then hand it over.
+        // El lienzo compartido de Clawd, otro dueño: mostrarlo primero (lo que
+        // se salta la elección de Clawd, ver splash.h) y después entregárselo.
         splash_show();
         oc_splash_start();
         break;
@@ -1199,9 +1234,9 @@ void ui_show_screen(screen_t screen) {
         oc_usage_show();
         break;
     case SCREEN_PORTFOLIO:
-        // First visit builds the screen; later visits just show it. Until then
-        // the root is NULL and pf_usage_get_root() returns NULL, which is how
-        // the cycle keeps this screen out when no payload has ever arrived.
+        // La primera visita construye la pantalla; las siguientes solo la muestran.
+        // Hasta entonces la raíz es NULL y pf_usage_get_root() devuelve NULL, que es
+        // como el ciclo mantiene esta pantalla afuera cuando nunca llegó un payload.
         if (!pf_usage_get_root()) {
             pf_usage_init(lv_screen_active());
             if (pf_usage_get_root()) {
@@ -1233,13 +1268,14 @@ screen_t ui_get_current_screen(void) {
     return current_screen;
 }
 
-// ---- OpenCode pipeline (SPEC.md §5, §8) ----
+// ---- Tubería de OpenCode (SPEC.md §5, §8) ----
 //
-// One payload feeds three consumers: the OpenCode usage screen, the OpenCode
-// splash's mood, and the assemble animation that plays when a usage window
-// refilled. The percentage-drop test compares against the previous payload, so
-// a window reset is caught on the beat that reports it rather than at the moment
-// the countdown reaches zero (which the firmware never sees).
+// Un payload alimenta a tres consumidores: la pantalla de uso de OpenCode, el
+// ánimo del splash de OpenCode y la animación de ensamblado que se reproduce
+// cuando una ventana de uso se recargó. La prueba de caída de porcentaje compara
+// contra el payload anterior, así que el reinicio de una ventana se detecta en el
+// latido que lo reporta y no en el momento en que la cuenta llega a cero (que el
+// firmware nunca ve).
 void ui_update_opencode(const OcData* data) {
     if (!data) return;
 
@@ -1247,8 +1283,9 @@ void ui_update_opencode(const OcData* data) {
 
     static bool have_prev = false;
     static int  prev_p5 = 0, prev_pw = 0;
-    // A 5-point drop in an hour or a week is a window that just reset: replay
-    // the mark assembling once, then hand the scene back to the mood.
+    // Una caída de 5 puntos en una hora o en una semana es una ventana que se
+    // acaba de reiniciar: repetir una vez el ensamblado de la marca y después
+    // devolverle la escena al ánimo.
     if (have_prev &&
         (prev_p5 - data->p5 >= 5 || prev_pw - data->pw >= 5)) {
         oc_splash_play_assemble();
@@ -1257,8 +1294,8 @@ void ui_update_opencode(const OcData* data) {
     prev_pw = data->pw;
     have_prev = true;
 
-    // Mood, in SPEC.md §5's order: the limit outranks everything, then how
-    // close the window is, then how many sessions are running.
+    // Ánimo, en el orden del SPEC.md §5: el límite gana sobre todo, después lo
+    // cerca que está la ventana y por último cuántas sesiones están corriendo.
     int peak = (data->p5 > data->pw) ? data->p5 : data->pw;
     oc_mood_t mood;
     if (data->limited)        mood = OC_MOOD_LIMITED;
@@ -1269,11 +1306,12 @@ void ui_update_opencode(const OcData* data) {
     oc_splash_set_mood(mood);
 }
 
-// ---- Portfolio pipeline (portfolio spec §6) ----
+// ---- Tubería del portfolio (especificación del portfolio §6) ----
 //
-// One payload, one consumer. It is deliberately the whole story: the daemon
-// never learns which screen is visible, and the private mode is a firmware-side
-// visibility switch over the exact same numbers (privacy spec §6).
+// Un payload, un consumidor. A propósito es toda la historia: el daemon nunca se
+// entera de qué pantalla está visible, y el modo privado es un interruptor de
+// visibilidad del lado del firmware sobre exactamente los mismos números
+// (especificación de privacidad §6).
 void ui_update_portfolio(const PfData* data) {
     if (!data) return;
     pf_usage_update(data);
@@ -1285,11 +1323,11 @@ void ui_update_ble_status(ble_state_t state, const char* name, const char* mac) 
     s_ble_connected = (state == BLE_STATE_CONNECTED);
 
     if (s_ble_connected && !was_connected) connected_at_ms = lv_tick_get();
-    // pair / idle / usage — picked from connection + data freshness.
+    // emparejando / reposo / uso: se elige por conexión + frescura de datos.
     update_view_state();
-    // The OpenCode screen dims its panels on a dropped link and says so on its
-    // status line — same notion of "connected" as the Claude screen above, and
-    // the same treatment on the portfolio screen.
+    // La pantalla de OpenCode atenúa sus paneles cuando se cae el enlace y lo dice
+    // en su línea de estado: misma noción de "conectado" que la pantalla de Claude
+    // de arriba, y el mismo tratamiento en la del portfolio.
     oc_usage_set_ble(s_ble_connected);
     pf_usage_set_ble(s_ble_connected);
 }

@@ -1,20 +1,22 @@
-# install-windows.ps1 - Clawdmeter Windows turnkey bootstrap (D-09)
+﻿# install-windows.ps1 - Instalación lista para usar de Clawdmeter en Windows (D-09)
 #
-# Creates a Python virtual environment, installs dependencies from
-# daemon\requirements-windows.txt, registers the tray app to launch at login
-# (HKCU\...\Run, no admin required), and starts the tray app immediately.
+# Crea un entorno virtual de Python, instala las dependencias de
+# daemon\requirements-windows.txt, registra la aplicación de bandeja para que se
+# inicie al iniciar sesión (HKCU\...\Run, sin necesidad de administrador) y la
+# arranca de inmediato.
 #
-# Usage:
+# Uso:
 #   powershell -ExecutionPolicy Bypass -File install-windows.ps1
 #
-# Or, if you have already set a permissive execution policy:
+# O bien, si ya has definido una política de ejecución permisiva:
 #   .\install-windows.ps1
 #
-# To disable autostart later: right-click the tray icon -> uncheck "Start at login"
-# Or remove manually: reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v Clawdmeter /f
+# Para desactivar más adelante el arranque automático: haz clic derecho en el
+# icono de la bandeja -> desmarca "Start at login"
+# O elimínalo a mano: reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v Clawdmeter /f
 #
-# Security: this script downloads nothing from the internet. It installs only
-# the packages listed in the in-repo daemon\requirements-windows.txt.
+# Seguridad: este script no descarga nada de internet. Instala únicamente los
+# paquetes listados en daemon\requirements-windows.txt del repositorio.
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -30,27 +32,28 @@ if (-not $RepoRoot) {
     $RepoRoot = (Get-Location).Path
 }
 
-Log "=== Clawdmeter Windows Install ==="
-Log "Repository root: $RepoRoot"
+Log "=== Instalación de Clawdmeter en Windows ==="
+Log "Raíz del repositorio: $RepoRoot"
 
 # ------------------------------------------------------------------
-# Guard: refuse to install from a WSL path (APP-02 / SC#4 / SC#5)
+# Protección: no instalar desde una ruta de WSL (APP-02 / SC#4 / SC#5)
 # ------------------------------------------------------------------
-# If $RepoRoot lives on the WSL share (\\wsl$\... or \\wsl.localhost\...),
-# the venv and the HKCU\Run autostart entry would both point at a path that
-# disappears when WSL is shut down -- exactly the WSL-dependence this project
-# exists to eliminate. Copy the repo to a native Windows path first.
+# Si $RepoRoot está en el recurso compartido de WSL (\\wsl$\... o
+# \\wsl.localhost\...), tanto el venv como la entrada de arranque automático en
+# HKCU\Run apuntarían a una ruta que desaparece al apagar WSL -- justo la
+# dependencia de WSL que este proyecto existe para eliminar. Copia primero el
+# repositorio a una ruta nativa de Windows.
 if ($RepoRoot -match '\\\\wsl(\$|\.localhost)\\') {
     throw @"
-Refusing to install from a WSL path:
+Se cancela la instalación desde una ruta de WSL:
   $RepoRoot
 
-The Clawdmeter daemon must be WSL-independent. Installing from the WSL share
-would make the virtual environment and login-autostart entry point at a path
-that is unreachable once WSL shuts down.
+El daemon de Clawdmeter debe ser independiente de WSL. Instalar desde el recurso
+compartido de WSL haría que el entorno virtual y la entrada de arranque
+automático apuntaran a una ruta inaccesible una vez que WSL se apague.
 
-Fix: copy this repository to a native Windows location and run the installer
-there, e.g.
+Solución: copia este repositorio a una ubicación nativa de Windows y ejecuta ahí
+el instalador, por ejemplo:
 
   Copy-Item -Recurse '$RepoRoot' "$env:USERPROFILE\Clawdmeter"
   cd "$env:USERPROFILE\Clawdmeter"
@@ -59,67 +62,70 @@ there, e.g.
 }
 
 # ------------------------------------------------------------------
-# Step 1: Create virtual environment
+# Paso 1: Crear el entorno virtual
 # ------------------------------------------------------------------
 $VenvDir = Join-Path $RepoRoot ".venv"
 if (Test-Path $VenvDir) {
-    Log "Virtual environment already exists at .venv - skipping creation"
+    Log "El entorno virtual ya existe en .venv - se omite su creación"
 } else {
-    Log "Creating virtual environment at .venv ..."
+    Log "Creando el entorno virtual en .venv ..."
     & python -m venv $VenvDir
-    if ($LASTEXITCODE -ne 0) { throw "Failed to create virtual environment (exit $LASTEXITCODE)" }
-    Log "Virtual environment created"
+    if ($LASTEXITCODE -ne 0) { throw "No se pudo crear el entorno virtual (código de salida $LASTEXITCODE)" }
+    Log "Entorno virtual creado"
 }
 
 # ------------------------------------------------------------------
-# Step 2: Install dependencies
+# Paso 2: Instalar las dependencias
 # ------------------------------------------------------------------
 $PythonExe  = Join-Path $VenvDir "Scripts\python.exe"
 $PythonwExe = Join-Path $VenvDir "Scripts\pythonw.exe"
 $RequirementsFile = Join-Path $RepoRoot "daemon\requirements-windows.txt"
 
-Log "Installing dependencies from daemon\requirements-windows.txt ..."
+Log "Instalando las dependencias de daemon\requirements-windows.txt ..."
 & $PythonExe -m pip install --quiet -r $RequirementsFile
-if ($LASTEXITCODE -ne 0) { throw "pip install failed (exit $LASTEXITCODE)" }
-Log "Dependencies installed"
+if ($LASTEXITCODE -ne 0) { throw "La instalación con pip falló (código de salida $LASTEXITCODE)" }
+Log "Dependencias instaladas"
 
 # ------------------------------------------------------------------
-# Step 3: Register autostart (HKCU\Run, per-user, no admin needed)
+# Paso 3: Registrar el arranque automático (HKCU\Run, por usuario, sin admin)
 # ------------------------------------------------------------------
-# Derive all paths at install time - never hard-code an absolute path that
-# breaks when the repository is moved (CLAUDE.md "repoint ExecStart" lesson,
-# RESEARCH Anti-Pattern).
+# Calcula todas las rutas en el momento de la instalación - nunca escribas una
+# ruta absoluta fija que se rompa al mover el repositorio (lección de CLAUDE.md
+# "repoint ExecStart", antipatrón de RESEARCH).
 $TrayScript = Join-Path $RepoRoot "daemon\tray_windows.py"
 
-Log "Registering autostart (HKCU\Software\Microsoft\Windows\CurrentVersion\Run) ..."
-# Invoke the autostart helper via the just-created venv python so sys.executable
-# resolves to the venv's pythonw.exe (the path that will be written to the registry).
+Log "Registrando el arranque automático (HKCU\Software\Microsoft\Windows\CurrentVersion\Run) ..."
+# Invoca el ayudante de arranque automático con el python del venv recién creado
+# para que sys.executable apunte al pythonw.exe del venv (la ruta que se escribirá
+# en el registro).
 & $PythonExe -c @"
 import sys, os
 sys.path.insert(0, r'$RepoRoot')
 import daemon.autostart_windows as a
 a.enable(tray_script=r'$TrayScript')
 "@
-if ($LASTEXITCODE -ne 0) { throw "Autostart registration failed (exit $LASTEXITCODE)" }
-Log "Autostart registered - Clawdmeter will launch automatically at next logon"
+if ($LASTEXITCODE -ne 0) { throw "El registro del arranque automático falló (código de salida $LASTEXITCODE)" }
+Log "Arranque automático registrado - Clawdmeter se iniciará solo en el próximo inicio de sesión"
 
 # ------------------------------------------------------------------
-# Step 4: Launch the tray app (headless - BASE pythonw.exe, no console window)
+# Paso 4: Arrancar la aplicación de bandeja (sin consola - pythonw.exe BASE)
 # ------------------------------------------------------------------
-# Use the BASE interpreter's pythonw.exe, NOT the venv's Scripts\pythonw.exe.
-# The venv pythonw is a redirector stub that re-launches the CONSOLE python.exe
-# build as a child (a CPython venv-launcher bug), popping a black console window.
-# tray_windows.py adds the venv site-packages to sys.path itself, so the venv's
-# dependencies still resolve. (See autostart_windows._command - same rationale.)
+# Usa el pythonw.exe del intérprete BASE, NO el de Scripts\pythonw.exe del venv.
+# El pythonw del venv es un redirigente que vuelve a lanzar la compilación CON
+# consola de python.exe como hijo (un error del lanzador de venv de CPython), lo
+# que abre una ventana de consola negra.
+# tray_windows.py añade él solo los site-packages del venv a sys.path, así que las
+# dependencias del venv siguen resolviéndose. (Ver autostart_windows._command -
+# mismo motivo.)
 $BasePrefix  = & $PythonExe -c "import sys; print(sys.base_exec_prefix)"
 $BasePythonw = Join-Path $BasePrefix "pythonw.exe"
 
-Log "Launching tray app ..."
+Log "Iniciando la aplicación de bandeja ..."
 $StartArgs = @{
     FilePath         = $BasePythonw
     ArgumentList     = "`"$TrayScript`""
     WorkingDirectory = $RepoRoot
 }
 Start-Process @StartArgs
-Log "Tray app started - look for the Clawdmeter icon in your notification area"
-Log "=== Install complete ==="
+Log "Aplicación de bandeja iniciada - busca el icono de Clawdmeter en el área de notificación"
+Log "=== Instalación completada ==="

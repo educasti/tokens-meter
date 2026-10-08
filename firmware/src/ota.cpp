@@ -1,11 +1,11 @@
-// Hybrid OTA — WiFi binary transfer over a BLE control channel.
+// OTA híbrido — transferencia del binario por WiFi sobre un canal de control BLE.
 //
-// Frozen contract: design/ota-hybrid/DESIGN.md. Hardware-only module: the
-// native sim links boards/sim/ota_sim.cpp instead (see the sim env's
-// build_src_filter). The task split matters — ota_handle_ctrl() runs on the
-// NimBLE host task and only parses/enqueues; every WiFi and ArduinoOTA call
-// happens in ota_tick() on the Arduino loop task, whose stack can absorb a
-// join and an mDNS start.
+// Contrato congelado: design/ota-hybrid/DESIGN.md. Módulo solo de hardware: el
+// simulador nativo enlaza boards/sim/ota_sim.cpp en su lugar (ver el
+// build_src_filter del entorno de simulación). El reparto de tareas importa —
+// ota_handle_ctrl() corre en la tarea de host de NimBLE y solo analiza/encola;
+// todas las llamadas a WiFi y a ArduinoOTA ocurren en ota_tick(), en la tarea de
+// bucle de Arduino, cuya pila puede absorber una unión y un arranque de mDNS.
 #include "ota.h"
 
 #include <Arduino.h>
@@ -26,40 +26,41 @@
 #include "portal.h"
 
 #ifndef FW_VERSION
-#define FW_VERSION "dev"   // set per env in platformio.ini (-DFW_VERSION="...")
+#define FW_VERSION "dev"   // se fija por entorno en platformio.ini (-DFW_VERSION="...")
 #endif
 #ifndef FW_GIT_SHA
-#define FW_GIT_SHA ""      // injected by scripts/version.py (P0 build stamp)
+#define FW_GIT_SHA ""      // lo inyecta scripts/version.py (sello de compilación P0)
 #endif
 #ifndef FW_BUILD_DATE
-#define FW_BUILD_DATE ""   // injected by scripts/version.py (P0 build stamp)
+#define FW_BUILD_DATE ""   // lo inyecta scripts/version.py (sello de compilación P0)
 #endif
 
-// NVS location and keys are frozen by the contract (§2 / §4).
+// La ubicación y las claves de NVS las congela el contrato (§2 / §4).
 #define OTAH_NS        "otah"
 #define KEY_SSID       "ssid"
 #define KEY_PASS       "pass"
 #define KEY_BOOT_TRIES "boot_tries"
 
 #define OTA_PORT       3232
-#define WIFI_JOIN_MS   20000u   // bounded join; the helper has given up by then
-#define HEALTHY_MS     60000u   // uptime that confirms a boot with no owner payload
-#define MAX_BOOT_TRIES 3        // more than this many unconfirmed boots → roll back
+#define WIFI_JOIN_MS   20000u   // unión acotada; para entonces el ayudante ya se ha rendido
+#define HEALTHY_MS     60000u   // tiempo activo que confirma un arranque sin carga del dueño
+#define MAX_BOOT_TRIES 3        // más arranques sin confirmar que esto → volver atrás
 
 enum ota_mode_t { OTA_MODE_IDLE, OTA_MODE_CONNECTING, OTA_MODE_READY };
 enum ota_req_t   { REQ_NONE, REQ_START, REQ_STOP, REQ_REBOOT };
 
 static ota_mode_t s_state = OTA_MODE_IDLE;
 
-// One-slot request handoff from the BLE task to the loop task. Newest wins:
-// the helper only ever has one control command in flight.
+// Traspaso de peticiones de una sola ranura desde la tarea BLE a la tarea de
+// bucle. Gana la más reciente: el ayudante solo tiene un comando de control en
+// vuelo a la vez.
 static ota_req_t     s_req = REQ_NONE;
 static char          s_req_pass[64];
 static portMUX_TYPE  s_mux = portMUX_INITIALIZER_UNLOCKED;
 
 static char     s_ssid[64] = {0};
 static char     s_pass[64] = {0};
-static char     s_ota_pass[64] = {0};   // password for the in-flight OTA session
+static char     s_ota_pass[64] = {0};   // contraseña de la sesión OTA en curso
 static bool     s_ota_pass_set = false;
 static uint32_t s_connect_deadline = 0;
 static uint32_t s_boot_ms = 0;
@@ -67,7 +68,7 @@ static bool     s_boot_confirmed = false;
 
 const char* ota_version(void) { return FW_VERSION; }
 
-// ---- NVS: WiFi credentials -------------------------------------------------
+// ---- NVS: credenciales de WiFi ---------------------------------------------
 
 static void load_creds(void) {
     Preferences prefs;
@@ -102,7 +103,7 @@ void ota_wifi_clear(void) {
     Serial.println("OTA: wifi creds cleared");
 }
 
-// ---- NVS: boot-verify counter + application-level rollback (§4) ------------
+// ---- NVS: contador de verificación de arranque + reversión a nivel de aplicación (§4) ---
 
 static void boot_counter_reset(void) {
     Preferences prefs;
@@ -111,11 +112,12 @@ static void boot_counter_reset(void) {
     prefs.end();
 }
 
-// The prebuilt Arduino bootloader does not run with
-// CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE verified, so rollback is application
-// level: point otadata at the other app slot and reboot. Espressif's own
-// sequence — switch partition, then clear the counter — prevents the good slot
-// from immediately rolling back to the bad one (ping-pong).
+// El bootloader de Arduino precompilado no corre con
+// CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE verificado, así que la reversión es a
+// nivel de aplicación: apuntar otadata a la otra ranura de aplicación y
+// reiniciar. La secuencia del propio Espressif — cambiar de partición y luego
+// poner el contador a cero — evita que la ranura buena revierta de inmediato a
+// la mala (ping-pong).
 static void rollback_and_restart(void) {
     const esp_partition_t* running = esp_ota_get_running_partition();
     const esp_partition_t* other   = esp_ota_get_next_update_partition(running);
@@ -155,11 +157,11 @@ void ota_init(void) {
     Serial.printf("OTA: boot verify armed, boot_tries=%u\n", tries);
 
     if (tries > MAX_BOOT_TRIES) rollback_and_restart();
-    // If the rollback cannot proceed we fall through and keep running; the
-    // 60 s / payload confirmation below will settle the counter.
+    // Si la reversión no puede seguir, caemos hacia abajo y seguimos corriendo; la
+    // confirmación de 60 s / por carga de abajo dejará el contador en su sitio.
 }
 
-// ---- Request handoff (BLE task → loop task) --------------------------------
+// ---- Traspaso de peticiones (tarea BLE → tarea de bucle) --------------------
 
 static void enqueue(ota_req_t r, const char* pass) {
     portENTER_CRITICAL(&s_mux);
@@ -184,7 +186,7 @@ void ota_start(const char* pass) { enqueue(REQ_START, pass); }
 void ota_stop(void)              { enqueue(REQ_STOP, nullptr); }
 bool ota_is_active(void)         { return s_state != OTA_MODE_IDLE; }
 
-// ---- TX status notifications (§2) ------------------------------------------
+// ---- Notificaciones de estado por TX (§2) -----------------------------------
 
 static void send_status(const char* json) {
     Serial.printf("OTA: TX %s\n", json);
@@ -203,10 +205,10 @@ static void send_off(void) {
     send_status("{\"ok\":true,\"cmd\":\"ota\",\"state\":\"off\"}");
 }
 
-// ---- WiFi / ArduinoOTA -----------------------------------------------------
+// ---- WiFi / ArduinoOTA ------------------------------------------------------
 
-// clawdmeter-<last6ofmac> (§3), lower-case hex. The MAC string from ble.cpp is
-// upper-case "AA:BB:CC:DD:EE:FF".
+// clawdmeter-<últimos6delamac> (§3), en hexadecimal minúsculo. La cadena de MAC
+// que viene de ble.cpp está en mayúsculas: "AA:BB:CC:DD:EE:FF".
 static void make_hostname(char* out, size_t n) {
     const char* mac = ble_get_mac_address();
     char hex[13];
@@ -223,8 +225,9 @@ static void make_hostname(char* out, size_t n) {
 }
 
 static bool wifi_begin(void) {
-    // The radio has a single owner (DESIGN §7.4): refuse to start if the pull
-    // engine already holds it, mirroring the "busy" reply for a double start.
+    // La radio tiene un único dueño (DESIGN §7.4): negarse a arrancar si el motor
+    // de consulta ya la tiene, reflejando la respuesta "busy" ante un arranque
+    // doble.
     if (!ota_wifi_acquire(OTA_WIFI_HYBRID)) {
         Serial.println("OTA: wifi busy (held by another owner)");
         send_status("{\"ok\":false,\"err\":\"busy\"}");
@@ -243,12 +246,13 @@ static void ota_server_begin(const char* pass) {
     make_hostname(host, sizeof(host));
     ArduinoOTA.setPort(OTA_PORT);
     ArduinoOTA.setHostname(host);
-    // setPassword() SHA256-hashes its argument; an empty string would hash to a
-    // real 64-char hash (i.e. still require auth), so an unauthenticated
-    // session never calls it. (ArduinoOTA only offers set/ overwrite, so a
-    // session change from "password" to "none" within one boot keeps the old
-    // hash — the helper is consistent across its staged reboots, so this is a
-    // non-issue in practice.)
+    // setPassword() calcula el hash SHA256 de su argumento; una cadena vacía daría
+    // un hash real de 64 caracteres (es decir, seguiría pidiendo autenticación),
+    // así que una sesión sin autenticar nunca la llama. (ArduinoOTA solo ofrece
+    // fijar/sobrescribir, así que un cambio de sesión de "password" a "none"
+    // dentro de un mismo arranque conserva el hash antiguo — el ayudante es
+    // coherente entre sus reinicios escalonados, así que en la práctica no es un
+    // problema.)
     if (pass && pass[0]) ArduinoOTA.setPassword(pass);
     ArduinoOTA.setRebootOnSuccess(true);
     ArduinoOTA.onStart([]() { Serial.println("OTA: transfer started"); });
@@ -275,7 +279,7 @@ static void ota_stop_now(void) {
     Serial.println("OTA: stopped, WiFi down");
 }
 
-// ---- CTRL command parser (§2) ----------------------------------------------
+// ---- Analizador de comandos CTRL (§2) ---------------------------------------
 
 void ota_handle_ctrl(const char* json) {
     if (!json) return;
@@ -313,9 +317,9 @@ void ota_handle_ctrl(const char* json) {
     }
 
     if (strcmp(cmd, "portal") == 0) {
-        // Enqueue-only: portal_start()/portal_stop() set a flag and the SoftAP
-        // is brought up/down from portal_tick() on the loop task. WiFi is never
-        // touched from this (NimBLE host) task.
+        // Solo encolar: portal_start()/portal_stop() ponen una bandera y el SoftAP
+        // se levanta/cierra desde portal_tick() en la tarea de bucle. Desde esta
+        // tarea (host de NimBLE) nunca se toca WiFi.
         const char* mode = doc["mode"] | "";
         if (strcmp(mode, "off") == 0) {
             portal_stop();
@@ -339,13 +343,14 @@ void ota_handle_ctrl(const char* json) {
             if (!s_ssid[0]) {
                 send_status("{\"ok\":false,\"err\":\"no_wifi\"}");
             } else if (portal_is_active()) {
-                // The provisioning AP owns the radio; a STA session would clobber it.
+                // El AP de aprovisionamiento es dueño de la radio; una sesión STA la
+                // pisaría.
                 send_status("{\"ok\":false,\"err\":\"portal\"}");
             } else {
-                ota_start(doc["pass"] | "");   // ready/error reply comes from ota_tick()
+                ota_start(doc["pass"] | "");   // la respuesta ready/error llega desde ota_tick()
             }
         } else if (strcmp(mode, "off") == 0) {
-            ota_stop();                        // "off" reply comes from ota_tick()
+            ota_stop();                        // la respuesta "off" llega desde ota_tick()
         } else {
             send_status("{\"ok\":false,\"err\":\"bad_mode\"}");
         }
@@ -353,14 +358,16 @@ void ota_handle_ctrl(const char* json) {
     }
 
     if (strcmp(cmd, "update") == 0) {
-        // Pull-engine commands (DESIGN §9): parse/enqueue only; the BLE owner
-        // check was already enforced before ota_handle_ctrl() ran.
+        // Comandos del motor de consulta (DESIGN §9): solo analizar/encolar; la
+        // comprobación del dueño BLE ya se aplicó antes de ejecutar
+        // ota_handle_ctrl().
         ota_pull_handle_ctrl(json);
         return;
     }
 
     if (strcmp(cmd, "reboot") == 0) {
-        // The link drops on reboot, so there is deliberately no TX reply (§2).
+        // El enlace se corta al reiniciar, así que a propósito no hay respuesta por
+        // TX (§2).
         enqueue(REQ_REBOOT, nullptr);
         return;
     }
@@ -368,10 +375,10 @@ void ota_handle_ctrl(const char* json) {
     send_status("{\"ok\":false,\"err\":\"unknown_cmd\"}");
 }
 
-// ---- State machine ---------------------------------------------------------
+// ---- Máquina de estados ----------------------------------------------------
 
 void ota_tick(void) {
-    // §4: 60 s of healthy uptime confirms the boot even without a payload.
+    // §4: 60 s de actividad sana confirman el arranque incluso sin carga.
     if (!s_boot_confirmed && (uint32_t)(millis() - s_boot_ms) >= HEALTHY_MS) {
         ota_confirm();
     }
@@ -386,7 +393,7 @@ void ota_tick(void) {
 
     case REQ_START:
         if (s_state == OTA_MODE_READY) {
-            send_ready();   // already up — re-answer with the current address
+            send_ready();   // ya está arriba — responde otra vez con la dirección actual
         } else if (s_state == OTA_MODE_CONNECTING) {
             send_status("{\"ok\":false,\"err\":\"busy\"}");
         } else {
