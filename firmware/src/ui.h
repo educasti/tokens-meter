@@ -4,11 +4,12 @@
 #include "oc_data.h"
 #include "pf_data.h"
 
-// Navigation cycle (SPEC.md §6): Clawd splash → Claude usage → OpenCode
-// splash → OpenCode usage → BVC portfolio → back to the Clawd splash. The two
-// OpenCode screens stay out of the cycle until the first OpenCode payload
-// lands, and the portfolio until the first "k":"pf" one, so a device that
-// never receives either behaves exactly as before.
+// Ciclo de navegación (SPEC.md §6): splash de Clawd → uso de Claude → splash de
+// OpenCode → uso de OpenCode → portfolio de BVC → y vuelta al splash de Clawd.
+// Las dos pantallas de OpenCode quedan fuera del ciclo hasta que aterriza el
+// primer payload de OpenCode, y el portfolio hasta el primero de "k":"pf", así
+// que un dispositivo que nunca recibe ninguno de los dos se comporta igual que
+// antes.
 enum screen_t {
     SCREEN_SPLASH,
     SCREEN_USAGE,
@@ -20,10 +21,10 @@ enum screen_t {
 
 void ui_init(void);
 void ui_update(const UsageData* data);
-// Same as ui_update(), but marks the data as coming from the WiFi backend pull
-// rather than the BLE daemon, so it uses the longer external freshness window
-// even while BLE is connected. (ui_update() already treats an update that lands
-// with BLE disconnected as external.)
+// Igual que ui_update(), pero marca que los datos vienen del pull del backend
+// WiFi y no del daemon BLE, así que usa la ventana de frescura externa, más
+// larga, incluso con BLE conectado. (ui_update() ya trata como externa una
+// actualización que llega con BLE desconectado.)
 void ui_update_external(const UsageData* data);
 void ui_update_opencode(const OcData* data);
 void ui_update_portfolio(const PfData* data);
@@ -35,10 +36,10 @@ screen_t ui_get_current_screen(void);
 void ui_update_ble_status(ble_state_t state, const char* name, const char* mac);
 void ui_update_battery(int percent, bool charging);
 
-// Transient pull-OTA status line (DESIGN.md §12). `pct < 0` means "no
-// percentage". Reuses the animated status area — never adds a screen — and
-// auto-clears after a few seconds. Transport-free and safe to call from any
-// task (e.g. the OTA pull worker): the text is copied under a tiny critical
-// section and drawn by ui_tick_anim() on the loop task; this call never
-// touches LVGL and never blocks.
+// Línea transitoria de estado de OTA por pull (DESIGN.md §12). `pct < 0` quiere
+// decir "sin porcentaje". Reutiliza el área de estado animada —nunca agrega una
+// pantalla— y se borra sola tras unos segundos. No depende del transporte y se
+// puede llamar desde cualquier tarea (p. ej. el worker del pull de OTA): el texto
+// se copia bajo una sección crítica mínima y lo dibuja ui_tick_anim() en la tarea
+// del loop; esta llamada nunca toca LVGL y nunca bloquea.
 void ui_ota_status(const char* text, int pct);

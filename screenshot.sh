@@ -1,7 +1,7 @@
 #!/bin/bash
-# Take a screenshot from the Waveshare AMOLED display via LVGL snapshot.
-# Usage: ./screenshot.sh [output.png] [port]
-# Default port: /dev/cu.usbmodem101 on macOS, /dev/ttyACM0 on Linux.
+# Toma una captura de la pantalla de la Waveshare AMOLED mediante snapshot de LVGL.
+# Uso: ./screenshot.sh [output.png] [port]
+# Puerto por omisión: /dev/cu.usbmodem101 en macOS, /dev/ttyACM0 en Linux.
 
 OUTPUT="${1:-screenshot.png}"
 if [ -z "$2" ]; then
@@ -13,7 +13,7 @@ else
     PORT="$2"
 fi
 
-# Use pio's bundled python if pyserial isn't on the system python.
+# Usa el python incluido con pio si pyserial no está en el python del sistema.
 PY="python3"
 if ! python3 -c "import serial" 2>/dev/null; then
     if [ -x "$HOME/.platformio/penv/bin/python" ]; then
@@ -25,7 +25,7 @@ TMPRAW=$(mktemp /tmp/screenshot_XXXXXX.raw)
 TMPDIMS=$(mktemp /tmp/screenshot_XXXXXX.dims)
 trap "rm -f '$TMPRAW' '$TMPDIMS'" EXIT
 
-echo "Taking screenshot from $PORT..."
+echo "Tomando la captura desde $PORT..."
 
 "$PY" - "$PORT" "$TMPRAW" "$TMPDIMS" << 'PYEOF'
 import serial, sys
@@ -44,14 +44,14 @@ while True:
         w, h, raw_size = int(parts[1]), int(parts[2]), int(parts[3])
         break
     if line == "SCREENSHOT_ERR":
-        print("Device reported screenshot error", file=sys.stderr)
+        print("El dispositivo informó un error de captura", file=sys.stderr)
         sys.exit(1)
 
 data = b""
 while len(data) < raw_size:
     chunk = port.read(min(4096, raw_size - len(data)))
     if not chunk:
-        print(f"Timeout: got {len(data)} of {raw_size} bytes", file=sys.stderr)
+        print(f"Tiempo agotado: se recibieron {len(data)} de {raw_size} bytes", file=sys.stderr)
         sys.exit(1)
     data += chunk
 
@@ -66,11 +66,11 @@ for _ in range(10):
         break
 
 port.close()
-print(f"Captured {w}x{h} ({len(data)} bytes)")
+print(f"Captura {w}x{h} ({len(data)} bytes)")
 PYEOF
 
 if [ $? -ne 0 ]; then
-    echo "Screenshot capture failed"
+    echo "La captura de pantalla falló"
     exit 1
 fi
 
@@ -80,8 +80,8 @@ ffmpeg -y -f rawvideo -pixel_format rgb565le -video_size "$DIMS" \
 
 
 if [ -f "$OUTPUT" ]; then
-    echo "Saved: $OUTPUT ($DIMS)"
+    echo "Guardada: $OUTPUT ($DIMS)"
 else
-    echo "Error: conversion failed"
+    echo "Error: la conversión falló"
     exit 1
 fi

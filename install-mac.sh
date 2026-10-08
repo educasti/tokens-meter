@@ -1,6 +1,7 @@
 #!/bin/bash
-# macOS installer for Clawdmeter daemon (Python + bleak + launchd).
-# Mirrors install.sh but uses LaunchAgents instead of systemd user units.
+# Instalador de macOS para el daemon de Clawdmeter (Python + bleak + launchd).
+# Sigue el mismo flujo que install.sh, pero usa LaunchAgents en lugar de
+# unidades de usuario de systemd.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -14,10 +15,12 @@ LOG_OUT="$LOG_DIR/claude-usage-daemon.out.log"
 LOG_ERR="$LOG_DIR/claude-usage-daemon.err.log"
 CONFIG_FILE="$HOME/.config/claude-usage-monitor/config"
 
-# Render an absolute path under $HOME back to a ~ form for tidy config entries.
+# Vuelve a convertir una ruta absoluta bajo $HOME en forma ~ para que las
+# entradas del archivo de configuración queden limpias.
 _tilde() { case "$1" in "$HOME"/*) echo "~${1#"$HOME"}";; *) echo "$1";; esac; }
 
-# Echo the current value of a config key (trimmed), or empty if unset.
+# Muestra el valor actual de una clave de configuración (recortado), o vacío si
+# no está definida.
 current_config_value() {
     [ -f "$CONFIG_FILE" ] || return 0
     grep -E "^[[:space:]]*$1[[:space:]]*=" "$CONFIG_FILE" | tail -1 \
@@ -25,7 +28,8 @@ current_config_value() {
         | sed -E "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//; s/[[:space:]]*(#.*)?$//"
 }
 
-# Insert or replace `key = value`, preserving every other key in the file.
+# Inserta o reemplaza `key = value`, conservando todas las demás claves del
+# archivo.
 upsert_config_key() {
     local key="$1" value="$2"
     mkdir -p "$(dirname "$CONFIG_FILE")"
@@ -35,11 +39,13 @@ upsert_config_key() {
     echo "$key = $value" >> "$CONFIG_FILE"
 }
 
-# Detect ~/.claude* config dirs and, if more than one is found, let the user pick
-# which plans to show. The daemon polls all chosen dirs and displays whichever is
-# active. macOS note: the default ~/.claude stores its token in Keychain (often no
-# .credentials.json file), so it always counts as a candidate; additional dirs are
-# recognised by their credentials file — matching the daemon's read_token_for.
+# Detecta los directorios de configuración ~/.claude* y, si encuentra más de uno,
+# deja que el usuario elija qué planes mostrar. El daemon consulta todos los
+# directorios elegidos y muestra el que esté activo. Nota de macOS: el ~/.claude
+# predeterminado guarda su token en el Keychain (a menudo sin archivo
+# .credentials.json), así que siempre cuenta como candidato; los directorios
+# adicionales se reconocen por su archivo de credenciales — igual que hace
+# read_token_for en el daemon.
 configure_config_dirs() {
     local -a candidates=()
     local d
@@ -51,16 +57,16 @@ configure_config_dirs() {
     done
 
     if [ ${#candidates[@]} -le 1 ]; then
-        echo "  One Claude config dir found — using the default (~/.claude)."
+        echo "  Se encontró un directorio de configuración de Claude — se usará el predeterminado (~/.claude)."
         return 0
     fi
 
-    echo "  Found multiple Claude config dirs. The daemon can poll several plans"
-    echo "  and show whichever one you're actively using."
+    echo "  Se encontraron varios directorios de configuración de Claude. El daemon puede"
+    echo "  consultar varios planes y mostrar el que estés usando en cada momento."
     if [ ! -t 0 ]; then
         local list=""
         for d in "${candidates[@]}"; do list="${list:+$list, }$(_tilde "$d")"; done
-        echo "  Non-interactive shell — skipping. To enable, add to $CONFIG_FILE:"
+        echo "  Shell no interactiva — se omite. Para activarlo, añade a $CONFIG_FILE:"
         echo "    config_dirs = $list"
         return 0
     fi
@@ -69,20 +75,20 @@ configure_config_dirs() {
     local ans
     for d in "${candidates[@]}"; do
         if [ "$d" = "$HOME/.claude" ]; then
-            read -r -p "  Poll $(_tilde "$d")? [Y/n] " ans || ans=""
+            read -r -p "  ¿Consultar $(_tilde "$d")? [Y/n] " ans || ans=""
             if [[ ! "$ans" =~ ^[Nn]$ ]]; then selected+=("$d"); fi
         else
-            read -r -p "  Also poll $(_tilde "$d")? [y/N] " ans || ans=""
+            read -r -p "  ¿Consultar también $(_tilde "$d")? [y/N] " ans || ans=""
             if [[ "$ans" =~ ^[Yy]$ ]]; then selected+=("$d"); fi
         fi
     done
 
     if [ ${#selected[@]} -eq 0 ]; then
-        echo "  Nothing selected — leaving the default (~/.claude)."
+        echo "  No se seleccionó nada — se mantiene el predeterminado (~/.claude)."
         return 0
     fi
     if [ ${#selected[@]} -eq 1 ] && [ "${selected[0]}" = "$HOME/.claude" ]; then
-        echo "  Default (~/.claude) only — no config change needed."
+        echo "  Solo el predeterminado (~/.claude) — no hace falta cambiar la configuración."
         return 0
     fi
 
@@ -90,57 +96,60 @@ configure_config_dirs() {
     for sd in "${selected[@]}"; do joined="${joined:+$joined, }$(_tilde "$sd")"; done
 
     upsert_config_key config_dirs "$joined"
-    echo "  Wrote: config_dirs = $joined"
+    echo "  Escrito: config_dirs = $joined"
     echo "  -> $CONFIG_FILE"
 }
 
-# Offer the optional clock display (shown in place of the "Usage" title). Only
-# writes the key when it actually changes the current/default value.
+# Ofrece la visualización opcional del reloj (se muestra en lugar del título
+# "Consumo"). Solo escribe la clave cuando cambia realmente el valor actual o el
+# predeterminado.
 configure_clock() {
     [ -t 0 ] || return 0
     local ans cur
     cur=$(current_config_value clock)
-    read -r -p "  Show a clock instead of the \"Usage\" title? [off/auto/12/24] (default off) " ans || ans=""
+    read -r -p "  ¿Mostrar un reloj en lugar del título \"Consumo\"? [off/auto/12/24] (por omisión: off) " ans || ans=""
     ans=$(echo "$ans" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
     [ -z "$ans" ] && ans="off"
     case "$ans" in
         off|auto|12|24) ;;
-        *) echo "  Unrecognized '$ans' — leaving clock unchanged."; return 0 ;;
+        *) echo "  Opción no reconocida '$ans' — el reloj queda sin cambios."; return 0 ;;
     esac
     if [ "$ans" = "off" ] && { [ -z "$cur" ] || [ "$cur" = "off" ]; }; then
-        echo "  Clock off (default)."
+        echo "  Reloj desactivado (predeterminado)."
         return 0
     fi
     upsert_config_key clock "$ans"
-    echo "  Set: clock = $ans"
+    echo "  Ajustado: clock = $ans"
 }
 
-# Offer the optional session-reset chime (sound through the board speaker).
+# Ofrece el aviso sonoro opcional al renovarse la sesión (suena por el altavoz de
+# la placa).
 configure_chime() {
     [ -t 0 ] || return 0
     local ans cur
     cur=$(current_config_value chime)
-    read -r -p "  Chime through the speaker when your 5h session limit resets? [y/N] " ans || ans=""
+    read -r -p "  ¿Avisar por el altavoz cuando se renueve tu límite de sesión de 5 h? [y/N] " ans || ans=""
     if [[ "$ans" =~ ^[Yy]$ ]]; then
         upsert_config_key chime on
-        echo "  Set: chime = on"
+        echo "  Ajustado: chime = on"
     elif [ "$cur" = "on" ]; then
         upsert_config_key chime off
-        echo "  Set: chime = off"
+        echo "  Ajustado: chime = off"
     else
-        echo "  Chime off (default)."
+        echo "  Aviso sonoro desactivado (predeterminado)."
     fi
 }
 
-echo "=== Clawdmeter macOS install ==="
+echo "=== Instalación de Clawdmeter en macOS ==="
 echo ""
 
-echo "[1/6] Checking prerequisites..."
-command -v curl >/dev/null || { echo "Error: curl is required"; exit 1; }
+echo "[1/6] Comprobando los requisitos..."
+command -v curl >/dev/null || { echo "Error: curl es necesario"; exit 1; }
 
-# The daemon uses Python 3.10+ syntax (PEP 604 `X | None`). macOS ships an
-# older system python3 (3.9), so prefer a newer interpreter — Homebrew's if
-# present — and fall back to anything on PATH that is >= 3.10.
+# El daemon usa sintaxis de Python 3.10+ (PEP 604, `X | None`). macOS trae un
+# python3 del sistema antiguo (3.9), así que se prefiere un intérprete más
+# nuevo — el de Homebrew si está presente — y en su defecto cualquiera del PATH
+# que sea >= 3.10.
 py_ge_310() { "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1; }
 PYTHON3=""
 for cand in \
@@ -152,37 +161,38 @@ for cand in \
     if py_ge_310 "$cand"; then PYTHON3="$cand"; break; fi
 done
 if [ -z "$PYTHON3" ]; then
-    echo "Error: need Python >= 3.10. Install with: brew install python"
+    echo "Error: se necesita Python >= 3.10. Instálalo con: brew install python"
     exit 1
 fi
-echo "  Using $($PYTHON3 --version) at $PYTHON3"
-# blueutil lets the daemon auto-recover from a stale BLE bond (CoreBluetooth
-# Code=15 "failed to encrypt") after a firmware reflash, without you having to
-# manually "Forget This Device". Best-effort: install via Homebrew if present,
-# otherwise warn — the daemon degrades gracefully (logs a manual-fix hint).
+echo "  Usando $($PYTHON3 --version) en $PYTHON3"
+# blueutil deja que el daemon se recupere solo de un enlace BLE caducado
+# (CoreBluetooth Code=15 "failed to encrypt") tras volver a flashear el firmware,
+# sin que tengas que hacerlo a mano con "Forget This Device". Best-effort: se
+# instala con Homebrew si está presente y, si no, solo se avisa — el daemon
+# degrada con elegancia (deja en los registros una pista para arreglarlo a mano).
 if ! command -v blueutil >/dev/null 2>&1; then
     if command -v brew >/dev/null 2>&1; then
-        echo "  Installing blueutil (for BLE bond auto-recovery)..."
-        brew install blueutil >/dev/null 2>&1 || echo "  Warning: 'brew install blueutil' failed; auto-recovery disabled."
+        echo "  Instalando blueutil (para la recuperación automática del enlace BLE)..."
+        brew install blueutil >/dev/null 2>&1 || echo "  Advertencia: 'brew install blueutil' falló; la recuperación automática queda desactivada."
     else
-        echo "  Note: blueutil not found and Homebrew is absent. Install blueutil"
-        echo "        ('brew install blueutil') to enable automatic recovery from"
-        echo "        stale BLE bonds; otherwise you'll forget the device manually."
+        echo "  Nota: no se encontró blueutil y tampoco está Homebrew. Instala blueutil"
+        echo "        ('brew install blueutil') para activar la recuperación automática de"
+        echo "        enlaces BLE caducados; si no, tendrás que olvidar el dispositivo a mano."
     fi
 fi
 if ! security find-generic-password -s "Claude Code-credentials" -a "$USER" -w >/dev/null 2>&1; then
-    echo "Warning: Claude Code OAuth token not found in Keychain (service 'Claude Code-credentials')."
-    echo "  Sign in via Claude Code first, then re-run this installer."
-    echo "  Continuing anyway — the daemon will retry on each poll."
+    echo "Advertencia: no se encontró el token OAuth de Claude Code en el Keychain (servicio 'Claude Code-credentials')."
+    echo "  Inicia sesión primero con Claude Code y vuelve a ejecutar este instalador."
+    echo "  Se continúa de todas formas — el daemon lo reintentará en cada consulta."
 fi
 echo "  OK"
 echo ""
 
-echo "[2/6] Creating Python virtualenv at daemon/.venv ..."
-# Recreate the venv if it's missing or was built with an interpreter older
-# than 3.10 (e.g. a previous run that picked the system python3).
+echo "[2/6] Creando el entorno virtual de Python en daemon/.venv ..."
+# Recrea el venv si falta o se construyó con un intérprete anterior a 3.10 (por
+# ejemplo, una ejecución previa que eligió el python3 del sistema).
 if [ -d "$VENV_DIR" ] && ! py_ge_310 "$VENV_DIR/bin/python"; then
-    echo "  Existing venv is too old; recreating with $PYTHON3"
+    echo "  El venv existente es demasiado antiguo; se recrea con $PYTHON3"
     rm -rf "$VENV_DIR"
 fi
 if [ ! -d "$VENV_DIR" ]; then
@@ -194,7 +204,7 @@ PYTHON_BIN="$VENV_DIR/bin/python"
 echo "  OK ($PYTHON_BIN)"
 echo ""
 
-echo "[3/6] Rendering launchd plist..."
+echo "[3/6] Generando el plist de launchd..."
 mkdir -p "$HOME/Library/LaunchAgents" "$LOG_DIR"
 sed \
     -e "s|__PYTHON_BIN__|${PYTHON_BIN}|g" \
@@ -204,68 +214,70 @@ sed \
     -e "s|__LOG_ERR__|${LOG_ERR}|g" \
     -e "s|__HOME__|${HOME}|g" \
     "$PLIST_SRC" > "$PLIST_DST"
-echo "  Installed: $PLIST_DST"
+echo "  Instalado: $PLIST_DST"
 echo ""
 
-# Interactive daemon configuration: which plans to poll, plus the optional
-# clock display and session-reset chime. All re-read by the daemon each poll.
-echo "[4/6] Configuring the daemon..."
+# Configuración interactiva del daemon: qué planes consultar, más el reloj
+# opcional y el aviso sonoro al renovarse la sesión. El daemon lo relee todo en
+# cada consulta.
+echo "[4/6] Configurando el daemon..."
 configure_config_dirs
 configure_clock
 configure_chime
 echo ""
 
-echo "[5/6] Bluetooth permission check..."
-echo "  On first run the daemon will trigger a Bluetooth permission prompt."
-echo "  macOS only prompts for foreground processes — so we'll run it"
-echo "  interactively once below. Press Ctrl+C after you see 'Scanning...'"
-echo "  and grant permission when prompted. Then re-run this installer"
-echo "  (or just continue) to enable launchd autostart."
+echo "[5/6] Comprobando el permiso de Bluetooth..."
+echo "  En la primera ejecución el daemon disparará un aviso de permiso de Bluetooth."
+echo "  macOS solo pide permiso a los procesos en primer plano — por eso lo"
+echo "  ejecutamos una vez de forma interactiva. Pulsa Ctrl+C cuando veas 'Scanning...'"
+echo "  y concede el permiso. Después vuelve a ejecutar este instalador"
+echo "  (o simplemente continúa) para activar el arranque automático con launchd."
 echo ""
-read -r -p "Run a permission-priming scan now? [Y/n] " ans
+read -r -p "¿Ejecutar ahora un escaneo para preparar el permiso? [Y/n] " ans
 if [[ ! "$ans" =~ ^[Nn]$ ]]; then
     "$PYTHON_BIN" "$DAEMON_PY" || true
 fi
 echo ""
 
-# blueutil needs its OWN Bluetooth permission (separate identity from the
-# Python daemon) to auto-recover from a stale bond. It BLOCKS instead of
-# erroring when unauthorized, so prime it now behind a bounded wait: this
-# returns instantly if already authorized, or triggers the one-time Bluetooth
-# permission prompt (the grant sticks even if we time out before you click).
+# blueutil necesita su PROPIO permiso de Bluetooth (identidad distinta de la del
+# daemon en Python) para recuperarse solo de un enlace caducado. Se BLOQUEA en
+# lugar de dar error cuando no está autorizado, así que lo preparamos ahora con
+# una espera limitada: devuelve el control al instante si ya está autorizado, o
+# dispara el aviso único de permiso de Bluetooth (la concesión se mantiene
+# aunque se agote la espera antes de que hagas clic).
 if command -v blueutil >/dev/null 2>&1; then
-    echo "  Priming blueutil's Bluetooth permission (grant if prompted)..."
+    echo "  Preparando el permiso de Bluetooth de blueutil (concédelo si te lo pide)..."
     blueutil --paired >/dev/null 2>&1 &
     bu_pid=$!
     ( sleep 20; kill "$bu_pid" 2>/dev/null ) >/dev/null 2>&1 &
     bu_killer=$!
     if wait "$bu_pid" 2>/dev/null; then
-        echo "  blueutil authorized — stale-bond auto-recovery enabled."
+        echo "  blueutil autorizado — recuperación automática de enlaces caducados activada."
     else
-        echo "  blueutil could not access Bluetooth yet. If auto-recovery"
-        echo "  fails later, grant it under System Settings > Privacy &"
-        echo "  Security > Bluetooth, then re-run: blueutil --paired"
+        echo "  blueutil todavía no pudo acceder a Bluetooth. Si la recuperación"
+        echo "  automática falla más adelante, concédele el permiso en Ajustes del"
+        echo "  Sistema > Privacidad y seguridad > Bluetooth, y vuelve a ejecutar: blueutil --paired"
     fi
     kill "$bu_killer" 2>/dev/null || true
 fi
 echo ""
 
-echo "[6/6] Loading launchd service..."
+echo "[6/6] Cargando el servicio de launchd..."
 launchctl unload "$PLIST_DST" 2>/dev/null || true
 launchctl load -w "$PLIST_DST"
-echo "  Loaded."
+echo "  Cargado."
 echo ""
 
-echo "=== Done ==="
+echo "=== Listo ==="
 echo ""
-echo "First-time Bluetooth pairing (after firmware is flashed):"
-echo "  1. Power on the device."
-echo "  2. Open System Settings → Bluetooth."
-echo "  3. Click 'Connect' next to 'Clawdmeter'."
-echo "  4. The daemon will discover it within ~30 s and start polling."
+echo "Emparejamiento Bluetooth (la primera vez, tras flashear el firmware):"
+echo "  1. Enciende el dispositivo."
+echo "  2. Abre Ajustes del Sistema → Bluetooth."
+echo "  3. Haz clic en 'Conectar' junto a 'Clawdmeter'."
+echo "  4. El daemon lo detectará en unos ~30 s y empezará a consultarlo."
 echo ""
-echo "Useful commands:"
-echo "  launchctl list | grep claude-usage     # check it's running"
-echo "  tail -F $LOG_OUT                       # live logs"
-echo "  launchctl unload $PLIST_DST            # stop"
-echo "  launchctl load -w $PLIST_DST           # start"
+echo "Comandos útiles:"
+echo "  launchctl list | grep claude-usage     # comprobar que está en ejecución"
+echo "  tail -F $LOG_OUT                       # registros en vivo"
+echo "  launchctl unload $PLIST_DST            # detener"
+echo "  launchctl load -w $PLIST_DST           # iniciar"

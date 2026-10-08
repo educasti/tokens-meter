@@ -4,57 +4,61 @@
 #include <Arduino.h>
 #include <string.h>
 
-// OpenCode splash, ported from the approved prototype
-// design/opencode-screen/oc-splash.js: same scenes, same millisecond timings,
-// same colours, same scanner frame table. The prototype draws into a canvas
-// with alpha; here every drawn colour is the prototype's rgba blend over the
-// black stage baked into an RGB565 palette entry once, at compose time, so the
-// scene module stays as cheap as the Clawd animations (a 60x60 cell buffer plus
-// a small palette) and the C6 gets no new buffers and no LVGL objects.
+// Splash de OpenCode, portado del prototipo aprobado
+// design/opencode-screen/oc-splash.js: mismas escenas, mismos tiempos en
+// milisegundos, mismos colores, misma tabla de fotogramas del escáner. El
+// prototipo dibuja en un lienzo con alfa; aquí cada color dibujado es la mezcla
+// rgba del prototipo sobre el escenario negro, convertida en una entrada de
+// paleta RGB565 una sola vez, al componer, para que el módulo de escena siga
+// siendo tan barato como las animaciones de Clawd (un búfer de celdas 60×60 más
+// una paleta pequeña) y la C6 no reciba búferes ni objetos LVGL nuevos.
 //
-// Frame timing follows splash.cpp: elapsed time is derived from millis() and a
-// frame is only pushed when the composed result actually changed.
+// El temporizado de fotogramas sigue a splash.cpp: el tiempo transcurrido se
+// deduce de millis() y solo se empuja un fotograma cuando el resultado
+// compuesto ha cambiado de verdad.
 
 #define GRID  SPLASH_GRID
 
-// ─── Palette ─────────────────────────────────────────────────────────────────
-// Cell values are indices into `pal[]`, and the C6's render path finds the
-// dirty rectangle by diffing cell *values* between frames — so an index must
-// keep its colour for as long as the index is reused. The table is therefore
-// content-addressed and built once per scene/mood (pal_build), then never
-// reordered: two colours can never trade indices, and a new colour is only ever
-// appended. Every colour a scene can draw is pre-registered, so the mapping is
-// constant for the whole scene and the diff stays exact.
-#define PAL_BG  0            // pal[0] is the black stage
+// ─── Paleta ─────────────────────────────────────────────────────────────────
+// Los valores de celda son índices en `pal[]`, y la ruta de render de la C6
+// encuentra el rectángulo sucio comparando los *valores* de las celdas entre
+// fotogramas — así que un índice debe conservar su color mientras se reutilice.
+// La tabla es por eso direccionable por contenido y se construye una sola vez
+// por escena/estado de ánimo (pal_build) y nunca se reordena: dos colores no
+// pueden intercambiar índices, y un color nuevo solo se añade al final. Se
+// pre-registra cada color que una escena puede dibujar, así que la
+// correspondencia es constante durante toda la escena y la comparación sigue
+// siendo exacta.
+#define PAL_BG  0            // pal[0] es el escenario negro
 #define PAL_MAX SPLASH_PALETTE_MAX
 
-static uint8_t  cells[GRID * GRID];   // 3.6 KB of static RAM, same as splash.cpp's
+static uint8_t  cells[GRID * GRID];   // 3,6 KB de RAM estática, igual que en splash.cpp
 static uint16_t pal[PAL_MAX];
 static uint8_t  pal_count;
 
-// Brand + UI colours (spec §2.3 / the prototype's grid legends).
-#define COL_MARK      0xF1ECECu   // 'O' / 'C' — the mark and the wordmark face
-#define COL_WORD      0xB7B1B1u   // 'B' — wordmark body
-#define COL_INNER     0x4B4646u   // 'i' / 'A' — mark interior, wordmark cut-outs
-#define COL_INNER_ALT 0x5A5858u   // assemble "breathe" — the interior lifts
-#define COL_LIMITED   0xE06C75u   // spec error red — limited blink
+// Colores de marca + interfaz (spec §2.3 / las leyendas de rejilla del prototipo).
+#define COL_MARK      0xF1ECECu   // 'O' / 'C' — la marca y la cara del wordmark
+#define COL_WORD      0xB7B1B1u   // 'B' — el cuerpo del wordmark
+#define COL_INNER     0x4B4646u   // 'i' / 'A' — interior de la marca, recortes del wordmark
+#define COL_INNER_ALT 0x5A5858u   // al respirar el ensamblado el interior se aclara
+#define COL_LIMITED   0xE06C75u   // rojo de error del spec — parpadeo de limited
 
-// ─── Module state ────────────────────────────────────────────────────────────
+// ─── Estado del módulo ──────────────────────────────────────────────────────
 enum { SCENE_TYPEON, SCENE_ASSEMBLE, SCENE_SCANNER, SCENE_COUNT };
 
 static bool      active = false;
 static oc_mood_t mood   = OC_MOOD_IDLE;
 static uint8_t   scene  = SCENE_TYPEON;
-static bool      manual = false;    // a PWR scene override is in force
-static bool      once   = false;    // one-shot assemble → back to the auto scene
-static uint32_t  scene_ms = 0;      // scene intro, per the prototype's scene.time
-static uint32_t  next_ms  = 0;      // earliest time the frame can change again
-static uint32_t  frame_key = 0;     // identity of the frame last pushed
+static bool      manual = false;    // hay una escena forzada por el botón PWR
+static bool      once   = false;    // ensamblado de un tiro → vuelta a la escena automática
+static uint32_t  scene_ms = 0;      // intro de escena, según el scene.time del prototipo
+static uint32_t  next_ms  = 0;      // instante más temprano en que el fotograma puede cambiar otra vez
+static uint32_t  frame_key = 0;     // identidad del último fotograma empujado
 static bool      drawn = false;
 
-// ─── Colour maths ────────────────────────────────────────────────────────────
-// Same 5/6/5 truncation as LVGL's lv_color_to_u16(), i.e. the byte order
-// splash_animations.h palettes are written in.
+// ─── Aritmética de color ────────────────────────────────────────────────────
+// Mismo truncado 5/6/5 que lv_color_to_u16() de LVGL, es decir, el orden de
+// bytes en que se escriben las paletas de splash_animations.h.
 static inline uint16_t rgb565(uint32_t r, uint32_t g, uint32_t b) {
     return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | ((b & 0xF8) >> 3));
 }
@@ -63,15 +67,16 @@ static inline uint16_t hex565(uint32_t rgb) {
     return rgb565((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
 }
 
-// An rgba blend over the black stage, pre-computed: `pct` is the alpha in
-// percent, so the whole frame is a palette of opaque RGB565 colours.
+// Una mezcla rgba sobre el escenario negro, precalculada: `pct` es el alfa en
+// porcentaje, así que el fotograma entero es una paleta de colores RGB565
+// opacos.
 static inline uint16_t shade(uint32_t rgb, int pct) {
     return rgb565(((rgb >> 16) & 0xFF) * pct / 100,
                   ((rgb >>  8) & 0xFF) * pct / 100,
                   ( (rgb      ) & 0xFF) * pct / 100);
 }
 
-// The prototype's adjustBrightness(base, 1.15), floored per channel.
+// El adjustBrightness(base, 1.15) del prototipo, con suelo por canal.
 static inline uint32_t brighten(uint32_t rgb) {
     uint32_t out = 0;
     for (int i = 0; i < 3; i++) {
@@ -88,12 +93,12 @@ static void pal_reset(void) {
     pal_count   = PAL_BG + 1;
 }
 
-// Intern a colour: same colour → same index, new colour → a new index at the
-// end. Never reorders, never reassigns.
+// Interioriza un color: mismo color → mismo índice; color nuevo → un índice
+// nuevo al final. Nunca reordena ni reasigna.
 static uint8_t pal_get(uint16_t color) {
     for (uint8_t i = 0; i < pal_count; i++)
         if (pal[i] == color) return i;
-    if (pal_count >= PAL_MAX) return PAL_BG;   // pal_build() gets there first
+    if (pal_count >= PAL_MAX) return PAL_BG;   // pal_build() llega antes
     pal[pal_count] = color;
     return pal_count++;
 }
@@ -103,7 +108,7 @@ static inline void put(int x, int y, uint16_t color) {
     cells[y * GRID + x] = pal_get(color);
 }
 
-// ─── Source art (official OpenCode material, research §2.3) ─────────────────
+// ─── Arte de origen (material oficial de OpenCode, research §2.3) ───────────
 static const char *const OC_MARK[5] = {
     "OOOO",
     "O..O",
@@ -123,7 +128,7 @@ static const char *const OC_WORDMARK[WORDMARK_H] = {
     ".....B.................................",
 };
 
-// Grid legend → colour; 0 means "leave the cell black".
+// Leyenda de rejilla → color; 0 significa dejar la celda en negro.
 static uint16_t grid_color(char ch) {
     switch (ch) {
         case 'O': case 'C': return hex565(COL_MARK);
@@ -133,15 +138,15 @@ static uint16_t grid_color(char ch) {
     }
 }
 
-// ─── Moods ───────────────────────────────────────────────────────────────────
+// ─── Estados de ánimo ───────────────────────────────────────────────────────
 static const uint32_t MOOD_BASE[OC_MOOD_LIMITED + 1] = {
-    0xFAB283u,   // idle    — peach
+    0xFAB283u,   // idle    — melocotón
     0xFAB283u,   // active
     0xFAB283u,   // busy
-    0xF5A742u,   // near    — amber
-    0xE06C75u,   // limited — red
+    0xF5A742u,   // near    — ámbar
+    0xE06C75u,   // limited — rojo
 };
-// Only "busy" lifts the scanner head; the others reuse their base.
+// Solo busy levanta la cabeza del escáner; los demás reutilizan su base.
 static const uint32_t MOOD_HEAD[OC_MOOD_LIMITED + 1] = {
     0xFAB283u, 0xFAB283u, 0xFFC09Fu, 0xF5A742u, 0xE06C75u,
 };
@@ -150,16 +155,17 @@ static inline uint8_t auto_scene(void) {
     return (mood == OC_MOOD_IDLE) ? SCENE_TYPEON : SCENE_SCANNER;
 }
 
-// ─── Scene: typeon ───────────────────────────────────────────────────────────
-// The wordmark is typed out letter by letter with a blinking peach cursor. The
-// cursor is mood-coloured, so this scene also reports the mood.
+// ─── Escena: typeon ─────────────────────────────────────────────────────────
+// El wordmark se teclea letra a letra con un cursor melocotón que parpadea. El
+// cursor toma el color del estado de ánimo, así que esta escena también lo
+// comunica.
 #define TYPEON_LEAD_MS   200
 #define TYPEON_CURSOR_MS 500
 static const uint16_t TYPEON_DELAY[8] = { 60, 60, 60, 150, 60, 60, 250, 60 };
 static const uint8_t  TYPEON_COL[8]   = {  0,  5, 10, 15, 20, 25, 30, 35 };
 
 static uint32_t compose_typeon(uint32_t elapsed, uint32_t key) {
-    if (elapsed < TYPEON_LEAD_MS) return key;   // still black
+    if (elapsed < TYPEON_LEAD_MS) return key;   // todavía en negro
     const uint32_t t = elapsed - TYPEON_LEAD_MS;
 
     uint8_t drawn_letters = 0;
@@ -186,31 +192,33 @@ static uint32_t compose_typeon(uint32_t elapsed, uint32_t key) {
         for (int r = 27; r <= 31; r++) put(cx, r, col);
     }
 
-    // 0 while the lead-in is still black, 1 + (letters, phase) afterwards.
+    // 0 mientras la entrada sigue en negro; después 1 + (letras, fase).
     return key | ((1u + drawn_letters * 2u + phase) << 8);
 }
 
-// ─── Scene: assemble ─────────────────────────────────────────────────────────
-// The mark pops in cell by cell, clockwise, then the interior breathes.
+// ─── Escena: assemble ───────────────────────────────────────────────────────
+// La marca aparece celda a celda, en sentido horario, y luego el interior
+// respira.
 #define ASM_SCALE     6
 #define ASM_X         18
 #define ASM_Y         15
 #define ASM_STEP_MS   40
 #define ASM_HOLD_MS   120
 #define ASM_ALT_MS    800
-// One-shot length: ring intro + two full breathe periods.
+// Duración del tiro único: intro del anillo + dos respiraciones completas.
 #define ASM_ONCE_MS   ((40 * 14) + ASM_HOLD_MS + 2 * ASM_ALT_MS)
 
-static const uint8_t ASM_RING[14][2] = {   // top, right, bottom, left
+static const uint8_t ASM_RING[14][2] = {   // arriba, derecha, abajo, izquierda
     {0,0},{1,0},{2,0},{3,0},
     {3,1},{3,2},{3,3},{3,4},
     {2,4},{1,4},{0,4},
     {0,3},{0,2},{0,1},
 };
-// The mark's 2x2 interior, shared by the assemble scene and the limited blink.
+// El interior 2×2 de la marca, compartido por la escena assemble y el parpadeo
+// limited.
 static const uint8_t MARK_INNER[4][2] = { {1,2},{2,2},{1,3},{2,3} };
 
-// One mark cell blown up to ASM_SCALE square.
+// Una celda de la marca ampliada a un cuadrado de ASM_SCALE.
 static void asm_block(const uint8_t cell[2], uint16_t color) {
     const uint8_t idx = pal_get(color);
     for (int sr = 0; sr < ASM_SCALE; sr++) {
@@ -224,7 +232,7 @@ static void asm_block(const uint8_t cell[2], uint16_t color) {
 }
 
 static uint32_t compose_assemble(uint32_t elapsed, uint32_t key) {
-    const uint32_t intro = ASM_STEP_MS * 14;   // 560 ms of ring cells
+    const uint32_t intro = ASM_STEP_MS * 14;   // 560 ms de celdas del anillo
     if (elapsed < intro) {
         const int upto = (int)(elapsed / ASM_STEP_MS);      // 0..13
         for (int i = 0; i <= upto; i++)
@@ -243,22 +251,24 @@ static uint32_t compose_assemble(uint32_t elapsed, uint32_t key) {
     return key | (inner == hex565(COL_INNER) ? 100u : 101u) << 8;
 }
 
-// ─── Scene: scanner ──────────────────────────────────────────────────────────
-// The mark, plus an 8-block terminal scanner running underneath it. 54 frames
-// of 40 ms (30 of 20 ms when busy): sweep out, hold, sweep back, then a long
-// rest that fades the unlit blocks from 60% to 18% alpha.
+// ─── Escena: scanner ────────────────────────────────────────────────────────
+// La marca, más un escáner de terminal de 8 bloques corriendo debajo. 54
+// fotogramas de 40 ms (30 de 20 ms en busy): barrido hacia fuera, pausa,
+// barrido de vuelta y luego un descanso largo que desvanece los bloques
+// apagados del 60% al 18% de alfa.
 #define SCAN_FRAMES      54
 #define SCAN_FRAME_MS    40
 #define SCAN_BUSY_FRAME_MS 20
 #define SCAN_BUSY_FRAMES 30
-#define SCAN_FADE_FROM   30          // frames 0..29 keep the unlit blocks at 60%
-#define SCAN_HEAD_FRAME  17          // head is the range's right end before this
-#define SCAN_LIMITED_FRAME 30        // "limited" freezes here, all blocks dim
+#define SCAN_FADE_FROM   30          // los fotogramas 0..29 mantienen los apagados al 60%
+#define SCAN_HEAD_FRAME  17          // antes de este fotograma la cabeza es el extremo derecho del rango
+#define SCAN_LIMITED_FRAME 30        // en limited el escáner se congela aquí, con todos los bloques tenues
 #define SCAN_BLINK_MS    500
 
-// Per-frame lit block range [lo, hi], inclusive; 0xFF = nothing lit.
-//   0-13  sweep right,  14-16 rest,  17-29 sweep left,
-//   30-53 rest, dimming (the prototype's SCANNER_LIT_RANGES).
+// Rango de bloques encendidos [lo, hi], inclusive, por fotograma;
+// 0xFF = nada encendido.
+//   0-13  barrido a la derecha, 14-16 pausa, 17-29 barrido a la izquierda,
+//   30-53 descanso, atenuándose (el SCANNER_LIT_RANGES del prototipo).
 static const uint8_t SCAN_LIT[SCAN_FRAMES] = {
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x16, 0x27,   //  0- 7
     0x27, 0x37, 0x47, 0x57, 0x67, 0x77,               //  8-13
@@ -270,8 +280,8 @@ static const uint8_t SCAN_LIT[SCAN_FRAMES] = {
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,   // 46-53
 };
 
-// Trail alpha per distance from the head: 0.65^(n-1) (index 0 is the head and
-// index 1 is the brightened block), rounded to percent.
+// Alfa de la estela según la distancia a la cabeza: 0.65^(n-1) (el índice 0 es
+// la cabeza y el 1 el bloque aclarado), redondeado a porcentaje.
 static const uint8_t SCAN_TRAIL[8] = { 100, 90, 65, 42, 27, 18, 12, 8 };
 
 #define SCAN_MARK_X  22
@@ -282,8 +292,8 @@ static const uint8_t SCAN_TRAIL[8] = { 100, 90, 65, 42, 27, 18, 12, 8 };
 #define SCAN_BLOCK   3
 #define SCAN_GAP     1
 
-// Unlit alpha: 60% during the sweep, fading to 18% over the rest (1.0 → 0.3 of
-// the prototype's fade, times its 0.6 base).
+// Alfa de los apagados: 60% durante el barrido, bajando al 18% durante el
+// descanso (1.0 → 0.3 del fundido del prototipo, por su base de 0.6).
 static int scan_unlit_pct(uint8_t frame) {
     if (frame < SCAN_FADE_FROM) return 60;
     const uint32_t d = (uint32_t)(frame - SCAN_FADE_FROM);
@@ -349,7 +359,8 @@ static uint32_t compose_scanner(uint32_t elapsed, uint32_t key) {
         scan_block(cell * (SCAN_BLOCK + SCAN_GAP), pal_get(shade(rgb, alpha)));
     }
 
-    // At the limit the scanner sits dark and the mark's interior blinks red.
+    // En el límite el escáner se queda oscuro y el interior de la marca
+    // parpadea en rojo.
     uint32_t blink = 0;
     if (limited) {
         blink = (elapsed / SCAN_BLINK_MS) % 2;
@@ -360,41 +371,43 @@ static uint32_t compose_scanner(uint32_t elapsed, uint32_t key) {
     return key | ((uint32_t)frame | (blink << 8)) << 8;
 }
 
-// ─── Palette contents ────────────────────────────────────────────────────────
-// Pre-register every colour the current scene can draw, so the index→colour
-// mapping stays constant while it runs and the C6's value-diff can never miss a
-// changed pixel. Slot budget, worst case 30 of SPLASH_PALETTE_MAX — the scanner
-// under "limited": black, two mark colours, the limited red, the head, the
-// brightest trail step, the four tail steps (three of which coincide with ramp
-// values) and the 24-step unlit ramp. Typeon needs 5, assemble 4.
+// ─── Contenido de la paleta ─────────────────────────────────────────────────
+// Pre-registra cada color que la escena actual puede dibujar, para que la
+// correspondencia índice → color sea constante mientras corre y que la
+// comparación por valores de la C6 no pueda perderse nunca un píxel cambiado.
+// Presupuesto de ranuras: en el peor caso 30 de SPLASH_PALETTE_MAX — el escáner
+// en limited: negro, dos colores de la marca, el rojo de limited, la cabeza, el
+// escalón más brillante de la estela, los cuatro escalones finales (tres de los
+// cuales coinciden con valores de la rampa) y la rampa de apagados de 24
+// escalones. Typeon necesita 5, assemble 4.
 static void pal_build(uint8_t s) {
     pal_reset();
     if (s == SCENE_TYPEON) {
         pal_get(hex565(COL_WORD));
         pal_get(hex565(COL_INNER));
         pal_get(hex565(COL_MARK));
-        pal_get(shade(MOOD_BASE[mood], 100));            // the typing cursor
+        pal_get(shade(MOOD_BASE[mood], 100));            // el cursor de tecleo
     } else if (s == SCENE_ASSEMBLE) {
-        pal_get(hex565(COL_MARK));                       // ring
+        pal_get(hex565(COL_MARK));                       // anillo
         pal_get(hex565(COL_INNER));                      // interior
-        pal_get(hex565(COL_INNER_ALT));                  // interior, lifted
+        pal_get(hex565(COL_INNER_ALT));                  // interior, aclarado
     } else {
-        pal_get(hex565(COL_MARK));                       // mark ring
-        pal_get(hex565(COL_INNER));                      // mark interior / blink
-        pal_get(hex565(COL_LIMITED));                    // limited blink
-        pal_get(shade(MOOD_HEAD[mood], 100));            // scanner head
-        pal_get(shade(brighten(MOOD_BASE[mood]), 90));    // brightest trail step
-        for (int t = 2; t <= 5; t++)                     // tail steps, 0.65^(t-1)
+        pal_get(hex565(COL_MARK));                       // anillo de la marca
+        pal_get(hex565(COL_INNER));                      // interior de la marca / parpadeo
+        pal_get(hex565(COL_LIMITED));                    // parpadeo de limited
+        pal_get(shade(MOOD_HEAD[mood], 100));            // cabeza del escáner
+        pal_get(shade(brighten(MOOD_BASE[mood]), 90));    // escalón más brillante de la estela
+        for (int t = 2; t <= 5; t++)                     // escalones finales, 0.65^(t-1)
             pal_get(shade(MOOD_BASE[mood], SCAN_TRAIL[t]));
-        for (int f = SCAN_FADE_FROM; f < SCAN_FRAMES; f++)   // the unlit ramp
+        for (int f = SCAN_FADE_FROM; f < SCAN_FRAMES; f++)   // rampa de apagados
             pal_get(shade(MOOD_BASE[mood], scan_unlit_pct((uint8_t)f)));
     }
 }
 
-// ─── Composition ─────────────────────────────────────────────────────────────
-// Compose the whole stage and return a key that fully identifies the result:
-// a tick whose key matches the last one pushed would paint an identical frame,
-// so it is skipped.
+// ─── Composición ────────────────────────────────────────────────────────────
+// Compone el escenario entero y devuelve una clave que identifica por completo
+// el resultado: un tick cuya clave coincida con la última empujada pintaría un
+// fotograma idéntico, así que se omite.
 static uint32_t compose(uint32_t elapsed) {
     memset(cells, 0, sizeof(cells));
     uint32_t key = (uint32_t)scene | ((uint32_t)mood << 4);
@@ -408,25 +421,27 @@ static uint32_t compose(uint32_t elapsed) {
 static void scene_set(uint8_t s, uint32_t now) {
     scene    = s;
     scene_ms = now;
-    next_ms  = now;      // compose the first frame on the next tick
+    next_ms  = now;      // componer el primer fotograma en el siguiente tick
     drawn    = false;
-    pal_build(s);        // a new scene may need new colours
+    pal_build(s);        // una escena nueva puede necesitar colores nuevos
 }
 
-// The instant at which the composed frame next changes — the event that drives
-// the scene: the next letter landing, the cursor flipping, the next ring cell,
-// the next scanner frame. Absolute ms, derived from the same constants the
-// composers use. This is the frame-hold gate: a main loop runs far faster than
-// the animation, so without it the 60×60 stage would be recomposed every pass.
+// El instante en que el fotograma compuesto cambia por siguiente vez — el
+// evento que mueve la escena: la siguiente letra que cae, el cursor que cambia
+// de fase, la siguiente celda del anillo, el siguiente fotograma del escáner. Ms
+// absolutos, derivados de las mismas constantes que usan los compositores. Esta
+// es la puerta de retención de fotograma: el bucle principal va mucho más rápido
+// que la animación, así que sin ella el escenario de 60×60 se recompondría en
+// cada pasada.
 static uint32_t next_change(uint32_t now) {
     const uint32_t e = now - scene_ms;
     switch (scene) {
         case SCENE_TYPEON: {
             if (e < TYPEON_LEAD_MS) return scene_ms + TYPEON_LEAD_MS;
             const uint32_t t = e - TYPEON_LEAD_MS;
-            // The cursor flips every TYPEON_CURSOR_MS...
+            // El cursor cambia de fase cada TYPEON_CURSOR_MS...
             uint32_t at = TYPEON_LEAD_MS + (t / TYPEON_CURSOR_MS + 1) * TYPEON_CURSOR_MS;
-            // ...and letter k lands at the sum of the delays before it.
+            // ...y la letra k cae cuando se han sumado los retardos previos.
             uint32_t delay = 0;
             for (uint8_t i = 0; i < 8; i++) {
                 if (delay > t) { if (TYPEON_LEAD_MS + delay < at) at = TYPEON_LEAD_MS + delay; break; }
@@ -435,15 +450,15 @@ static uint32_t next_change(uint32_t now) {
             return scene_ms + at;
         }
         case SCENE_ASSEMBLE: {
-            const uint32_t intro = ASM_STEP_MS * 14;      // ring pop-in
+            const uint32_t intro = ASM_STEP_MS * 14;      // aparición del anillo
             if (e < intro) return scene_ms + (e / ASM_STEP_MS + 1) * ASM_STEP_MS;
-            const uint32_t t = e - intro;                 // then the interior breathes
+            const uint32_t t = e - intro;                 // y luego el interior respira
             if (t < ASM_HOLD_MS) return scene_ms + intro + ASM_HOLD_MS;
             return scene_ms + intro + ASM_HOLD_MS +
                    ((t - ASM_HOLD_MS) / ASM_ALT_MS + 1) * ASM_ALT_MS;
         }
         default: {
-            if (mood == OC_MOOD_LIMITED)                  // strip frozen; only blink
+            if (mood == OC_MOOD_LIMITED)                  // tira congelada; solo parpadeo
                 return scene_ms + (e / SCAN_BLINK_MS + 1) * SCAN_BLINK_MS;
             const uint32_t step = (mood == OC_MOOD_BUSY) ? SCAN_BUSY_FRAME_MS : SCAN_FRAME_MS;
             return scene_ms + (e / step + 1) * step;
@@ -451,7 +466,7 @@ static uint32_t next_change(uint32_t now) {
     }
 }
 
-// ─── Public API ──────────────────────────────────────────────────────────────
+// ─── API pública ────────────────────────────────────────────────────────────
 void oc_splash_start(void) {
     splash_set_external(true);
     active = true;
@@ -478,7 +493,7 @@ void oc_splash_tick(void) {
 
     const uint32_t key = compose(now - scene_ms);
     next_ms = next_change(now);
-    if (drawn && key == frame_key) return;   // nothing new on screen
+    if (drawn && key == frame_key) return;   // no hay nada nuevo en pantalla
     frame_key = key;
     drawn     = true;
     splash_render_external(cells, pal);
@@ -486,20 +501,21 @@ void oc_splash_tick(void) {
 
 void oc_splash_set_mood(oc_mood_t m) {
     if ((int)m < (int)OC_MOOD_IDLE || (int)m > (int)OC_MOOD_LIMITED) return;
-    // A payload arrives about once a minute and usually repeats the mood; the
-    // scene must not restart for a value it is already showing.
+    // Una carga útil llega más o menos una vez por minuto y suele repetir el
+    // estado de ánimo; la escena no debe reiniciarse por un valor que ya está
+    // mostrando.
     if (m == mood) return;
     mood = m;
-    if (!active) return;                // not on screen: oc_splash_start() picks up
+    if (!active) return;                // no está en pantalla: oc_splash_start() lo elige
 
     if (!manual && auto_scene() != scene) {
-        scene_set(auto_scene(), millis());       // the mood's own scene is a different one
+        scene_set(auto_scene(), millis());       // la escena propia del estado es otra
     } else {
-        // Same scene, or a manual override the prototype also keeps: the
-        // timeline runs on and only the tint changes, so the wordmark isn't
-        // retyped and the scanner doesn't jump back to frame 0. The palette is
-        // rebuilt for the new mood, which splash_render_external() sees as a
-        // remap and answers with a full repaint.
+        // La misma escena, o una escena forzada que el prototipo también
+        // conserva: la línea de tiempo sigue y solo cambia el tinte, así que el
+        // wordmark no se vuelve a teclear y el escáner no salta al fotograma 0.
+        // La paleta se reconstruye para el nuevo estado, y splash_render_external()
+        // lo ve como una reasignación y responde con un repintado completo.
         pal_build(scene);
         drawn = false;
     }

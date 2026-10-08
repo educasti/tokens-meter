@@ -1,29 +1,33 @@
-// Pull-based automatic OTA — device-initiated HTTPS update engine.
+// OTA automático por consulta — motor de actualización HTTPS iniciado por el
+// dispositivo.
 //
-// Frozen contract: design/ota-pull/DESIGN.md section 7 (state machine) and
-// design/ota-pull/IMPL.md section 2.3. Hardware-only module: the native sim
-// links boards/sim/ota_sim.cpp instead (the sim env's build_src_filter excludes
-// this file), exactly like ota.cpp.
+// Contrato congelado: design/ota-pull/DESIGN.md sección 7 (máquina de estados) y
+// design/ota-pull/IMPL.md sección 2.3. Módulo solo de hardware: el simulador
+// nativo enlaza boards/sim/ota_sim.cpp en su lugar (el build_src_filter del
+// entorno de simulación excluye este archivo), igual que con ota.cpp.
 //
-// Threading contract:
-//   * ota_pull_handle_ctrl() runs on the NimBLE host task and only parses /
-//     enqueues a one-slot request; it never touches WiFi or flash.
-//   * ota_pull_tick() runs on the Arduino loop task and is non-blocking: it
-//     applies the boot / 24 h schedule, arbitrates the radio with the hybrid
-//     path, and wakes the worker.
-//   * the blocking JOIN → … → REBOOT sequence runs on the shared network worker
-//     (net_worker.cpp: one 12 KB internal-RAM stack, core 0). It owns the only
-//     long stack in the pull path so the loop task is never inflated by a TLS
-//     handshake, and the stack is shared with the usage pull / pairing workers
-//     instead of each module keeping its own resident 12 KB stack (which had
-//     starved the internal heap and broken the manifest TLS handshake).
+// Contrato de concurrencia:
+//   * ota_pull_handle_ctrl() corre en la tarea de host de NimBLE y solo analiza /
+//     encola una petición de una sola ranura; nunca toca WiFi ni la flash.
+//   * ota_pull_tick() corre en la tarea de bucle de Arduino y no bloquea: aplica
+//     la planificación de arranque / 24 h, arbitra la radio con la ruta híbrida y
+//     despierta al worker.
+//   * la secuencia bloqueante JOIN → … → REBOOT corre en el worker de red
+//     compartido (net_worker.cpp: una pila de 12 KB de RAM interna, núcleo 0).
+//     Es la dueña de la única pila larga del camino de consulta, así que la tarea
+//     de bucle nunca se engorda por un saludo TLS, y la pila se comparte con los
+//     workers de consulta de consumo y de emparejamiento en lugar de que cada
+//     módulo mantenga residente su propia pila de 12 KB (lo que había dejado sin
+///     memoria al montículo interno y roto el saludo TLS del manifiesto).
 //
-// Anti-brick invariants (§7.2, §11):
-//   * never write the running slot — the target is asserted != running;
-//   * abort before activation on any hash / image / signature failure;
-//   * activate (esp_ota_set_boot_partition) is the single commit step and runs
-//     only after the manifest SHA-256, the detached signature (when a signing
-//     key is pinned; SIGNING.md §7) and esp_ota_end() all pass.
+// Invariantes anti-brick (§7.2, §11):
+//   * nunca escribir en la ranura en ejecución — se comprueba que el destino es
+//     distinto de la que corre;
+//   * abortar antes de activar ante cualquier fallo de hash / imagen / firma;
+//   * activate (esp_ota_set_boot_partition) es el único paso de confirmación y
+//     corre solo después de que el SHA-256 del manifiesto, la firma separada
+//     (cuando hay una clave de firma anclada; SIGNING.md §7) y esp_ota_end()
+//     pasen todos.
 
 #include "ota_pull.h"
 
@@ -58,59 +62,65 @@
 #include "certs/pinned_server_pem.h"
 #include "certs/signing_pubkey_pem.h"
 
-// ---- TLS trust model (DESIGN §8) -------------------------------------------
-// The update origin is a bare public IP, so there is no DNS name to chain to
-// Let's Encrypt: the firmware pins the server's SELF-SIGNED certificate
-// instead of the ISRG roots. `PINNED_SERVER_PEM` is generated at build time
-// from the untracked `certs/pinned_server.pem` (scripts/gen_pinned_cert.py)
-// and passed to WiFiClientSecure::setCACert() for both the manifest fetch and
-// the binary download. Verification is always ON:
-//   * `setInsecure()` is never called, and the CA slot is never left NULL, so
-//     `ssl_client.cpp` configures MBEDTLS_SSL_VERIFY_REQUIRED;
-//   * a missing cert yields a non-parseable placeholder -> the CA parse fails
-//     and the handshake fails closed rather than trusting anything.
+// ---- Modelo de confianza TLS (DESIGN §8) -----------------------------------
+// El origen de la actualización es una IP pública pelada, así que no hay nombre
+// DNS al que encadenar hacia Let's Encrypt: el firmware ancla el certificado
+// AUTOFIRMADO del servidor en lugar de las raíces ISRG. `PINNED_SERVER_PEM` se
+// genera en tiempo de compilación a partir del `certs/pinned_server.pem` sin
+// versionar (scripts/gen_pinned_cert.py) y se pasa a
+// WiFiClientSecure::setCACert() tanto para la descarga del manifiesto como para
+// la del binario. La verificación está siempre ACTIVA:
+//   * nunca se llama a `setInsecure()`, y la ranura de CA nunca queda en NULL,
+//     así que `ssl_client.cpp` configura MBEDTLS_SSL_VERIFY_REQUIRED;
+//   * un certificado ausente da como resultado un marcador que no se puede
+//     analizar -> el análisis de la CA falla y el saludo se cierra de forma
+//     segura en lugar de confiar en nada.
 //
-// Hostname check vs. an IP-address SAN: mbedTLS 3.6.x (arduino-esp32 3.3.8)
-// DOES verify IPAddress Subject Alternative Names. It works only when the TLS
-// host string is the bare IP literal (`x509_crt_check_san_ip()` runs the host
-// through inet_pton and byte-compares it against the SAN). HTTPClient feeds
-// the URL host to `set_hostname()`, so the requirement is:
-//   * `-DOTA_PULL_MANIFEST_URL` must be `https://<same IP literal>/...` --
-//     byte-for-byte the address in the cert's SAN, no DNS name, no trailing
-//     dot, IPv6 without URL brackets;
-//   * because a cert that carries a subjectAltName is matched against the SAN
-//     ONLY (CN is ignored), the IP MUST be in the SAN, not just the CN.
-// If a future toolchain drops IP-SAN support, do NOT relax verification: add a
-// DNS name to the cert as a dNSName SAN and point the URL at that name. The
-// pinned cert is the trust anchor either way.
+// Comprobación de nombre de host frente a un SAN de dirección IP: mbedTLS 3.6.x
+// (arduino-esp32 3.3.8) SÍ verifica los Subject Alternative Name de tipo
+// IPAddress. Solo funciona cuando la cadena de host TLS es el literal IP pelado
+// (`x509_crt_check_san_ip()` pasa el host por inet_pton y lo compara byte a byte
+// con el SAN). HTTPClient alimenta el host de la URL a `set_hostname()`, así que
+// el requisito es:
+//   * `-DOTA_PULL_MANIFEST_URL` debe ser `https://<el mismo literal IP>/...` --
+//     byte a byte la dirección del SAN del certificado, sin nombre DNS, sin punto
+//     final, IPv6 sin corchetes de URL;
+//   * como un certificado que lleva un subjectAltName se compara SOLO contra el
+//     SAN (el CN se ignora), la IP DEBE estar en el SAN, no solo en el CN.
+// Si una cadena de herramientas futura deja de admitir SAN de IP, NO relajes la
+// verificación: añade un nombre DNS al certificado como SAN dNSName y apunta la
+// URL a ese nombre. El certificado anclado es el ancla de confianza en cualquier
+// caso.
 
-// Base URL of the static firmware directory (DESIGN §6.4, §14.2). The real VM
-// host is injected per build via -DOTA_PULL_MANIFEST_URL="https://<host>/firmware";
-// the fallback is the reserved, non-routable .invalid TLD so no real host is
-// ever committed to source.
+// URL base del directorio estático de firmware (DESIGN §6.4, §14.2). El host de
+// la VM real se inyecta por compilación mediante
+// -DOTA_PULL_MANIFEST_URL="https://<host>/firmware"; el valor de reserva es el
+// TLD .invalid reservado y no enrutable, para que nunca se cuele en el código un
+// host real.
 #ifndef OTA_PULL_MANIFEST_URL
 #define OTA_PULL_MANIFEST_URL "https://ota.invalid/firmware"
 #endif
 
-// ---- Tuning (DESIGN §7.1, §7.3, §10) ---------------------------------------
-// The blocking worker is the shared net_worker task (one 12 KB internal-RAM
-// stack, core 0, created once in setup); this module only submits jobs to it.
-#define WIFI_JOIN_MS         20000u    // §7.1 WIFI_JOIN timeout
-#define SNTP_TIMEOUT_MS      15000u    // §7.1 SNTP_TIME_SYNC timeout
-#define MANIFEST_TIMEOUT_MS  15000u    // §7.1 FETCH_MANIFEST timeout
-#define DOWNLOAD_IDLE_MS     15000u    // §7.1 DOWNLOAD idle-read timeout
-#define DOWNLOAD_TOTAL_MS    300000u   // §7.1 DOWNLOAD total timeout
+// ---- Ajustes (DESIGN §7.1, §7.3, §10) ---------------------------------------
+// El worker bloqueante es la tarea compartida net_worker (una pila de 12 KB de
+// RAM interna, núcleo 0, creada una sola vez en setup); este módulo solo le
+// envía trabajos.
+#define WIFI_JOIN_MS         20000u    // §7.1 tiempo límite de WIFI_JOIN
+#define SNTP_TIMEOUT_MS      15000u    // §7.1 tiempo límite de SNTP_TIME_SYNC
+#define MANIFEST_TIMEOUT_MS  15000u    // §7.1 tiempo límite de FETCH_MANIFEST
+#define DOWNLOAD_IDLE_MS     15000u    // §7.1 tiempo límite de lectura parada en DOWNLOAD
+#define DOWNLOAD_TOTAL_MS    300000u   // §7.1 tiempo límite total de DOWNLOAD
 #define REBOOT_DELAY_MS      300u
 
-#define HEALTHY_MS           60000u    // matches ota.cpp: boot is confirmed first
-#define CHECK_INTERVAL_S     (24u * 60u * 60u)   // 24 h cadence (§10.1)
-#define MIN_VALID_EPOCH      1700000000L         // ≈2023-11; sane-clock floor (§8.2)
+#define HEALTHY_MS           60000u    // igual que en ota.cpp: primero se confirma el arranque
+#define CHECK_INTERVAL_S     (24u * 60u * 60u)   // cadencia de 24 h (§10.1)
+#define MIN_VALID_EPOCH      1700000000L         // ≈2023-11; suelo de reloj sensato (§8.2)
 
-#define CHECK_FLOOR_PCT      20        // §10.2 check floor
-#define APPLY_FLOOR_PCT      50        // §10.2 apply floor when not charging
-#define BATTERY_DEFER_S      1800      // back-off after a battery gate refusal
+#define CHECK_FLOOR_PCT      20        // §10.2 suelo para comprobar
+#define APPLY_FLOOR_PCT      50        // §10.2 suelo para aplicar sin estar cargando
+#define BATTERY_DEFER_S      1800      // espera tras rechazar por la puerta de batería
 
-// ---- NVS (namespace "otah", shared with the hybrid path; DESIGN §14.1) ------
+// ---- NVS (espacio de nombres "otah", compartido con la ruta híbrida; DESIGN §14.1) ------
 #define PULL_NS        "otah"
 #define K_SSID         "ssid"
 #define K_PASS         "pass"
@@ -122,12 +132,12 @@
 #define K_ETAG         "etag"
 #define ETAG_MAX       40
 
-// ---- Retry schedules (DESIGN §7.1 / §7.3) ----------------------------------
-static const uint32_t kJoinBackoffMs[]     = { 5000, 15000, 45000 };  // after attempts 1,2
-static const uint32_t kManifestBackoffMs[] = { 2000, 4000, 8000 };    // after attempts 1,2
-static const uint32_t kCheckBackoffS[]     = { 5, 15, 45, 120, 600 }; // per failed check
+// ---- Calendarios de reintentos (DESIGN §7.1 / §7.3) ------------------------
+static const uint32_t kJoinBackoffMs[]     = { 5000, 15000, 45000 };  // tras los intentos 1,2
+static const uint32_t kManifestBackoffMs[] = { 2000, 4000, 8000 };    // tras los intentos 1,2
+static const uint32_t kCheckBackoffS[]     = { 5, 15, 45, 120, 600 }; // por comprobación fallida
 
-// ---- State -----------------------------------------------------------------
+// ---- Estado ----------------------------------------------------------------
 enum pull_state_t {
     PS_IDLE,
     PS_JOIN,
@@ -140,7 +150,8 @@ enum pull_state_t {
     PS_REBOOT,
 };
 
-// A queued check/update request. `apply == false` is `mode:"check"`.
+// Una petición de comprobación/actualización en cola. `apply == false` es
+// `mode:"check"`.
 struct pull_req_t {
     bool apply;
     bool force;
@@ -150,26 +161,28 @@ struct pull_req_t {
 
 static volatile pull_state_t s_state = PS_IDLE;
 
-// One-slot handoff, BLE task → loop task (same pattern as ota.cpp lines 45-49).
+// Traspaso de una sola ranura, tarea BLE → tarea de bucle (mismo patrón que
+// ota.cpp, líneas 45-49).
 static pull_req_t    s_ctrl_req;
 static volatile bool s_ctrl_pending = false;
 static portMUX_TYPE  s_ctrl_mux = portMUX_INITIALIZER_UNLOCKED;
 
-// One-slot handoff, loop task → worker task. The loop only fills this while the
-// worker is idle; net_worker_submit() failing is the synchronisation backstop.
+// Traspaso de una sola ranura, tarea de bucle → tarea worker. El bucle solo
+// rellena esto mientras el worker está parado; que net_worker_submit() falle es
+// la red de seguridad de la sincronización.
 static pull_req_t       s_run_req;
 
-// Scheduling state (DESIGN §10.1).
+// Estado de la planificación (DESIGN §10.1).
 static bool     s_auto = true;
 static bool     s_boot_checked = false;
 static uint32_t s_boot_ms = 0;
-static uint32_t s_last_chk = 0;   // epoch of the last completed check
-static uint32_t s_defer = 0;      // epoch before which no auto-check runs
-static uint8_t  s_chk_fail = 0;   // consecutive failed checks
+static uint32_t s_last_chk = 0;   // época de la última comprobación completada
+static uint32_t s_defer = 0;      // época antes de la cual no corre ninguna comprobación automática
+static uint8_t  s_chk_fail = 0;   // comprobaciones fallidas consecutivas
 static char     s_etag[ETAG_MAX + 1] = { 0 };
-static uint32_t s_next_sched_ms = 0;   // throttle for the NVS/time schedule poll
+static uint32_t s_next_sched_ms = 0;   // regulación del sondeo de planificación NVS/hora
 
-// ---- Small helpers ---------------------------------------------------------
+// ---- Ayudas pequeñas -------------------------------------------------------
 
 static void pull_send(const char* json) {
     Serial.printf("OTA: pull TX %s\n", json);
@@ -201,16 +214,17 @@ static void pull_send_available(const char* ver, long size) {
     pull_send(buf);
 }
 
-// "Update <ver>" on the transient UI line when a newer build is available
-// (DESIGN §12). Purely additive: the BLE reply above is the source of truth.
+// "Actualización <versión>" en la línea transitoria de la interfaz cuando hay
+// una compilación más reciente disponible (DESIGN §12). Es puramente añadido: la
+// respuesta BLE de arriba es la fuente de verdad.
 static void pull_ui_available(const char* ver) {
-    char line[OTA_VERSION_MAX + 8];
-    snprintf(line, sizeof(line), "Update %s", ver);
+    char line[OTA_VERSION_MAX + 16];
+    snprintf(line, sizeof(line), "Actualización %s", ver);
     ui_ota_status(line, -1);
 }
 
 static void pull_send_downloading(int pct) {
-    ui_ota_status("Updating", pct);   // transient line; never blocks the worker
+    ui_ota_status("Actualizando", pct);   // línea transitoria; nunca bloquea al worker
     char buf[96];
     snprintf(buf, sizeof(buf),
              "{\"ok\":true,\"cmd\":\"update\",\"state\":\"downloading\",\"pct\":%d}", pct);
@@ -255,7 +269,7 @@ static void pull_nvs_u8(const char* key, uint8_t value) {
     prefs.end();
 }
 
-// A completed, successful check.
+// Una comprobación completada y correcta.
 static void pull_record_ok(void) {
     time_t now = time(nullptr);
     if ((long)now > MIN_VALID_EPOCH) s_last_chk = (uint32_t)now;
@@ -267,9 +281,10 @@ static void pull_record_ok(void) {
     s_boot_checked = true;
 }
 
-// A completed check with a permanently bad manifest/image — do not retry it.
+// Una comprobación completada con un manifiesto o imagen permanentemente malos
+// — no reintentar.
 static void pull_record_terminal(void) {
-    ui_ota_status("Update failed", -1);   // short transient line, DESIGN §12
+    ui_ota_status("No se actualizó", -1);   // línea transitoria corta, DESIGN §12
     time_t now = time(nullptr);
     if ((long)now > MIN_VALID_EPOCH) s_last_chk = (uint32_t)now;
     s_defer = 0;
@@ -280,14 +295,14 @@ static void pull_record_terminal(void) {
     s_boot_checked = true;
 }
 
-// A transient failure: exponential back-off, persist `defer` so a reboot
-// mid-backoff does not hammer the VM (§7.3).
+// Un fallo transitorio: espera exponencial, se persiste `defer` para que un
+// reinicio a mitad de la espera no machaque la VM (§7.3).
 static void pull_record_transient(void) {
     time_t now = time(nullptr);
     uint32_t epoch = ((long)now > MIN_VALID_EPOCH) ? (uint32_t)now : 0;
     if (s_chk_fail < 255) s_chk_fail++;
     if (s_chk_fail >= 5) {
-        // Give up until the next cadence.
+        // Rendirse hasta la siguiente cadencia.
         s_chk_fail = 0;
         if (epoch) s_last_chk = epoch;
         s_defer = 0;
@@ -317,21 +332,23 @@ static void pull_fail_transient(const pull_req_t& req, const char* err) {
     }
 }
 
-// Compile-time board check against the manifest, but with the running version
-// parsed leniently: a dev build ("0.0.0-dev") is not strict semver, so it is
-// treated as 0.0.0 for comparison instead of poisoning every result.
+// Comprobación de placa contra el manifiesto en tiempo de compilación, pero con
+// la versión en ejecución interpretada de forma laxa: una compilación de
+// desarrollo ("0.0.0-dev") no es semver estricto, así que se trata como 0.0.0 al
+// comparar en lugar de envenenar todos los resultados.
 static int pull_version_cmp(const char* newer, const char* running) {
     int parsed[3];
     if (!semver_parse(running, parsed)) return semver_cmp(newer, "0.0.0");
     return semver_cmp(newer, running);
 }
 
-// Battery / charging gate (DESIGN §10.2). `for_apply` selects the higher floor;
-// `bypass` (owner force or manifest mandatory) lowers it to the check floor.
+// Puerta de batería / carga (DESIGN §10.2). `for_apply` elige el suelo más alto;
+// `bypass` (fuerza del dueño u obligatorio por manifiesto) lo baja al suelo de
+// comprobación.
 static bool pull_battery_ok(bool for_apply, bool bypass) {
     if (!board_caps().has_battery) return true;
     int pct = power_hal_battery_pct();
-    if (pct < 0) return true;  // unknown — do not block on a missing reading
+    if (pct < 0) return true;  // desconocido — no bloquear por una lectura que falta
     if (power_hal_is_charging() || power_hal_is_vbus_in()) return true;
     int floor = (for_apply && !bypass) ? APPLY_FLOOR_PCT : CHECK_FLOOR_PCT;
     return pct >= floor;
@@ -351,7 +368,7 @@ static const char* pull_manifest_err_name(int e) {
     }
 }
 
-// ---- WiFi join / SNTP ------------------------------------------------------
+// ---- Unión a WiFi / SNTP ----------------------------------------------------
 
 static bool pull_wifi_join(const char* ssid, const char* pass) {
     for (int attempt = 0; attempt < 3; attempt++) {
@@ -381,9 +398,10 @@ static bool pull_wifi_join(const char* ssid, const char* pass) {
 }
 
 static bool pull_sntp(void) {
-    // Use NTP server IPs, not names: on some LANs DNS is slow or the first
-    // configTime() has nothing to resolve, so the sync times out. Three
-    // well-known anycast IPs (Google / Cloudflare) plus a named fallback.
+    // Usar IPs de servidores NTP, no nombres: en algunas redes locales el DNS
+    // es lento o el primer configTime() no tiene nada que resolver, así que la
+    // sincronización se pasa de tiempo. Tres IP anycast muy conocidas
+    // (Google / Cloudflare) más una de reserva con nombre.
     static const char* const srv[] = {
         "216.239.35.0",     // time.google.com
         "162.159.200.1",    // time.cloudflare.com
@@ -404,7 +422,7 @@ static bool pull_sntp(void) {
     return false;
 }
 
-// ---- Manifest fetch --------------------------------------------------------
+// ---- Descarga del manifiesto ----------------------------------------------
 
 enum fetch_res_t { FETCH_OK, FETCH_304, FETCH_TLS, FETCH_HTTP, FETCH_PARSE };
 
@@ -418,7 +436,7 @@ static fetch_res_t pull_fetch_manifest(OtaManifest* mf, int* http_code, int* par
     Serial.printf("OTA: pull GET %s\n", url);
 
     WiFiClientSecure client;
-    client.setCACert(PINNED_SERVER_PEM);   // pinned self-signed cert, §8
+    client.setCACert(PINNED_SERVER_PEM);   // certificado autofirmado anclado, §8
     HTTPClient http;
     http.setTimeout(MANIFEST_TIMEOUT_MS);
     if (!http.begin(client, url)) {
@@ -429,7 +447,7 @@ static fetch_res_t pull_fetch_manifest(OtaManifest* mf, int* http_code, int* par
     int code = http.GET();
     *http_code = code;
 
-    if (code == 304) {           // ETag still valid → nothing to update (§6.3)
+    if (code == 304) {           // ETag aún válido → nada que actualizar (§6.3)
         http.end();
         return FETCH_304;
     }
@@ -450,7 +468,7 @@ static fetch_res_t pull_fetch_manifest(OtaManifest* mf, int* http_code, int* par
         Serial.printf("OTA: pull manifest parse err %d\n", (int)pe);
         return FETCH_PARSE;
     }
-    if (etag.length() > 0) {     // remember for If-None-Match
+    if (etag.length() > 0) {     // guardarlo para If-None-Match
         strlcpy(s_etag, etag.c_str(), sizeof(s_etag));
         Preferences prefs;
         if (prefs.begin(PULL_NS, false)) {
@@ -461,23 +479,25 @@ static fetch_res_t pull_fetch_manifest(OtaManifest* mf, int* http_code, int* par
     return FETCH_OK;
 }
 
-// ---- Compare ---------------------------------------------------------------
+// ---- Comparación ----------------------------------------------------------
 
 enum compare_res_t { CR_APPLY, CR_CHECK_ONLY, CR_UP_TO_DATE, CR_BATTERY_LOW, CR_REJECT };
 
 static compare_res_t pull_compare(const pull_req_t& req, const OtaManifest& mf,
                                   const char** err_out) {
-    // Never flash a foreign board (DESIGN §6.2).
+    // Nunca flashear una placa ajena (DESIGN §6.2).
     if (strcmp(mf.board, board_caps().id) != 0) {
         *err_out = "board_mismatch";
         return CR_REJECT;
     }
-    // Owner force must name the manifest version exactly (§5.4).
+    // La fuerza del dueño debe nombrar exactamente la versión del manifiesto
+    // (§5.4).
     if (req.force && req.to[0] && strcmp(req.to, mf.version) != 0) {
         *err_out = "target_mismatch";
         return CR_REJECT;
     }
-    // released_at sanity: reject a manifest more than 24 h in the future (§6.2).
+    // Cordura de released_at: rechazar un manifiesta más de 24 h en el futuro
+    // (§6.2).
     time_t now = time(nullptr);
     if (mf.released_at[0] && (long)now > MIN_VALID_EPOCH &&
         !ota_released_at_sane(mf.released_at, (long)now)) {
@@ -487,37 +507,39 @@ static compare_res_t pull_compare(const pull_req_t& req, const OtaManifest& mf,
 
     int cmp = pull_version_cmp(mf.version, ota_version());
     if (cmp <= 0 && !req.force) {
-        return CR_UP_TO_DATE;   // equal or older is a terminal no-update (§5.4)
+        return CR_UP_TO_DATE;   // igual o más antigua es un "no actualizar" terminal (§5.4)
     }
-    // min_from is never bypassed by force.
+    // min_from nunca se salta por fuerza del dueño.
     if (!req.force && mf.min_from[0] &&
         pull_version_cmp(mf.min_from, ota_version()) > 0) {
         *err_out = "too_old";
         return CR_REJECT;
     }
 
-    // Early signature policy gate (SIGNING.md §4 rule 2), decided HERE in
-    // COMPARE rather than after the download: a pinned key with no `sig` in the
-    // manifest can never activate, so reject it before the ~3 MB transfer
-    // (CR_REJECT -> pull_send_err("bad_signature") + pull_record_terminal(),
-    // the same terminal class as `hash_mismatch`). A present-but-invalid `sig`
-    // is still caught by the cryptographic check in pull_verify(). With no key
-    // pinned (SIGNING_PUBKEY_PEM empty) this is skipped: hash-only, unchanged.
+    // Puerta temprana de política de firmas (SIGNING.md §4 regla 2), decidida
+    // AQUÍ, en COMPARE, y no después de la descarga: una clave anclada sin `sig`
+    // en el manifiesto nunca podrá activarse, así que se rechaza antes de la
+    // transferencia de ~3 MB (CR_REJECT -> pull_send_err("bad_signature") +
+    // pull_record_terminal(), la misma clase terminal que `hash_mismatch`). Un
+    // `sig` presente pero inválido sigue detectándolo la comprobación
+    // criptográfica de pull_verify(). Sin clave anclada (SIGNING_PUBKEY_PEM
+    // vacío) esto se omite: solo hash, sin cambios.
     if (SIGNING_PUBKEY_PEM[0] != '\0' && mf.sig[0] == '\0') {
         *err_out = "bad_signature";
         return CR_REJECT;
     }
 
-    // A check is only reporting: it never needs the heavier apply floor.
+    // Una comprobación solo informa: nunca necesita el suelo de aplicar, más
+    // exigente.
     if (!req.apply) return CR_CHECK_ONLY;
 
-    bool bypass = req.force || mf.mandatory;   // battery/priority gates only
+    bool bypass = req.force || mf.mandatory;   // solo puertas de batería / prioridad
     if (!pull_battery_ok(true, bypass)) return CR_BATTERY_LOW;
 
     return CR_APPLY;
 }
 
-// ---- Download + verify -----------------------------------------------------
+// ---- Descarga + verificación ----------------------------------------------
 
 struct dl_ctx {
     const esp_partition_t* part;
@@ -545,13 +567,13 @@ static void pull_download_cleanup(dl_ctx* c) {
     }
 }
 
-// One attempt: GET the binary and stream it into the inactive slot while
-// updating a streaming SHA-256. Leaves the OpenOTA handle and digest open for
-// pull_verify() on success.
+// Un intento: descargar el binario con GET y volcarlo en la ranura inactiva
+// mientras se actualiza un SHA-256 en streaming. Deja el manejador OpenOTA y el
+// resumen abiertos para pull_verify() si todo va bien.
 static bool pull_download_once(dl_ctx* c, const OtaManifest& mf) {
     const esp_partition_t* part = esp_ota_get_next_update_partition(NULL);
     const esp_partition_t* running = esp_ota_get_running_partition();
-    if (!part || part == running) {   // anti-brick invariant §7.2
+    if (!part || part == running) {   // invariante anti-brick §7.2
         Serial.println("OTA: pull no valid inactive slot");
         dl_set_err(c, "bad_image");
         return false;
@@ -564,7 +586,7 @@ static bool pull_download_once(dl_ctx* c, const OtaManifest& mf) {
     Serial.printf("OTA: pull GET %s (%ld bytes)\n", url, mf.size);
 
     WiFiClientSecure client;
-    client.setCACert(PINNED_SERVER_PEM);   // pinned self-signed cert, §8
+    client.setCACert(PINNED_SERVER_PEM);   // certificado autofirmado anclado, §8
     HTTPClient http;
     http.setTimeout(DOWNLOAD_IDLE_MS);
     if (!http.begin(client, url)) {
@@ -634,7 +656,7 @@ static bool pull_download_once(dl_ctx* c, const OtaManifest& mf) {
     http.end();
 
     if (failed) return false;
-    if (total != mf.size) {   // short body without an explicit stream error
+    if (total != mf.size) {   // cuerpo corto sin un error de flujo explícito
         dl_set_err(c, "timeout");
         return false;
     }
@@ -646,7 +668,7 @@ static bool pull_download(dl_ctx* c, const OtaManifest& mf, bool bypass) {
     memset(c, 0, sizeof(*c));
     c->force_bypass = bypass;
 
-    for (int attempt = 0; attempt < 2; attempt++) {   // §7.1: 2× whole download
+    for (int attempt = 0; attempt < 2; attempt++) {   // §7.1: 2 descargas completas
         if (pull_download_once(c, mf)) return true;
         bool battery_low = (strcmp(c->err, "battery_low") == 0);
         char saved[sizeof(c->err)];
@@ -664,27 +686,29 @@ static bool pull_download(dl_ctx* c, const OtaManifest& mf, bool bypass) {
     return false;
 }
 
-// Detached-signature check (design/ota-pull/SIGNING.md section 7). Runs over
-// the SAME 32-byte SHA-256 digest the hash check just validated: the signature
-// authenticates the digest, the digest authenticates the bytes.
+// Comprobación de firma separada (design/ota-pull/SIGNING.md sección 7). Corre
+// sobre EL MISMO resumen SHA-256 de 32 bytes que acaba de validar la comprobación
+// de hash: la firma autentica el resumen, y el resumen autentica los bytes.
 //
-// Policy (SIGNING.md section 4 rule 2):
-//   * no key pinned (SIGNING_PUBKEY_PEM empty): pre-P4 hash-only build; the
-//     check is skipped and logged.
-//   * key pinned, manifest unsigned: rejected as `bad_signature`. This case is
-//     normally decided earlier, at COMPARE (pull_compare), so no download is
-//     started; the check below stays as a defensive backstop for any future
-//     caller that reaches VERIFY without passing through COMPARE.
-//   * key pinned, manifest signed: `ota_sig_verify_p256()` must accept it.
-// On any rejection the caller aborts the OTA handle and never activates.
+// Política (SIGNING.md sección 4, regla 2):
+//   * sin clave anclada (SIGNING_PUBKEY_PEM vacío): compilación previa a P4 solo
+//     con hash; la comprobación se omite y se registra.
+//   * clave anclada, manifiesto sin firmar: se rechaza como `bad_signature`. Este
+//     caso normalmente se decide antes, en COMPARE (pull_compare), así que no se
+//     inicia ninguna descarga; la comprobación de abajo queda como red de
+//     seguridad defensiva para cualquier futuro llamador que llegue a VERIFY sin
+//     pasar por COMPARE.
+//   * clave anclada, manifiesto firmado: `ota_sig_verify_p256()` debe aceptarlo.
+// Ante cualquier rechazo, quien llama aborta el manejador OTA y nunca activa.
 static bool pull_verify_signature(const OtaManifest& mf, const uint8_t* digest,
                                   const char** err) {
     const bool have_key = (SIGNING_PUBKEY_PEM[0] != '\0');
 
-    // Pure policy gate shared with the host test: no key -> always ok. The
-    // "pinned key but no sig" case is normally already rejected at COMPARE
-    // (before the download); reaching it here would mean a caller bypassed that
-    // gate, so it still hard-fails rather than falling through to crypto.
+    // Puerta de política pura compartida con la prueba de host: sin clave ->
+    // siempre correcta. El caso "clave anclada pero sin firma" normalmente ya se
+    // rechaza en COMPARE (antes de la descarga); llegar hasta aquí significaría
+    // que un llamador se saltó esa puerta, así que falla de forma dura en lugar
+    // de caer hasta la criptografía.
     if (!ota_manifest_sig_ok(&mf, have_key)) {
         Serial.println("OTA: pull manifest unsigned but a signing key is pinned, rejecting");
         *err = "bad_signature";
@@ -695,8 +719,9 @@ static bool pull_verify_signature(const OtaManifest& mf, const uint8_t* digest,
         return true;
     }
 
-    // sig_alg and base64 syntax were enforced by the parser (OTA_MF_BAD_SIG);
-    // decode to DER here. A 128-byte buffer covers the largest P-256 DER sig.
+    // El analizador ya aplicó la sintaxis de sig_alg y de base64 (OTA_MF_BAD_SIG);
+    // aquí se decodifica a DER. Un búfer de 128 bytes cubre la firma DER P-256
+    // más grande.
     uint8_t sig_der[OTA_SIG_B64_MAX];
     int sig_len = ota_base64_decode(mf.sig, sig_der, sizeof(sig_der));
     if (sig_len <= 0) {
@@ -714,10 +739,11 @@ static bool pull_verify_signature(const OtaManifest& mf, const uint8_t* digest,
     return true;
 }
 
-// Finish the digest, compare against the manifest, verify the detached
-// signature (when pinned), then validate the image. The hash and signature are
-// checked before esp_ota_end() so a failure can esp_ota_abort() the handle
-// (DESIGN §7.1 / §11, SIGNING.md §7) — nothing is activated either way.
+// Terminar el resumen, compararlo con el manifiesto, verificar la firma
+// separada (cuando está anclada) y luego validar la imagen. El hash y la firma
+// se comprueban antes de esp_ota_end() para que un fallo pueda hacer
+// esp_ota_abort() sobre el manejador (DESIGN §7.1 / §11, SIGNING.md §7) — en
+// ningún caso se activa nada.
 static bool pull_verify(dl_ctx* c, const OtaManifest& mf, const char** err) {
     uint8_t digest[32];
     mbedtls_sha256_finish(&c->sha, digest);
@@ -738,8 +764,9 @@ static bool pull_verify(dl_ctx* c, const OtaManifest& mf, const char** err) {
         return false;
     }
 
-    // Signature check: after SHA-256, before esp_ota_end()/activation. A
-    // failure is terminal (`bad_signature`), same class as `hash_mismatch`.
+    // Comprobación de firma: después del SHA-256, antes de esp_ota_end() y de
+    // la activación. Un fallo es terminal (`bad_signature`), de la misma clase
+    // que `hash_mismatch`.
     if (!pull_verify_signature(mf, digest, err)) {
         esp_ota_abort(c->handle);
         c->ota_open = false;
@@ -756,11 +783,11 @@ static bool pull_verify(dl_ctx* c, const OtaManifest& mf, const char** err) {
     return true;
 }
 
-// ---- Activate --------------------------------------------------------------
+// ---- Activación ------------------------------------------------------------
 
 static bool pull_activate(const OtaManifest& mf, const esp_partition_t* part) {
-    // Remember the pending version before touching otadata; ota_confirm()
-    // clears it once the new image boots (DESIGN §7.2).
+    // Recordar la versión pendiente antes de tocar otadata; ota_confirm() la
+    // limpia una vez que arranca la imagen nueva (DESIGN §7.2).
     Preferences prefs;
     if (prefs.begin(PULL_NS, false)) {
         prefs.putString(K_PEND_VER, mf.version);
@@ -774,12 +801,13 @@ static bool pull_activate(const OtaManifest& mf, const esp_partition_t* part) {
     return true;
 }
 
-// ---- Worker ----------------------------------------------------------------
+// ---- Worker -----------------------------------------------------------------
 
-// Runs on the OTA pull worker (never the loop or NimBLE task). The
-// ui_ota_status() calls below are the only UI interaction: each one just
-// stashes a short line for the loop task (DESIGN §12), so they are
-// non-blocking and a dark or sleeping panel never affects control flow.
+// Corre en el worker de OTA por consulta (nunca en la tarea de bucle ni en la de
+// NimBLE). Las llamadas a ui_ota_status() de abajo son la única interacción con
+// la interfaz: cada una solo guarda una línea corta para la tarea de bucle
+// (DESIGN §12), así que no bloquean y un panel apagado o dormido nunca afecta al
+// flujo de control.
 static void pull_cycle_inner(const pull_req_t& req) {
     char ssid[64] = { 0 }, pass[64] = { 0 };
     if (!pull_load_creds(ssid, sizeof(ssid), pass, sizeof(pass))) {
@@ -788,18 +816,18 @@ static void pull_cycle_inner(const pull_req_t& req) {
     }
 
     s_state = PS_JOIN;
-    ui_ota_status("Checking", -1);
+    ui_ota_status("Comprobando", -1);
     if (!pull_wifi_join(ssid, pass)) { pull_fail_transient(req, "timeout"); return; }
 
     s_state = PS_SNTP;
-    ui_ota_status("Checking", -1);
+    ui_ota_status("Comprobando", -1);
     if (!pull_sntp()) { pull_fail_transient(req, "timeout"); return; }
 
     OtaManifest mf;
     memset(&mf, 0, sizeof(mf));
     int http_code = 0, parse_err = OTA_MF_OK;
     s_state = PS_MANIFEST;
-    ui_ota_status("Checking", -1);
+    ui_ota_status("Comprobando", -1);
     fetch_res_t fr = pull_fetch_manifest(&mf, &http_code, &parse_err);
     if (fr == FETCH_304) {
         pull_send_up_to_date(ota_version());
@@ -826,7 +854,7 @@ static void pull_cycle_inner(const pull_req_t& req) {
     const char* cerr = "no_update";
     compare_res_t cr = pull_compare(req, mf, &cerr);
     if (cr == CR_UP_TO_DATE) {
-        pull_send_up_to_date(ota_version());   // report what is actually running
+        pull_send_up_to_date(ota_version());   // informar de lo que corre de verdad
         pull_record_ok();
         return;
     }
@@ -853,7 +881,7 @@ static void pull_cycle_inner(const pull_req_t& req) {
 
     dl_ctx dl;
     s_state = PS_DOWNLOAD;
-    ui_ota_status("Updating", -1);
+    ui_ota_status("Actualizando", -1);
     if (!pull_download(&dl, mf, req.force || mf.mandatory)) {
         const char* e = dl.err[0] ? dl.err : "timeout";
         bool battery_low = (strcmp(e, "battery_low") == 0);
@@ -871,11 +899,11 @@ static void pull_cycle_inner(const pull_req_t& req) {
     }
 
     s_state = PS_VERIFY;
-    ui_ota_status("Verifying", -1);
+    ui_ota_status("Verificando", -1);
     pull_send_verifying();
     const char* verr = "bad_image";
     if (!pull_verify(&dl, mf, &verr)) {
-        // hash_mismatch / bad_signature / bad_image are non-retryable (§7.3).
+        // hash_mismatch / bad_signature / bad_image no se reintentan (§7.3).
         pull_send_err(verr);
         pull_record_terminal();
         return;
@@ -889,17 +917,17 @@ static void pull_cycle_inner(const pull_req_t& req) {
     }
 
     s_state = PS_REBOOT;
-    ui_ota_status("Restarting", -1);
+    ui_ota_status("Reiniciando", -1);
     pull_send_rebooting(mf.version);
     pull_record_ok();
-    ota_wifi_release();                 // radio off before the reset (§10.3)
+    ota_wifi_release();                 // apagar la radio antes del reinicio (§10.3)
     vTaskDelay(pdMS_TO_TICKS(REBOOT_DELAY_MS));
     Serial.printf("OTA: pull rebooting into %s\n", mf.version);
     esp_restart();
 }
 
 static void pull_run_cycle(void) {
-    pull_req_t req = s_run_req;   // worker is idle; the loop wrote this before waking us
+    pull_req_t req = s_run_req;   // el worker está parado; el bucle escribió esto antes de despertarlo
     if (!ota_wifi_acquire(OTA_WIFI_PULL)) {
         pull_send_err("busy");
         s_state = PS_IDLE;
@@ -910,14 +938,15 @@ static void pull_run_cycle(void) {
     s_state = PS_IDLE;
 }
 
-// Job body for the shared network worker (net_worker.cpp). Runs with the one
-// shared 12 KB internal-RAM stack; s_state returns to PS_IDLE when it returns.
+// Cuerpo del trabajo para el worker de red compartido (net_worker.cpp). Corre con
+// la única pila compartida de 12 KB de RAM interna; s_state vuelve a PS_IDLE
+// cuando regresa.
 static void ota_pull_job(void* arg) {
     (void)arg;
     pull_run_cycle();
 }
 
-// ---- Public API ------------------------------------------------------------
+// ---- API pública ------------------------------------------------------------
 
 void ota_pull_init(void) {
     s_boot_ms = millis();
@@ -933,9 +962,9 @@ void ota_pull_init(void) {
         prefs.end();
     }
 
-    // No per-module task: the blocking worker is the shared net_worker task,
-    // created once in setup(). This keeps only ONE 12 KB internal-RAM stack
-    // resident for all three pull paths.
+    // Sin tarea por módulo: el worker bloqueante es la tarea compartida
+    // net_worker, creada una sola vez en setup(). Esto mantiene una ÚNICA pila de
+    // 12 KB de RAM interna residente para los tres caminos de consulta.
 
     Serial.printf("OTA: pull init auto=%d last_chk=%lu defer=%lu chk_fail=%u etag=%s\n",
                   (int)s_auto, (unsigned long)s_last_chk, (unsigned long)s_defer,
@@ -943,17 +972,19 @@ void ota_pull_init(void) {
 }
 
 void ota_pull_tick(void) {
-    if (s_state != PS_IDLE || ota_is_active()) return;   // busy or hybrid owns the radio
-    // Do not consume a one-shot BLE request while the shared worker is still
-    // busy with another pull; the request stays queued in s_ctrl_pending.
+    if (s_state != PS_IDLE || ota_is_active()) return;   // ocupado, o la híbrida es dueña de la radio
+    // No consumir una petición BLE de un solo tiro mientras el worker compartido
+    // siga ocupado con otra consulta; la petición se queda en cola en
+    // s_ctrl_pending.
     if (net_worker_busy()) return;
 
     pull_req_t req = {};
     bool have = false;
     bool is_ble = false;
 
-    // A queued BLE request takes priority over the schedule and is answered
-    // promptly; the schedule only needs second resolution.
+    // Una petición BLE en cola tiene prioridad sobre la planificación y se
+    // responde de inmediato; a la planificación le basta con resolución de
+    // segundos.
     portENTER_CRITICAL(&s_ctrl_mux);
     if (s_ctrl_pending) {
         req = s_ctrl_req;
@@ -968,14 +999,14 @@ void ota_pull_tick(void) {
         if ((int32_t)(millis() - s_next_sched_ms) < 0) return;
         s_next_sched_ms = millis() + 5000;
 
-        if ((uint32_t)(millis() - s_boot_ms) < HEALTHY_MS) return;   // boot confirmed first
+        if ((uint32_t)(millis() - s_boot_ms) < HEALTHY_MS) return;   // primero se confirma el arranque
 
         time_t now = time(nullptr);
         bool clock_ok = (long)now > MIN_VALID_EPOCH;
-        if (s_defer && clock_ok && (uint32_t)now < s_defer) return;  // backoff window
+        if (s_defer && clock_ok && (uint32_t)now < s_defer) return;  // ventana de espera
 
         char ssid[64], pass[64];
-        if (!pull_load_creds(ssid, sizeof(ssid), pass, sizeof(pass))) return;  // no creds
+        if (!pull_load_creds(ssid, sizeof(ssid), pass, sizeof(pass))) return;  // sin credenciales
 
         bool boot_due = !s_boot_checked;
         bool timer_due = clock_ok &&
@@ -991,15 +1022,16 @@ void ota_pull_tick(void) {
     }
     if (!have) return;
 
-    // Gates run here on the loop task, never on the NimBLE task. The floor is
-    // the cheap check floor (20 %); the heavier apply floor (50 %) is applied
-    // later at COMPARE, so a check can still report `available` (§10.2).
+    // Las puertas corren aquí, en la tarea de bucle, nunca en la de NimBLE. El
+    // suelo es el barato de comprobación (20 %); el suelo de aplicar, más
+    // exigente (50 %), se aplica después en COMPARE, para que una comprobación
+    // pueda seguir informando de `available` (§10.2).
     char ssid[64], pass[64];
     if (!pull_load_creds(ssid, sizeof(ssid), pass, sizeof(pass))) {
         if (is_ble) pull_send_err("no_wifi");
         return;
     }
-    bool applies = req.from_ble ? req.apply : true;   // BLE checks bypass the floor
+    bool applies = req.from_ble ? req.apply : true;   // las comprobaciones por BLE se saltan el suelo
     if (applies && !pull_battery_ok(false, req.force)) {
         if (is_ble) {
             pull_send_err("battery_low");
@@ -1014,10 +1046,11 @@ void ota_pull_tick(void) {
     bool had_boot_check = s_boot_checked;
     s_run_req = req;
     s_boot_checked = true;
-    s_state = PS_JOIN;   // expose "active" to the UI before the worker runs
+    s_state = PS_JOIN;   // exponer "active" a la interfaz antes de que corra el worker
     if (!net_worker_submit(ota_pull_job, nullptr)) {
-        // Slot occupied (defensive: net_worker_busy() gated above). Revert so
-        // the next tick retries rather than dropping the check.
+        // Ranura ocupada (defensivo: arriba ya se comprobó net_worker_busy()). Se
+        // revierte para que el siguiente tick lo reintente en lugar de perder la
+        // comprobación.
         s_boot_checked = had_boot_check;
         s_state = PS_IDLE;
         s_next_sched_ms = millis() + 1000;
@@ -1027,8 +1060,9 @@ void ota_pull_tick(void) {
 void ota_pull_handle_ctrl(const char* json) {
     if (!json) return;
 
-    // NimBLE host task: parse and enqueue only. Every gate that touches NVS or
-    // the PMU runs on the loop task in ota_pull_tick() (DESIGN §9, IMPL §2.3).
+    // Tarea de host de NimBLE: solo analizar y encolar. Todas las puertas que
+    // tocan NVS o el PMU corren en la tarea de bucle, en ota_pull_tick()
+    // (DESIGN §9, IMPL §2.3).
     JsonDocument doc;
     DeserializationError err = deserializeJson(doc, json);
     if (err) {
