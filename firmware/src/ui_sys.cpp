@@ -86,7 +86,7 @@ static void compute_layout(const BoardCaps &c) {
         L.header_x = 20; L.header_top = 36;  L.header_font = &font_plex_16;
         L.card_x = 20;  L.pad = 20;
         L.c1_y = 72;  L.c1_h = 162; L.c1_radius = 12;      // 72..234
-        L.c2_y = 246; L.c2_h = 152; L.c2_radius = 12;      // 246..398
+        L.c2_y = 246; L.c2_h = 182; L.c2_radius = 12;      // 246..428 (4 filas)
         L.has_label = true;
         L.label_top = 14; L.label_font = &font_plex_16;
         L.board_top = 16; L.board_ri = 20; L.board_font = &font_plex_12;
@@ -97,14 +97,14 @@ static void compute_layout(const BoardCaps &c) {
         L.title_top = 14; L.title_font = &font_plex_16;
         L.rows_top = 46; L.rows_pitch = 30;
         L.rows_font = &font_plex_16;
-        L.hint_top = 410; L.hint_font = &font_plex_16;
-        L.st_top = 448;   L.st_font = &font_plex_16;
+        L.hint_top = 436; L.hint_font = &font_plex_16;
+        L.st_top = 458;   L.st_font = &font_plex_16;
     } else if (c.height >= 300) {
         // ---- compacto: 368x448 ----
         L.header_x = 20; L.header_top = 28;  L.header_font = &font_plex_16;
         L.card_x = 20;  L.pad = 16;
         L.c1_y = 60;  L.c1_h = 150; L.c1_radius = 12;
-        L.c2_y = 218; L.c2_h = 136; L.c2_radius = 12;
+        L.c2_y = 218; L.c2_h = 164; L.c2_radius = 12;      // 218..382 (4 filas)
         L.has_label = true;
         L.label_top = 12; L.label_font = &font_plex_16;
         L.board_top = 14; L.board_ri = 16; L.board_font = &font_plex_12;
@@ -115,14 +115,14 @@ static void compute_layout(const BoardCaps &c) {
         L.title_top = 12; L.title_font = &font_plex_16;
         L.rows_top = 40; L.rows_pitch = 28;
         L.rows_font = &font_plex_16;
-        L.hint_top = 366; L.hint_font = &font_plex_12;
-        L.st_top = 398;   L.st_font = &font_plex_16;
+        L.hint_top = 390; L.hint_font = &font_plex_12;
+        L.st_top = 412;   L.st_font = &font_plex_16;
     } else {
         // ---- chico: 240x240 ----
         L.header_x = 8; L.header_top = 8;  L.header_font = &font_plex_12;
         L.card_x = 8;  L.pad = 8;
         L.c1_y = 24;  L.c1_h = 92; L.c1_radius = 8;
-        L.c2_y = 122; L.c2_h = 72; L.c2_radius = 8;
+        L.c2_y = 122; L.c2_h = 90; L.c2_radius = 8;        // 122..212 (4 filas)
         L.has_label = false;           // sin sitio: el heroe es la etiqueta
         L.label_top = 0; L.label_font = &font_plex_12;
         L.board_top = 6; L.board_ri = 8; L.board_font = &font_plex_12;
@@ -133,8 +133,8 @@ static void compute_layout(const BoardCaps &c) {
         L.title_top = 6; L.title_font = &font_plex_12;
         L.rows_top = 24; L.rows_pitch = 15;
         L.rows_font = &font_plex_12;   // "Bateria (cargando)" no cabe en 16
-        L.hint_top = 200; L.hint_font = &font_plex_12;
-        L.st_top = 218;   L.st_font = &font_plex_12;
+        L.hint_top = 216; L.hint_font = &font_plex_12;
+        L.st_top = 226;   L.st_font = &font_plex_12;
     }
 
     L.card_w = L.scr_w - 2 * L.card_x;
@@ -147,7 +147,7 @@ static lv_obj_t *card1, *card2;
 static lv_obj_t *lbl_ver, *lbl_board, *lbl_hero, *lbl_ota, *lbl_act;
 static lv_obj_t *bar, *lbl_sub;
 static lv_obj_t *lbl_title;
-static lv_obj_t *row_lbl[3], *row_val[3];
+static lv_obj_t *row_lbl[4], *row_val[4];
 static lv_obj_t *lbl_hint, *lbl_state;
 
 // ---- Estado ----------------------------------------------------------------
@@ -174,6 +174,7 @@ struct SysPaint {
     uint32_t ble_c;
     char wifi[48];
     uint32_t wifi_c;
+    char portal[16];   // fila tocable: "Abrir" (apagado) / "Cerrar" (activo)
     char hint[80];
     char state[64];
     char board[32];
@@ -260,7 +261,7 @@ static void read_live(SysPaint *p, SysLogic *lg, uint32_t now) {
         p->ble_c = 0x2ee88a;
         break;
     case BLE_STATE_ADVERTISING:
-        strlcpy(p->ble, "Publicitando" SYS_ELLIPSIS, sizeof(p->ble));
+        strlcpy(p->ble, "Disponible", sizeof(p->ble));
         p->ble_c = 0xfab283;
         break;
     default:
@@ -286,6 +287,8 @@ static void read_live(SysPaint *p, SysLogic *lg, uint32_t now) {
         strlcpy(p->wifi, "Apagado", sizeof(p->wifi));
         p->wifi_c = 0xe06c75;
     }
+    // Fila tocable del portal: el valor es la accion (SPEC seccion 8).
+    strlcpy(p->portal, lg->portal ? "Cerrar" : "Abrir", sizeof(p->portal));
 
     // Bateria: "78%"; etiqueta "Bateria (cargando)" si carga. pct<0 es lectura
     // ausente: "-" ASCII (el em-dash de la SPEC no existe en los cortes Plex
@@ -454,6 +457,11 @@ static void place_right(lv_obj_t *l, int16_t inset, int16_t top) {
     lv_obj_align(l, LV_ALIGN_TOP_RIGHT, -inset, top);
 }
 
+// El tap sobre la fila del portal alterna el SoftAP sin cerrar el overlay:
+// la fila NO burbujea (sin EVENT_BUBBLE su CLICKED no llega al sys_gesture_cb
+// de ui.cpp que cierra) y lleva handler CLICKED propio.
+static void sys_portal_row_cb(lv_event_t *e);
+
 static void set_vis(lv_obj_t *l, bool on) {
     if (!l) return;
     if (on) lv_obj_clear_flag(l, LV_OBJ_FLAG_HIDDEN);
@@ -509,13 +517,21 @@ static void ensure_built(void) {
 
     lbl_title = make_label(card2, L.pad, L.title_top, L.title_font, SYS_MUTED);
     lv_label_set_text(lbl_title, "Radios y batería");
-    static const char *const names[3] = { "BLE", "WiFi", "Batería" };
-    for (int i = 0; i < 3; i++) {
+    static const char *const names[4] = { "BLE", "WiFi", "Batería", "Portal WiFi" };
+    for (int i = 0; i < 4; i++) {
         int16_t top = (int16_t)(L.rows_top + i * L.rows_pitch);
         row_lbl[i] = make_label(card2, L.pad, top, L.rows_font, SYS_MUTED);
         lv_label_set_text(row_lbl[i], names[i]);
         row_val[i] = make_label(card2, 0, top, L.rows_font, SYS_TEXT);
         place_right(row_val[i], L.pad, top);
+    }
+    // La 4a fila es tocable: CLICKABLE + CLICKED propio, SIN burbuja para que
+    // el tap no cierre el overlay (ver sys_portal_row_cb).
+    for (int i = 0; i < 2; i++) {
+        lv_obj_t *o = (i == 0) ? row_lbl[3] : row_val[3];
+        lv_obj_clear_flag(o, LV_OBJ_FLAG_EVENT_BUBBLE);
+        lv_obj_add_flag(o, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(o, sys_portal_row_cb, LV_EVENT_CLICKED, NULL);
     }
 
     lbl_hint = make_label(overlay, L.header_x, L.hint_top, L.hint_font, SYS_MUTED);
@@ -556,6 +572,7 @@ static bool paint_same(const SysPaint *a, const SysPaint *b) {
         && a->ble_c == b->ble_c
         && strcmp(a->wifi, b->wifi) == 0
         && a->wifi_c == b->wifi_c
+        && strcmp(a->portal, b->portal) == 0
         && strcmp(a->hint, b->hint) == 0
         && strcmp(a->state, b->state) == 0
         && strcmp(a->board, b->board) == 0;
@@ -591,6 +608,7 @@ static void paint(const SysPaint *p) {
     set_color(row_val[0], p->ble_c, &s_painted.ble_c);
     set_text(row_val[1], p->wifi, s_painted.wifi, sizeof(s_painted.wifi));
     set_color(row_val[1], p->wifi_c, &s_painted.wifi_c);
+    set_text(row_val[3], p->portal, s_painted.portal, sizeof(s_painted.portal));
 
     set_text(lbl_hint, p->hint, s_painted.hint, sizeof(s_painted.hint));
     set_text(lbl_state, p->state, s_painted.state, sizeof(s_painted.state));
@@ -675,6 +693,18 @@ void sys_pwr_action(void) {
         return;
     }
     ota_pull_request_check();
+    s_have_paint = false;
+    sys_tick();
+}
+
+// Tap en la 4a fila de card2: alterna el portal sin cerrar el overlay (el
+// objeto no burbujea, asi que sys_gesture_cb no ve este CLICKED). El tick
+// redibuja al cambiar portal_is_active() via SysPaint.portal.
+static void sys_portal_row_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    if (!s_open) return;
+    if (portal_is_active()) portal_stop();
+    else                    portal_start();
     s_have_paint = false;
     sys_tick();
 }

@@ -66,14 +66,19 @@ breakpoints que `ui_portfolio.cpp`, estructura idéntica, geometría a criterio.
 | Header `Command Center` | x20, y36, Plex 16 muted |
 | Batería (la de `ui.cpp`) | se conserva arriba a la derecha |
 | Card 1 (versión + OTA) | x20, y72, w440, h162 |
-| Card 2 (radios) | x20, y246, w440, h152 |
-| Hint | y410, Plex 14 muted |
-| Estado | y448, Plex 16 |
+| Card 2 (radios) | x20, y246, w440, h182 |
+| Hint | y436, Plex 14 muted |
+| Estado | y458, Plex 16 |
 
 Card 1: etiqueta `Versión` + board id a la derecha (Plex 12),
 héroe versión (Plex 48), línea OTA (Plex 18), caja de acción o barra.
-Card 2: título `Radios y batería`; filas `BLE / WiFi / Batería` (Plex 16,
-etiqueta muted izq., valor der.).
+Card 2: título `Radios y batería`; filas `BLE / WiFi / Batería / Portal WiFi`
+(Plex 16, etiqueta muted izq., valor der.). La 4ª fila es tocable: valor
+`Abrir` (portal apagado) / `Cerrar` (portal activo); el tap alterna
+`portal_start()` / `portal_stop()` sin cerrar el overlay (sin burbuja al
+handler de cierre) y el tick redibuja al cambiar `portal_is_active()`.
+La fila WiFi sigue mostrando `Portal 192.168.4.1` cuando el portal está
+activo.
 
 ## 5. PWR (`sys_pwr_action()`, desde `main.cpp`)
 
@@ -92,7 +97,7 @@ si no:                       ota_pull_request_check(); return
 |---|---|---|
 | Versión | `ota_version()` | verbatim (`v0.2.11`, sim `sim`) |
 | Board | `board_caps().id` | verbatim |
-| BLE | `ble_get_state()` | Conectado (verde) / Publicitando… (ámbar) / Desconectado (rojo) |
+| BLE | `ble_get_state()` | Conectado (verde) / Disponible (ámbar) / Desconectado (rojo) |
 | WiFi portal | `portal_is_active()` | `Portal 192.168.4.1` (verde) |
 | WiFi STA | `ota_wifi_connected()` + `ota_wifi_rssi()` | `SSID -52 dBm` (verde) |
 | WiFi down | — | `Apagado` (rojo) |
@@ -147,7 +152,7 @@ ssid `""`, connected false, rssi 0.
 ## 8. Cadenas ES exactas (Plex cubre ASCII+acentos+`·`+`…`; prohibidos ●○▲—)
 
 `Command Center`, `Versión`, `Radios y batería`, `BLE`, `WiFi`, `Batería`,
-`Batería (cargando)`, `Conectado`, `Publicitando…`, `Desconectado`,
+`Batería (cargando)`, `Portal WiFi`, `Abrir`, `Cerrar`, `Conectado`, `Disponible`, `Desconectado`,
 `Portal 192.168.4.1`, `Apagado`, `Al día`, `Nueva: %s · %s`,
 `Comprobando…`, `Descargando %s… %d%%`, `Verificando…`, `Reiniciando…`,
 `OTA en curso`, `Sin WiFi - no comprobable` (guion ASCII, no em-dash),

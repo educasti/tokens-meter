@@ -639,12 +639,13 @@ const sysScenarios = {
   verificando:  { ver:'v0.2.11', board:'waveshare_amoled_216', ble:'connected', bleName:'Clawdmeter', wifi:'connected', ssid:'Casa-2.4G', rssi:-52, batt:81, charging:true, ota:'verifying', latest:'v0.2.12', size:'1.4 MB', pct:100, checked:'ahora mismo' },
   reiniciando:  { ver:'v0.2.12', board:'waveshare_amoled_216', ble:'connected', bleName:'Clawdmeter', wifi:'connected', ssid:'Casa-2.4G', rssi:-52, batt:81, charging:false, ota:'rebooting', latest:'v0.2.12', checked:'ahora mismo' },
   sinWifi:      { ver:'v0.2.11', board:'waveshare_amoled_216', ble:'advertising', bleName:'Clawdmeter', wifi:'off', ssid:'', rssi:0, batt:64, charging:false, ota:'sin_wifi', latest:'v0.2.11', checked:'hace 3 h' },
+  portalActivo: { ver:'v0.2.11', board:'waveshare_amoled_216', ble:'connected', bleName:'Clawdmeter', wifi:'portal', ssid:'', rssi:0, batt:78, charging:false, ota:'up_to_date', latest:'v0.2.11', checked:'hace 12 min' },
   errorRed:     { ver:'v0.2.11', board:'waveshare_amoled_216', ble:'connected', bleName:'Clawdmeter', wifi:'connected', ssid:'Casa-2.4G', rssi:-74, batt:55, charging:false, ota:'error', latest:'v0.2.11', checked:'hace 26 min', err:'manifiesto sin respuesta' }
 };
 const sysLabels = {
   alDia:'Al día · v0.2.11', disponible:'Nueva v0.2.12 disponible', comprobando:'Comprobando…',
   descargando:'Descargando 62%', verificando:'Verificando…', reiniciando:'Reiniciando…',
-  sinWifi:'Sin WiFi - no comprobable', errorRed:'Error de red'
+  sinWifi:'Sin WiFi - no comprobable', portalActivo:'Portal activo · 192.168.4.1', errorRed:'Error de red'
 };
 
 const boardSpecs = { grande: { w: 480, h: 480 } };
@@ -1291,19 +1292,19 @@ function renderSys(container, sizeKey, data, uiState = {}) {
     }
   } else if (data.ota === 'sin_wifi') {
     c1.appendChild(div('PWR: abrir portal WiFi', 'left:20px;top:132px;font-size:14px;color:' + pfTokens.text + ';border:1px solid #3c3c3c;padding:6px 10px;background:#000;'));
-  } else if (!active) {
+  } else if (!active && data.wifi !== 'portal') {
     c1.appendChild(div('PWR: comprobar ahora', 'left:20px;top:132px;font-size:14px;color:' + pfTokens.muted + ';'));
   }
   root.appendChild(c1);
 
   // --- Card 2: radios ---
-  const c2 = card(20, 246, 440, 152);
+  const c2 = card(20, 246, 440, 182);
   c2.appendChild(div('Radios y batería', 'left:20px;top:14px;font-size:16px;color:' + pfTokens.muted + ';'));
   function row(label, value, color, top) {
     c2.appendChild(div(label, 'left:20px;top:' + top + 'px;font-size:16px;color:' + pfTokens.muted + ';'));
     c2.appendChild(div(value, 'right:20px;top:' + top + 'px;font-size:16px;color:' + color + ';'));
   }
-  const bleTxt = data.ble === 'connected' ? 'Conectado' : data.ble === 'advertising' ? 'Publicitando…' : 'Desconectado';
+  const bleTxt = data.ble === 'connected' ? 'Conectado' : data.ble === 'advertising' ? 'Disponible' : 'Desconectado';
   const bleCol = data.ble === 'connected' ? pfTokens.success : data.ble === 'advertising' ? pfTokens.primary : pfTokens.error;
   const wifiTxt = data.wifi === 'connected' ? data.ssid + ' ' + data.rssi + ' dBm' : data.wifi === 'portal' ? 'Portal 192.168.4.1' : 'Apagado';
   const wifiCol = data.wifi === 'connected' || data.wifi === 'portal' ? pfTokens.success : pfTokens.error;
@@ -1313,16 +1314,31 @@ function renderSys(container, sizeKey, data, uiState = {}) {
   row('BLE', bleTxt, bleCol, 44);
   row('WiFi', wifiTxt, wifiCol, 76);
   row(battLabel, battTxt, battCol, 108);
+  // 4a fila tocable: alterna el portal sin cerrar el overlay (el firmware le
+  // quita la burbuja al CLICKED; aqui se frena la propagacion del tap que
+  // cierra). Valor = accion: Abrir (apagado) / Cerrar (activo).
+  const portalOn = data.wifi === 'portal';
+  const prow = div('', 'left:0px;top:132px;width:440px;height:36px;cursor:pointer;');
+  prow.appendChild(div('Portal WiFi', 'left:20px;top:8px;font-size:16px;color:' + pfTokens.muted + ';'));
+  prow.appendChild(div(portalOn ? 'Cerrar' : 'Abrir', 'right:20px;top:8px;font-size:16px;color:' + pfTokens.text + ';'));
+  prow.addEventListener('pointerdown', (e) => e.stopPropagation());
+  prow.addEventListener('pointerup', (e) => {
+    e.stopPropagation();
+    simulatorState.sysPortalOverride = !portalOn;
+    render();
+  });
+  c2.appendChild(prow);
   root.appendChild(c2);
 
   // --- Hint + estado ---
   const hint = data.ota === 'available'
     ? (uiState.confirm ? 'PWR: confirmar · Toque: cerrar' : 'Toque: cerrar · PWR: aplicar ' + data.latest)
     : data.ota === 'sin_wifi' ? 'Toque: cerrar · PWR: portal'
+    : data.wifi === 'portal' ? 'Toque: cerrar · PWR: brillo'
     : active ? 'No apagues · ' + otaText : 'Toque: cerrar · PWR: comprobar';
-  root.appendChild(div(hint, 'left:20px;top:410px;font-size:14px;color:' + pfTokens.muted + ';'));
+  root.appendChild(div(hint, 'left:20px;top:436px;font-size:14px;color:' + pfTokens.muted + ';'));
   const stTxt = active ? 'OTA en curso' : 'Última comprobación ' + (data.checked || '');
-  root.appendChild(div(stTxt, 'left:20px;top:448px;font-size:16px;color:' + (active ? pfTokens.text : pfTokens.muted) + ';'));
+  root.appendChild(div(stTxt, 'left:20px;top:458px;font-size:16px;color:' + (active ? pfTokens.text : pfTokens.muted) + ';'));
 
   container.appendChild(root);
 }
@@ -1797,6 +1813,7 @@ const simulatorState = {
   scenario: 'real',             // OpenCode
   pfScenario: 'real',
   sysScenario: 'disponible',
+  sysPortalOverride: null,   // Command Center: click en la fila Portal WiFi (null = escenario)
   sysConfirm: false,
   sysConfirmTimer: null,
   connected: true,
@@ -1823,6 +1840,7 @@ const simulatorState = {
     this.currentScreen = 'clawd';
     this.sysOpen = false;
     this.sysConfirm = false;
+    this.sysPortalOverride = null;
     this.brightness = 255;
     if (this.ocSplash) { this.ocSplash.destroy(); this.ocSplash = null; }
     render();
@@ -1830,7 +1848,7 @@ const simulatorState = {
   setClaudeScenario(s) { this.claudeScenario = s; render(); },
   setScenario(s) { this.scenario = s; render(); },
   setPfScenario(s) { this.pfScenario = s; render(); },
-  setSysScenario(s) { this.sysScenario = s; render(); },
+  setSysScenario(s) { this.sysScenario = s; this.sysPortalOverride = null; render(); },
   setPfPrivate(value, announce = true) {
     this.pfPrivate = !!value;
     if (announce) this.showPfNotice();
@@ -2125,7 +2143,7 @@ function renderControlPanel() {
   html += '</div></div>';
 
   html += '<div class="control-group"><label>Command Center (overlay)</label><div class="radio-group">';
-  const sysOrder = ['alDia', 'disponible', 'comprobando', 'descargando', 'verificando', 'reiniciando', 'sinWifi', 'errorRed'];
+  const sysOrder = ['alDia', 'disponible', 'comprobando', 'descargando', 'verificando', 'reiniciando', 'sinWifi', 'portalActivo', 'errorRed'];
   for (const key of sysOrder) {
     html += '<input type="radio" id="sys-' + key + '" name="syssc" ' + (simulatorState.sysScenario === key ? 'checked' : '') +
       ' onchange="simulatorState.setSysScenario(\'' + key + '\')">' +
@@ -2252,6 +2270,8 @@ function render() {
   // Command Center: overlay fuera del ciclo, encima de la pantalla actual.
   if (simulatorState.sysOpen) {
     const sysData = { ...sysScenarios[simulatorState.sysScenario] };
+    if (simulatorState.sysPortalOverride === true) sysData.wifi = 'portal';
+    else if (simulatorState.sysPortalOverride === false && sysData.wifi === 'portal') sysData.wifi = 'off';
     if (!simulatorState.connected && (sysData.ble === 'connected')) sysData.ble = 'advertising';
     const over = document.createElement('div');
     over.style.cssText = 'position:absolute;left:0;top:0;width:480px;height:480px;';
@@ -2461,7 +2481,7 @@ function buildVariantsGrid() {
   // 5. Command Center (overlay, fuera del ciclo)
   const s5 = gridSection('Command Center (overlay, fuera del ciclo)',
     'Lenguaje de portafolio (cards radio 12) + Plex Mono. Datos locales: ver/board (ota_version + board_caps), BLE (ble_get_state), WiFi (NVS/portal), batería (power_hal), OTA (ota_pull_state_name + pct). PWR corto = comprobar (doble PWR confirma la aplicación); sin WiFi el PWR abre el portal; hold 3 s sigue siendo emparejar; BOOT/SEC con el overlay abierto solo lo cierran. Se abre con drag-down desde el borde superior y se cierra con drag-up o toque; sin dots. La descarga muestra velocidad y tiempo restante.');
-  const sysOrder = ['alDia', 'disponible', 'comprobando', 'descargando', 'verificando', 'reiniciando', 'sinWifi', 'errorRed'];
+  const sysOrder = ['alDia', 'disponible', 'comprobando', 'descargando', 'verificando', 'reiniciando', 'sinWifi', 'portalActivo', 'errorRed'];
   for (const key of sysOrder) {
     const box = screenBox('grande');
     renderSys(box, 'grande', { ...sysScenarios[key] }, {});
