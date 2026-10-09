@@ -59,9 +59,9 @@ struct Layout {
     const lv_font_t* title_font;     // título de pantalla / reloj
     const lv_font_t* pct_font;       // número grande de porcentaje
     const lv_font_t* ent_pct_font;   // número de gasto (enterprise)
-    const lv_font_t* pill_font;      // píldora de "Actual" / "Semanal"
+    const lv_font_t* pill_font;      // píldora de "Current" / "Weekly"
     const lv_font_t* reset_font;     // línea "Se renueva en ..."
-    const lv_font_t* pace_font;      // línea de ritmo enterprise ("Ritmo bajo/En ritmo/Ritmo alto")
+    const lv_font_t* pace_font;      // línea de ritmo enterprise ("Under pace/On pace/Over pace")
     const lv_font_t* anim_font;      // línea de estado animada
     int16_t anim_y;                  // desplazamiento de la línea de estado desde abajo
     bool    small_icons;             // logo de 40 px + batería de 24 px (frente a 80/48) en pantallas pequeñas
@@ -257,8 +257,8 @@ static lv_obj_t* panel_session = nullptr;
 static lv_obj_t* panel_weekly = nullptr;
 // Widgets solo para enterprise dentro de panel_session
 static lv_obj_t* lbl_session_pct_sym = nullptr;  // "%" en una fuente más chica
-static lv_obj_t* lbl_spending_desc = nullptr;     // "de tu presupuesto mensual"
-static lv_obj_t* lbl_spending_status = nullptr;   // "Ritmo bajo" / "En ritmo" / "Ritmo alto"
+static lv_obj_t* lbl_spending_desc = nullptr;     // "of your monthly budget"
+static lv_obj_t* lbl_spending_status = nullptr;   // "Under pace" / "On pace" / "Over pace"
 static lv_obj_t* lbl_anim;      // línea de estado: estado de conexión + reposo fantasioso
 
 // Vista de código de emparejamiento del backend (fase 2): el código grande y
@@ -312,7 +312,7 @@ static const uint32_t DATA_FRESH_MS = 90000;  // el uso cuenta como "en vivo" de
 static lv_image_dsc_t logo_dsc;
 static screen_t current_screen = SCREEN_USAGE;
 static bool     s_ble_connected = false;   // estado de conexión BLE en caché
-static uint32_t connected_at_ms = 0;       // cuándo entramos por última vez en CONNECTED (pausa de "Conectado")
+static uint32_t connected_at_ms = 0;       // cuándo entramos por última vez en CONNECTED (pausa de "Connected")
 
 // Estado de la animación
 static uint32_t anim_last_ms = 0;
@@ -354,37 +354,37 @@ static const uint16_t spinner_ms[SPINNER_COUNT] = {
 };
 
 static const char* const anim_messages[] = {
-    "Logrando", "Esclareciendo", "Hojeando",
-    "Accionando", "Encantando", "Filosofando",
-    "Actualizando", "Vislumbrando", "Elucubrando",
-    "Horneando", "Ingeniándoselas", "Pontificando",
-    "Boopeando", "Paroleando", "Procesando",
-    "Infusionando", "Forjando", "Pululando",
-    "Calculando", "Formando", "Barajando",
-    "Cerebreando", "Retozando", "Reticulando",
-    "Canalizando", "Generando", "Rumiando",
-    "Batiendo", "Germinando", "Maquinando",
-    "Claudeando", "Eclosionando", "Arrastrando",
-    "Aglutinando", "Arreando", "Meneándose",
-    "Cavilando", "Graznando", "Desvainando",
-    "Combobulando", "Trajinando", "Burbujeando",
-    "Computando", "Ideando", "Chafando",
-    "Preparando", "Imaginando", "Espeleando",
-    "Conjurando", "Incubando", "Girando",
-    "Considerando", "Infiriendo", "Guisando",
-    "Contemplando", "Bailoteando", "Desentrañando",
-    "Cocinando", "Manifestando", "Sintetizando",
-    "Elaborando", "Marinando", "Pensando",
-    "Creando", "Deambulando", "Cacharreando",
-    "Masticando", "Paseando", "Transmutando",
-    "Descifrando", "Ponderando", "Desplegando",
-    "Deliberando", "Reuniendo", "Desenredando",
-    "Determinando", "Meditando", "Vibrando",
-    "Descombobulando", "Trasteando", "Vagando",
-    "Adivinando", "Filtrando", "Zumbando",
-    "Haciendo", "Bamboleándose",
-    "Efectuando", "Hechizando",
-    "Trabajando", "Forcejeando",
+    "Accomplishing", "Elucidating", "Perusing",
+    "Actioning", "Enchanting", "Philosophising",
+    "Actualizing", "Envisioning", "Pondering",
+    "Baking", "Finagling", "Pontificating",
+    "Booping", "Flibbertigibbeting", "Processing",
+    "Brewing", "Forging", "Puttering",
+    "Calculating", "Forming", "Puzzling",
+    "Cerebrating", "Frolicking", "Reticulating",
+    "Channelling", "Generating", "Ruminating",
+    "Churning", "Germinating", "Scheming",
+    "Clauding", "Hatching", "Schlepping",
+    "Coalescing", "Herding", "Shimmying",
+    "Cogitating", "Honking", "Shucking",
+    "Combobulating", "Hustling", "Simmering",
+    "Computing", "Ideating", "Smooshing",
+    "Concocting", "Imagining", "Spelunking",
+    "Conjuring", "Incubating", "Spinning",
+    "Considering", "Inferring", "Stewing",
+    "Contemplating", "Jiving", "Sussing",
+    "Cooking", "Manifesting", "Synthesizing",
+    "Crafting", "Marinating", "Thinking",
+    "Creating", "Meandering", "Tinkering",
+    "Crunching", "Moseying", "Transmuting",
+    "Deciphering", "Mulling", "Unfurling",
+    "Deliberating", "Mustering", "Unravelling",
+    "Determining", "Musing", "Vibing",
+    "Discombobulating", "Noodling", "Wandering",
+    "Divining", "Percolating", "Whirring",
+    "Doing", "Wibbling",
+    "Effecting", "Wizarding",
+    "Working", "Wrangling",
 };
 #define ANIM_MSG_COUNT (sizeof(anim_messages) / sizeof(anim_messages[0]))
 
@@ -398,11 +398,11 @@ static void format_reset_time(int mins, char* buf, size_t len) {
     if (mins < 0) {
         snprintf(buf, len, "---");
     } else if (mins < 60) {
-        snprintf(buf, len, "Se renueva en %d min", mins);
+        snprintf(buf, len, "Resets in %dm", mins);
     } else if (mins < 1440) {
-        snprintf(buf, len, "Se renueva en %d h %d min", mins / 60, mins % 60);
+        snprintf(buf, len, "Resets in %dh %dm", mins / 60, mins % 60);
     } else {
-        snprintf(buf, len, "Se renueva en %d d %d h", mins / 1440, (mins % 1440) / 60);
+        snprintf(buf, len, "Resets in %dd %dh", mins / 1440, (mins % 1440) / 60);
     }
 }
 
@@ -589,19 +589,19 @@ static void build_pair_group(lv_obj_t* parent) {
     lv_obj_add_flag(pair_group, LV_OBJ_FLAG_EVENT_BUBBLE);
 
     lv_obj_t* l1 = lv_label_create(pair_group);
-    lv_label_set_text(l1, "Para emparejar");
+    lv_label_set_text(l1, "To pair");
     lv_obj_set_style_text_font(l1, L.bt_status_font, 0);
     lv_obj_set_style_text_color(l1, COL_TEXT, 0);
     lv_obj_align(l1, LV_ALIGN_TOP_MID, 0, L.pair_y1);
 
     lv_obj_t* l2 = lv_label_create(pair_group);
-    lv_label_set_text(l2, "mantén pulsado el botón");
+    lv_label_set_text(l2, "hold the power button");
     lv_obj_set_style_text_font(l2, L.bt_device_font, 0);
     lv_obj_set_style_text_color(l2, COL_DIM, 0);
     lv_obj_align(l2, LV_ALIGN_TOP_MID, 0, L.pair_y2);
 
     lv_obj_t* l3 = lv_label_create(pair_group);
-    lv_label_set_text(l3, "central durante 3 s y suéltalo");
+    lv_label_set_text(l3, "for 3 seconds, then release");
     lv_obj_set_style_text_font(l3, L.bt_device_font, 0);
     lv_obj_set_style_text_color(l3, COL_DIM, 0);
     lv_obj_align(l3, LV_ALIGN_TOP_MID, 0, L.pair_y3);
@@ -637,7 +637,7 @@ static void build_pair_code_group(lv_obj_t* parent) {
     lv_obj_add_flag(paircode_group, LV_OBJ_FLAG_EVENT_BUBBLE);
 
     lv_obj_t* l1 = lv_label_create(paircode_group);
-    lv_label_set_text(l1, "Código");
+    lv_label_set_text(l1, "Pairing code");
     lv_obj_set_style_text_font(l1, L.bt_status_font, 0);
     lv_obj_set_style_text_color(l1, COL_TEXT, 0);
     lv_obj_align(l1, LV_ALIGN_TOP_MID, 0, L.paircode_y1);
@@ -671,8 +671,8 @@ static void tick_pair_code(void) {
 
     const char* st = usage_pair_state();
     const char* hint = (st && strcmp(st, "error") == 0)
-        ? "Sin respuesta del servidor - reintentando"
-        : "Introduce este código en la herramienta para vincular";
+        ? "Can't reach the server - retrying"
+        : "Enter this code in the owner tool to pair";
 
     static char last_code[16];
     static char last_hint[64];
@@ -723,7 +723,7 @@ static void init_usage_screen(lv_obj_t* scr) {
     lv_obj_add_flag(usage_container, LV_OBJ_FLAG_EVENT_BUBBLE);
 
     lbl_title = lv_label_create(usage_container);
-    lv_label_set_text(lbl_title, "Consumo");
+    lv_label_set_text(lbl_title, "Usage");
     lv_obj_set_style_text_font(lbl_title, L.title_font, 0);
     lv_obj_set_style_text_color(lbl_title, COL_TEXT, 0);
     // El desplazamiento compensa el logo de la esquina izquierda; es más chico
@@ -743,7 +743,7 @@ static void init_usage_screen(lv_obj_t* scr) {
     lv_obj_clear_flag(usage_group, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(usage_group, LV_OBJ_FLAG_EVENT_BUBBLE);
 
-    panel_session = make_usage_panel(usage_group, L.content_y, "Actual",
+    panel_session = make_usage_panel(usage_group, L.content_y, "Current",
                      &lbl_session_pct, &lbl_session_label,
                      &bar_session, &lbl_session_reset);
 
@@ -755,7 +755,7 @@ static void init_usage_screen(lv_obj_t* scr) {
     lv_obj_add_flag(lbl_session_pct_sym, LV_OBJ_FLAG_HIDDEN);
 
     lbl_spending_desc = lv_label_create(panel_session);
-    lv_label_set_text(lbl_spending_desc, "de tu presupuesto mensual");
+    lv_label_set_text(lbl_spending_desc, "of your monthly budget");
     lv_obj_set_style_text_font(lbl_spending_desc, L.reset_font, 0);
     lv_obj_set_style_text_color(lbl_spending_desc, COL_DIM, 0);
     lv_obj_set_pos(lbl_spending_desc, 0, L.usage_reset_y);
@@ -768,7 +768,7 @@ static void init_usage_screen(lv_obj_t* scr) {
     lv_obj_add_flag(lbl_spending_status, LV_OBJ_FLAG_HIDDEN);
 
     panel_weekly = make_usage_panel(usage_group,
-                     L.content_y + L.usage_panel_h + L.usage_panel_gap, "Semanal",
+                     L.content_y + L.usage_panel_h + L.usage_panel_gap, "Weekly",
                      &lbl_weekly_pct, &lbl_weekly_label,
                      &bar_weekly, &lbl_weekly_reset);
     // Recolor activado para que la caja de periodo de enterprise pueda colorear el ritmo y la renovación por separado
@@ -900,10 +900,10 @@ static void ui_update_impl(const UsageData* data, bool external) {
         clock_base_epoch = data->clock_epoch;
         clock_base_ms = last_data_ms;
         clock_fmt = data->clock_fmt;
-    } else if (clock_base_epoch != 0) {   // el daemon apagó el reloj → devolver el título a "Consumo"
+    } else if (clock_base_epoch != 0) {   // el daemon apagó el reloj → devolver el título a "Usage"
         clock_base_epoch = 0;
         clock_last_min = -1;
-        lv_label_set_text(lbl_title, "Consumo");
+        lv_label_set_text(lbl_title, "Usage");
     }
 
     int s_pct = (int)(data->session_pct + 0.5f);
@@ -911,7 +911,7 @@ static void ui_update_impl(const UsageData* data, bool external) {
     if (data->enterprise) {
         // Caja de gasto: etiqueta grande solo con el número + símbolo "%" chico + descripción + ritmo
         lv_obj_set_style_text_font(lbl_session_pct, L.ent_pct_font, 0);
-        lv_label_set_text(lbl_session_label, "Gasto");
+        lv_label_set_text(lbl_session_label, "Spending");
         lv_obj_add_flag(lbl_session_reset, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(lbl_session_pct_sym, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(lbl_spending_desc,   LV_OBJ_FLAG_HIDDEN);
@@ -919,7 +919,7 @@ static void ui_update_impl(const UsageData* data, bool external) {
         if (panel_weekly) lv_obj_clear_flag(panel_weekly, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_set_style_text_font(lbl_session_pct, L.pct_font, 0);
-        lv_label_set_text(lbl_session_label, "Actual");
+        lv_label_set_text(lbl_session_label, "Current");
         lv_obj_clear_flag(lbl_session_reset, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(lbl_session_pct_sym, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(lbl_spending_desc,   LV_OBJ_FLAG_HIDDEN);
@@ -932,13 +932,13 @@ static void ui_update_impl(const UsageData* data, bool external) {
     // Variables de ritmo que usan los dos bloques enterprise de abajo. Van en la
     // línea recolorada "ritmo - Renueva <fecha>" del panel semanal, así que
     // tienen que caber en el ancho del panel junto a la fecha.
-    const char* pace_text = "Ritmo bajo";
+    const char* pace_text = "Under pace";
     lv_color_t  pace_color = COL_GREEN;
     const char* pace_hex   = "788c5d";   // coincide con THEME_GREEN
     if (data->session_pct > (float)data->time_pct + 15.0f) {
-        pace_text = "Ritmo alto";        pace_color = COL_RED;   pace_hex = "c0392b";
+        pace_text = "Over pace";        pace_color = COL_RED;   pace_hex = "c0392b";
     } else if (data->session_pct > (float)data->time_pct - 15.0f) {
-        pace_text = "En ritmo";          pace_color = COL_AMBER; pace_hex = "d97757";
+        pace_text = "On pace";          pace_color = COL_AMBER; pace_hex = "d97757";
     }
 
     if (data->enterprise) {
@@ -956,14 +956,14 @@ static void ui_update_impl(const UsageData* data, bool external) {
 
     if (data->enterprise) {
         // Caja de periodo: % de tiempo + color de ritmo dinámico + etiqueta "Renueva <fecha>"
-        lv_label_set_text(lbl_weekly_label, "Periodo");
+        lv_label_set_text(lbl_weekly_label, "Period");
         lv_label_set_text_fmt(lbl_weekly_pct, "%d%%", data->time_pct);
         lv_bar_set_value(bar_weekly, data->time_pct, LV_ANIM_ON);
         lv_color_t bar_pace = (data->session_pct <= (float)data->time_pct) ? COL_GREEN :
                               (data->session_pct <= (float)data->time_pct + 15.0f) ? COL_AMBER :
                               COL_RED;
         lv_obj_set_style_bg_color(bar_weekly, bar_pace, LV_PART_INDICATOR);
-        snprintf(buf, sizeof(buf), "#%s %s# - #faf9f5 Renueva %s#",
+        snprintf(buf, sizeof(buf), "#%s %s# - #faf9f5 Resets %s#",
                  pace_hex, pace_text, data->reset_date);
         lv_label_set_text(lbl_weekly_reset, buf);
     } else {
@@ -1039,7 +1039,7 @@ void ui_tick_anim(void) {
 
     uint32_t now = lv_tick_get();
 
-    // Reloj del título: en cuanto el daemon manda la hora de pared, "Consumo" se
+    // Reloj del título: en cuanto el daemon manda la hora de pared, "Usage" se
     // reemplaza por la hora en vivo, avanzada en local para que cambie cada minuto
     // entre payloads.
     if (clock_base_epoch > 0) {
@@ -1113,13 +1113,13 @@ void ui_tick_anim(void) {
 
     const char* text;
     if (view_state == 3) {
-        text = "Emparejando";     // código de emparejamiento del backend en pantalla
+        text = "Pairing";     // código de emparejamiento del backend en pantalla
     } else if (!s_ble_connected && view_state != 2) {
-        text = "Esperando";       // publicitando / esperando la conexión de un host
+        text = "Waiting";       // publicitando / esperando la conexión de un host
     } else if (view_state == 1) {  // reposo: alternar para que se lea vivo y sin datos a la vez
-        text = (anim_msg_idx & 1) ? "Sin datos" : "Escuchando";
+        text = (anim_msg_idx & 1) ? "No data" : "Listening";
     } else if (s_ble_connected && now - connected_at_ms < 5000) {
-        text = "Conectado";
+        text = "Connected";
     } else {
         text = anim_messages[anim_msg_idx];
     }

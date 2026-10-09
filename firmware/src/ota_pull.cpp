@@ -264,12 +264,12 @@ static void pull_send_available(const char* ver, long size) {
 // respuesta BLE de arriba es la fuente de verdad.
 static void pull_ui_available(const char* ver) {
     char line[OTA_VERSION_MAX + 16];
-    snprintf(line, sizeof(line), "Actualización %s", ver);
+    snprintf(line, sizeof(line), "Update %s", ver);
     ui_ota_status(line, -1);
 }
 
 static void pull_send_downloading(int pct) {
-    ui_ota_status("Actualizando", pct);   // línea transitoria; nunca bloquea al worker
+    ui_ota_status("Updating", pct);   // línea transitoria; nunca bloquea al worker
     portENTER_CRITICAL(&s_ui_mux);
     s_ui.pct = pct;
     s_ui.ms = millis();
@@ -367,7 +367,7 @@ static void pull_record_ok(void) {
 // Una comprobación completada con un manifiesto o imagen permanentemente malos
 // — no reintentar.
 static void pull_record_terminal(void) {
-    ui_ota_status("No se actualizó", -1);   // línea transitoria corta, DESIGN §12
+    ui_ota_status("Update failed", -1);   // línea transitoria corta, DESIGN §12
     time_t now = time(nullptr);
     if ((long)now > MIN_VALID_EPOCH) s_last_chk = (uint32_t)now;
     s_defer = 0;
@@ -900,18 +900,18 @@ static void pull_cycle_inner(const pull_req_t& req) {
     }
 
     s_state = PS_JOIN;
-    ui_ota_status("Comprobando", -1);
+    ui_ota_status("Checking", -1);
     if (!pull_wifi_join(ssid, pass)) { pull_fail_transient(req, "timeout"); return; }
 
     s_state = PS_SNTP;
-    ui_ota_status("Comprobando", -1);
+    ui_ota_status("Checking", -1);
     if (!pull_sntp()) { pull_fail_transient(req, "timeout"); return; }
 
     OtaManifest mf;
     memset(&mf, 0, sizeof(mf));
     int http_code = 0, parse_err = OTA_MF_OK;
     s_state = PS_MANIFEST;
-    ui_ota_status("Comprobando", -1);
+    ui_ota_status("Checking", -1);
     fetch_res_t fr = pull_fetch_manifest(&mf, &http_code, &parse_err);
     if (fr == FETCH_304) {
         pull_send_up_to_date(ota_version());
@@ -965,7 +965,7 @@ static void pull_cycle_inner(const pull_req_t& req) {
 
     dl_ctx dl;
     s_state = PS_DOWNLOAD;
-    ui_ota_status("Actualizando", -1);
+    ui_ota_status("Updating", -1);
     if (!pull_download(&dl, mf, req.force || mf.mandatory)) {
         const char* e = dl.err[0] ? dl.err : "timeout";
         bool battery_low = (strcmp(e, "battery_low") == 0);
@@ -983,7 +983,7 @@ static void pull_cycle_inner(const pull_req_t& req) {
     }
 
     s_state = PS_VERIFY;
-    ui_ota_status("Verificando", -1);
+    ui_ota_status("Verifying", -1);
     pull_send_verifying();
     const char* verr = "bad_image";
     if (!pull_verify(&dl, mf, &verr)) {
@@ -1001,7 +1001,7 @@ static void pull_cycle_inner(const pull_req_t& req) {
     }
 
     s_state = PS_REBOOT;
-    ui_ota_status("Reiniciando", -1);
+    ui_ota_status("Restarting", -1);
     pull_send_rebooting(mf.version);
     pull_record_ok();
     ota_wifi_release();                 // apagar la radio antes del reinicio (§10.3)

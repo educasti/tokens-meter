@@ -1,5 +1,11 @@
 # Traducción al español de las pantallas del dispositivo
 
+> Nota 2026-10-08: el consumo de Claude volvió al inglés a petición del
+> usuario (título `Usage`, píldoras `Current`/`Weekly`, `Resets in…`,
+> estados `Waiting`/`Listening`/`Connected`, verbos animados y líneas OTA).
+> En español quedan: las dos pantallas de OpenCode, el portafolio BVC, el
+> portal y el Command Center. Este doc describe la traducción que sigue viva.
+
 Todas las pantallas del Clawdmeter hablan español neutro (con acentos): la
 pantalla de consumo de Claude, las dos de OpenCode, la de portafolio BVC, los
 avisos de emparejamiento, la línea de estado y los estados OTA. También los
